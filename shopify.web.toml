@@ -1,0 +1,5 @@
+name = "web"
+webhooks_path = "/api/webhooks/shopify"
+
+[commands]
+dev = "npm run dev -- --port $PORT"
