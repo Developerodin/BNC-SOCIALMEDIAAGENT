@@ -71,11 +71,17 @@ export async function pollSync({ storeId }: { storeId: string }): Promise<void> 
     await enqueuePoll(storeId, POLL_DELAY_S);
     return;
   }
+  const fail = async (detail: object) => {
+    console.error("bulk sync failed", { storeId, ...detail });
+    await db.update(stores).set({ syncStatus: "failed", bulkOperationId: null }).where(eq(stores.id, storeId));
+  };
   if (op?.status === "COMPLETED") {
     // Docs: "If the query produced no results, then the url field will return null."
     if (op.url) {
       const res = await fetch(op.url);
-      if (!res.ok || !res.body) throw new Error(`Bulk result download failed: ${res.status}`);
+      // Final, not retried: the same URL won't start working (an expired one gives 403), and throwing would leave the store running.
+      // A thrown fetch (network error) still throws, so pg-boss retries it.
+      if (!res.ok || !res.body) return fail({ status: op.status, downloadStatus: res.status });
       const input = Readable.fromWeb(res.body as WebReadableStream<Uint8Array>);
       await importJsonl(storeId, createInterface({ input, crlfDelay: Infinity }));
     }
@@ -84,8 +90,7 @@ export async function pollSync({ storeId }: { storeId: string }): Promise<void> 
     return;
   }
   // FAILED, CANCELED, CANCELING, EXPIRED, or an operation Shopify no longer knows.
-  console.error("bulk sync failed", { storeId, status: op?.status ?? null, errorCode: op?.errorCode ?? null });
-  await db.update(stores).set({ syncStatus: "failed", bulkOperationId: null }).where(eq(stores.id, storeId));
+  await fail({ status: op?.status ?? null, errorCode: op?.errorCode ?? null });
 }
 
 /**

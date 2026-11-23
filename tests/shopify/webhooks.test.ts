@@ -113,3 +113,12 @@ test("bulk_operations/finish for a known store queues sync-poll", async () => {
   const queued = await admin`select id from pgboss.job where name = 'sync-poll' and singleton_key = ${id}`;
   expect(queued).toHaveLength(1);
 });
+
+test("app/uninstalled on a running store resets its sync", async () => {
+  const shop = `run-${randomUUID()}.myshopify.com`;
+  const id = await installedStore(shop);
+  await admin`update stores set sync_status = 'running', bulk_operation_id = 'gid://shopify/BulkOperation/1' where id = ${id}`;
+  expect((await webhooks.handleWebhook(webhook("app/uninstalled", shop))).status).toBe(200);
+  const [s] = await admin`select sync_status, bulk_operation_id from stores where id = ${id}`;
+  expect(s).toEqual({ sync_status: "idle", bulk_operation_id: null });
+});

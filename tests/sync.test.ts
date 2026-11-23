@@ -174,3 +174,16 @@ test("startSync on a store left running polls its operation instead of starting 
   const queued = await admin`select id from pgboss.job where name = 'sync-poll' and singleton_key = ${storeId} and state = 'created'`;
   expect(queued).toHaveLength(1);
 });
+
+test("pollSync on COMPLETED with a refused download marks the sync failed instead of throwing", async () => {
+  const storeId = await newStore({ bulkOperationId: "gid://shopify/BulkOperation/7", syncStartedAt: new Date() });
+  gql.mockResolvedValueOnce(completed("https://bulk.example.com/expired.jsonl"));
+  vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response("expired", { status: 403 }));
+  vi.spyOn(console, "error").mockImplementation(() => {});
+
+  await sync.pollSync({ storeId });
+
+  const s = await store(storeId);
+  expect(s.sync_status).toBe("failed");
+  expect(s.bulk_operation_id).toBeNull();
+});

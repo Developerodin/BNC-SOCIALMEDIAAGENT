@@ -10,7 +10,12 @@ type Handler = (shopDomain: string, tx: Conn) => Promise<void>;
 /** Keyed by the topic as `shopify.webhooks.validate` returns it (app/uninstalled -> APP_UNINSTALLED). */
 export const handlers: Record<string, Handler> = {
   async APP_UNINSTALLED(shopDomain, tx) {
-    const [s] = await tx.update(stores).set({ active: false }).where(eq(stores.shopDomain, shopDomain)).returning({ id: stores.id });
+    // Reset the sync too: polls fail without tokens, and a reinstall must start a fresh sync instead of polling a dead one.
+    const [s] = await tx
+      .update(stores)
+      .set({ active: false, syncStatus: "idle", bulkOperationId: null })
+      .where(eq(stores.shopDomain, shopDomain))
+      .returning({ id: stores.id });
     if (!s) return;
     // Inside forStore: RLS hides store_tokens otherwise and the delete would silently affect 0 rows.
     await forStore(s.id, (t) => t.delete(storeTokens).where(eq(storeTokens.storeId, s.id)), tx);
