@@ -1,4 +1,4 @@
-import { boolean, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -14,6 +14,11 @@ export const stores = pgTable("stores", {
   active: boolean("active").notNull().default(true),
   installedAt: timestamp("installed_at", { withTimezone: true }).notNull().defaultNow(),
   settings: jsonb("settings").notNull().default({}),
+  syncStatus: text("sync_status").$type<"idle" | "running" | "failed">().notNull().default("idle"),
+  lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+  bulkOperationId: text("bulk_operation_id"),
+  syncStartedAt: timestamp("sync_started_at", { withTimezone: true }),
+  syncObjectCount: integer("sync_object_count").notNull().default(0),
 });
 
 export const storeTokens = pgTable("store_tokens", {
@@ -31,3 +36,22 @@ export const webhookEvents = pgTable("webhook_events", {
   shopDomain: text("shop_domain").notNull(),
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const products = pgTable(
+  "products",
+  {
+    storeId: uuid("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
+    shopifyId: text("shopify_id").notNull(),
+    handle: text("handle").notNull(),
+    title: text("title").notNull(),
+    url: text("url"),
+    imageUrl: text("image_url"),
+    status: text("status").notNull(),
+    published: boolean("published").notNull(),
+    content: text("content").notNull(),
+    contentHash: text("content_hash").notNull(),
+    shopifyUpdatedAt: timestamp("shopify_updated_at", { withTimezone: true }).notNull(),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.storeId, t.shopifyId] })],
+);

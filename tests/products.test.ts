@@ -1,0 +1,150 @@
+import { afterAll, beforeAll, expect, test } from "vitest";
+import postgres from "postgres";
+import { eq } from "drizzle-orm";
+
+let admin: ReturnType<typeof postgres>;
+let products: typeof import("@/lib/products");
+let client: typeof import("@/db/client");
+let schema: typeof import("@/db/schema");
+
+beforeAll(async () => {
+  products = await import("@/lib/products");
+  client = await import("@/db/client");
+  schema = await import("@/db/schema");
+  admin = postgres(process.env.DATABASE_ADMIN_URL!, { max: 1 });
+});
+
+afterAll(async () => {
+  await admin.end();
+  await client.sql.end();
+});
+
+async function newStore(domain: string) {
+  const [acc] = await admin`insert into accounts default values returning id`;
+  const [s] = await admin`insert into stores (account_id, shop_domain) values (${acc.id}, ${domain}) returning id`;
+  return s.id as string;
+}
+
+function product(over: Partial<import("@/lib/products").ShopifyProduct> = {}): import("@/lib/products").ShopifyProduct {
+  return {
+    id: "gid://shopify/Product/1",
+    handle: "tee",
+    title: "Tee",
+    description: "A soft tee",
+    productType: "Shirt",
+    vendor: "Acme",
+    tags: ["b", "a"],
+    options: [{ name: "Size", values: ["S", "M"] }],
+    status: "ACTIVE",
+    onlineStoreUrl: "https://shop.example.com/products/tee",
+    imageUrl: null,
+    updatedAt: "2026-01-02T00:00:00Z",
+    metafields: [],
+    ...over,
+  };
+}
+
+const mf = (namespace: string, key: string, type: string, value: string) => ({ namespace, key, type, value });
+
+test("buildContent is stable under tag and metafield order", () => {
+  const m1 = mf("custom", "fabric", "single_line_text_field", "cotton");
+  const m2 = mf("custom", "care", "multi_line_text_field", "wash cold");
+  const a = products.buildContent(product({ tags: ["a", "b"], metafields: [m1, m2] }));
+  const b = products.buildContent(product({ tags: ["b", "a"], metafields: [m2, m1] }));
+  expect(a).toBe(b);
+});
+
+test("buildContent leaves out json metafields, app-- namespaces and price", () => {
+  const out = products.buildContent(
+    product({
+      metafields: [
+        mf("custom", "blob", "json", "SECRETJSON"),
+        mf("app--123", "x", "single_line_text_field", "APPNS"),
+        mf("custom", "price", "number_decimal", "PRICEVAL"),
+        mf("custom", "fabric", "single_line_text_field", "cotton"),
+      ],
+    }),
+  );
+  expect(out).not.toContain("SECRETJSON");
+  expect(out).not.toContain("APPNS");
+  expect(out).not.toContain("PRICEVAL");
+  expect(out).toContain("cotton");
+});
+
+test("buildContent cuts a metafield value to 500 characters", () => {
+  const out = products.buildContent(product({ metafields: [mf("custom", "long", "multi_line_text_field", "x".repeat(600))] }));
+  expect(out).toContain("x".repeat(500));
+  expect(out).not.toContain("x".repeat(501));
+});
+
+test("upsertProducts stores one row with published flag and a 64-char hash", async () => {
+  const storeId = await newStore("up.myshopify.com");
+  await products.upsertProducts(storeId, [product()]);
+  const rows = await client.forStore(storeId, (tx) => tx.select().from(schema.products));
+  expect(rows).toHaveLength(1);
+  expect(rows[0].published).toBe(true);
+  expect(rows[0].contentHash).toHaveLength(64);
+
+  await products.upsertProducts(storeId, [product({ onlineStoreUrl: null })]);
+  const again = await client.forStore(storeId, (tx) => tx.select().from(schema.products));
+  expect(again).toHaveLength(1);
+  expect(again[0].published).toBe(false);
+});
+
+test("an older updatedAt does not overwrite, a newer one does", async () => {
+  const storeId = await newStore("ver.myshopify.com");
+  await products.upsertProducts(storeId, [product()]);
+  const read = () => client.forStore(storeId, (tx) => tx.select().from(schema.products).where(eq(schema.products.shopifyId, "gid://shopify/Product/1")));
+  const first = (await read())[0];
+
+  await products.upsertProducts(storeId, [product({ title: "Old news", updatedAt: "2026-01-01T00:00:00Z" })]);
+  expect((await read())[0].title).toBe("Tee");
+
+  await products.upsertProducts(storeId, [product({ title: "New Tee", updatedAt: "2026-01-03T00:00:00Z" })]);
+  const last = (await read())[0];
+  expect(last.title).toBe("New Tee");
+  expect(last.contentHash).not.toBe(first.contentHash);
+});
+
+test("sweepProducts deletes only older rows of its own store", async () => {
+  const a = await newStore("sa.myshopify.com");
+  const b = await newStore("sb.myshopify.com");
+  await products.upsertProducts(a, [product({ id: "gid://shopify/Product/1" })]);
+  await products.upsertProducts(b, [product({ id: "gid://shopify/Product/9" })]);
+  await new Promise((r) => setTimeout(r, 20));
+  const t = new Date();
+  await products.upsertProducts(a, [product({ id: "gid://shopify/Product/2", updatedAt: "2026-01-02T00:00:00Z" })]);
+
+  expect(await products.sweepProducts(a, t)).toBe(1);
+  const left = await client.forStore(a, (tx) => tx.select().from(schema.products));
+  expect(left.map((r) => r.shopifyId)).toEqual(["gid://shopify/Product/2"]);
+  expect(await client.forStore(b, (tx) => tx.select().from(schema.products))).toHaveLength(1);
+
+  await products.deleteProduct(a, "gid://shopify/Product/2");
+  expect(await client.forStore(a, (tx) => tx.select().from(schema.products))).toHaveLength(0);
+});
+
+test("toShopifyProduct maps a PRODUCT_FIELDS node, null-safe on the image", () => {
+  const node = {
+    id: "gid://shopify/Product/5",
+    handle: "h",
+    title: "T",
+    description: "D",
+    productType: "P",
+    vendor: "V",
+    tags: ["x"],
+    options: [{ name: "Size", values: ["S"] }],
+    status: "ACTIVE",
+    onlineStoreUrl: null,
+    updatedAt: "2026-01-02T00:00:00Z",
+    featuredMedia: { preview: { image: { url: "https://cdn/x.png" } } },
+  };
+  const m = [mf("custom", "k", "boolean", "true")];
+  const p = products.toShopifyProduct(node, m);
+  expect(p.imageUrl).toBe("https://cdn/x.png");
+  expect(p.onlineStoreUrl).toBeNull();
+  expect(p.metafields).toBe(m);
+  expect(products.toShopifyProduct({ ...node, featuredMedia: null }, []).imageUrl).toBeNull();
+  expect(products.toShopifyProduct({ ...node, featuredMedia: { preview: null } }, []).imageUrl).toBeNull();
+  expect(products.PRODUCT_FIELDS).toContain("featuredMedia");
+});
