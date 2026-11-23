@@ -11,7 +11,7 @@ use_legacy_install_flow = false
 redirect_urls = []
 
 [webhooks]
-api_version = "2025-10"
+api_version = "2026-10"
 
   [[webhooks.subscriptions]]
   topics = ["app/uninstalled"]
