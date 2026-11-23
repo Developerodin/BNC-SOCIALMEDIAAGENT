@@ -16,6 +16,8 @@ export default defineConfig({
       SHOPIFY_API_SECRET: "test-api-secret",
       SHOPIFY_APP_URL: "https://test.example.com",
       TOKEN_KEY: "2n3r8krbA8HE+VcP4RyQl6noUkyRd26boJxKNyhAfH8=",
+      // Real key from .env, only for tests/live (skipped when unset); other tests mock embed.
+      ...(env.OPENAI_API_KEY ? { OPENAI_API_KEY: env.OPENAI_API_KEY } : {}),
     },
     fileParallelism: false, // DB files share one database and truncate per file
     globalSetup: ["tests/global-setup.ts"],

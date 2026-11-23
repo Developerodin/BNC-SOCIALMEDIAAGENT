@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import postgres from "postgres";
-import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
 import { fakeEmbed } from "./helpers/fake-embed";
+import { gid, node, newStore as seedStore, upsert } from "./helpers/seed";
 
 vi.mock("@/lib/embeddings", () => ({ embed: vi.fn() }));
 vi.mock("@/lib/shopify/admin", () => ({ adminGraphql: vi.fn() }));
@@ -14,6 +14,7 @@ let sync: typeof import("@/lib/sync");
 let jobs: typeof import("@/lib/jobs");
 let client: typeof import("@/db/client");
 let embed: ReturnType<typeof vi.fn>;
+const newStore = (active = true) => seedStore(admin, active);
 let gql: ReturnType<typeof vi.fn>;
 
 beforeAll(async () => {
@@ -39,31 +40,6 @@ afterAll(async () => {
   await admin.end();
   await client.sql.end();
 });
-
-async function newStore(active = true) {
-  const [acc] = await admin`insert into accounts default values returning id`;
-  const [s] = await admin`
-    insert into stores (account_id, shop_domain, active) values (${acc.id}, ${`s-${randomUUID()}.myshopify.com`}, ${active}) returning id`;
-  return s.id as string;
-}
-
-const gid = (id: string) => `gid://shopify/Product/${id}`;
-const node = (id: string, o: { description?: string; status?: string; onlineStoreUrl?: string | null; updatedAt?: string } = {}) => ({
-  id: gid(id),
-  handle: `h${id}`,
-  title: `Tee ${id}`,
-  description: o.description ?? `Soft cotton tee ${id}`,
-  productType: "Shirt",
-  vendor: "Acme",
-  tags: [],
-  options: [],
-  status: o.status ?? "ACTIVE",
-  onlineStoreUrl: o.onlineStoreUrl === undefined ? `https://shop.example.com/products/h${id}` : o.onlineStoreUrl,
-  updatedAt: o.updatedAt ?? "2026-01-02T00:00:00Z",
-  featuredMedia: null,
-});
-const upsert = (storeId: string, ...nodes: ReturnType<typeof node>[]) =>
-  products.upsertProducts(storeId, nodes.map((n) => products.toShopifyProduct(n, [])));
 
 const chunkRows = (storeId: string) =>
   admin`select c.product_id, c.ordinal, c.content, c.source_hash, c.embedding::text as embedding, p.content_hash
