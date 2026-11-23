@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import postgres from "postgres";
 import { createHmac } from "node:crypto";
 
@@ -39,25 +39,63 @@ test("forged bearer token gives 401", async () => {
   expect(await session.authenticateEmbedded(req(`Bearer ${idToken("wrong-secret")}`)).catch(status)).toBe(401);
 });
 
-test("first load exchanges an expiring offline token, creates the store and saves its name", async () => {
-  const exchange = vi.spyOn(api.shopify.auth, "tokenExchange").mockResolvedValue({
-    session: { accessToken: "at", expires: new Date(Date.now() + 3_600_000), refreshToken: "rt",
-      refreshTokenExpires: new Date(Date.now() + 86_400_000) },
-  } as never);
-  vi.spyOn(api.shopify.clients, "Graphql").mockImplementation(
-    class { request = async () => ({ data: { shop: { name: "A Shop" } } }); } as never,
-  );
+const exchanged = () => ({
+  session: { accessToken: "at", expires: new Date(Date.now() + 3_600_000), refreshToken: "rt",
+    refreshTokenExpires: new Date(Date.now() + 86_400_000) },
+}) as never;
+const mockShopName = (impl: () => Promise<unknown>) =>
+  vi.spyOn(api.shopify.clients, "Graphql").mockImplementation(class { request = impl; } as never);
+
+beforeEach(async () => {
+  vi.restoreAllMocks();
+  await admin`truncate accounts, stores, store_tokens cascade`;
+});
+
+test("first load exchanges an expiring offline token and creates the store", async () => {
+  const exchange = vi.spyOn(api.shopify.auth, "tokenExchange").mockResolvedValue(exchanged());
   const token = idToken(process.env.SHOPIFY_API_SECRET!);
 
   const first = await session.authenticateEmbedded(req(`Bearer ${token}`));
   expect(first.shop).toBe("a.myshopify.com");
   expect(exchange).toHaveBeenCalledWith(expect.objectContaining({ shop: "a.myshopify.com", sessionToken: token, expiring: true }));
-  const [s] = await admin`select id, name, active from stores`;
-  expect(s).toEqual({ id: first.storeId, name: "A Shop", active: true });
+  const [s] = await admin`select id, active from stores`;
+  expect(s).toEqual({ id: first.storeId, active: true });
   const [t] = await admin`select access_token_enc from store_tokens`;
   expect(t.access_token_enc.startsWith("k1:")).toBe(true);
 
   // Valid tokens now exist: no second exchange.
   expect(await session.authenticateEmbedded(req(`Bearer ${token}`))).toEqual(first);
   expect(exchange).toHaveBeenCalledTimes(1);
+});
+
+test("two simultaneous first loads exchange once", async () => {
+  const exchange = vi.spyOn(api.shopify.auth, "tokenExchange").mockImplementation(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+    return exchanged();
+  });
+  const auth = `Bearer ${idToken(process.env.SHOPIFY_API_SECRET!)}`;
+  const [x, y] = await Promise.all([session.authenticateEmbedded(req(auth)), session.authenticateEmbedded(req(auth))]);
+  expect(x).toEqual(y);
+  expect(exchange).toHaveBeenCalledTimes(1);
+});
+
+test("/api/app/me fetches a missing shop name, and retries on a later load after a failure", async () => {
+  vi.spyOn(api.shopify.auth, "tokenExchange").mockResolvedValue(exchanged());
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const { GET } = await import("@/app/api/app/me/route");
+  const auth = `Bearer ${idToken(process.env.SHOPIFY_API_SECRET!)}`;
+
+  mockShopName(async () => { throw new Error("graphql down"); });
+  const failed = await GET(req(auth));
+  expect(failed.status).toBe(200);
+  expect(await failed.json()).toEqual({ shop: "a.myshopify.com", name: null });
+
+  const fetchName = vi.fn(async () => ({ data: { shop: { name: "A Shop" } } }));
+  mockShopName(fetchName);
+  expect(await (await GET(req(auth))).json()).toEqual({ shop: "a.myshopify.com", name: "A Shop" });
+  expect((await admin`select name from stores`)[0].name).toBe("A Shop");
+
+  // Saved: no further fetch.
+  await GET(req(auth));
+  expect(fetchName).toHaveBeenCalledTimes(1);
 });

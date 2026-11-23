@@ -10,10 +10,12 @@ export const sql = postgres(process.env.DATABASE_URL!, {
 export const db = drizzle(sql, { schema });
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+/** The pool, or an open transaction to run inside (nested calls become savepoints). */
+export type Conn = typeof db | Tx;
 
 /** Runs fn in a transaction with app.store_id set (transaction-local, so it never leaks on the pool). */
-export function forStore<T>(storeId: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
-  return db.transaction(async (tx) => {
+export function forStore<T>(storeId: string, fn: (tx: Tx) => Promise<T>, conn: Conn = db): Promise<T> {
+  return conn.transaction(async (tx) => {
     await tx.execute(dsql`select set_config('app.store_id', ${storeId}, true)`);
     return fn(tx);
   });

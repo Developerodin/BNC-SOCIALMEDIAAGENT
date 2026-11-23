@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { forStore } from "@/db/client";
+import { type Conn, db, forStore } from "@/db/client";
 import { stores, storeTokens } from "@/db/schema";
 import { CURRENT_KEY_ID, decrypt, encrypt } from "@/lib/crypto";
 import { shopify } from "./api";
@@ -35,11 +35,11 @@ function row(storeId: string, t: TokenSet) {
   };
 }
 
-export function saveTokens(storeId: string, t: TokenSet): Promise<void> {
+export function saveTokens(storeId: string, t: TokenSet, conn: Conn = db): Promise<void> {
   return forStore(storeId, async (tx) => {
     const r = row(storeId, t);
     await tx.insert(storeTokens).values(r).onConflictDoUpdate({ target: storeTokens.storeId, set: r });
-  });
+  }, conn);
 }
 
 /** Returns a valid access token, refreshing (once, under a row lock) when <5 min of validity remains. */
