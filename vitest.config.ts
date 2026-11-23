@@ -10,6 +10,7 @@ process.env.DATABASE_ADMIN_URL = env.TEST_DATABASE_ADMIN_URL;
 export default defineConfig({
   resolve: { alias: { "@": path.resolve(__dirname, "src") } },
   test: {
+    fileParallelism: false, // DB files share one database and truncate per file
     globalSetup: ["tests/global-setup.ts"],
     setupFiles: ["tests/setup-truncate.ts"],
   },

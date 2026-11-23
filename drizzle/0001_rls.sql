@@ -1,8 +1,8 @@
--- Dev-only password: production sets the real one with ALTER ROLE app_user PASSWORD ... at deploy (M10).
+-- No password here: dev/test get one from docker/initdb/app-user.sql; production sets it out of band (ALTER ROLE) at deploy (M10).
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN
-    CREATE ROLE app_user LOGIN PASSWORD 'app_user' NOSUPERUSER NOBYPASSRLS;
+    CREATE ROLE app_user LOGIN NOSUPERUSER NOBYPASSRLS;
   END IF;
 END
 $$;
