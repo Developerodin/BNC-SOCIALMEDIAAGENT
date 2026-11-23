@@ -30,13 +30,22 @@ function statusLine(s: SyncState): string {
   return `${s.productCount} products synced · last synced ${when}`;
 }
 
+const GRACE_MS = 30_000;
+
 export default function AppHome() {
   const [name, setName] = useState<string | null>(null);
-  const [sync, setSync] = useState<SyncState | null>(null);
+  const [server, setServer] = useState<SyncState | null>(null);
+  // When Resync was clicked. The worker sets 'running' later than the POST returns, so for GRACE_MS a non-running server status is not trusted.
+  const [requestedAt, setRequestedAt] = useState<number | null>(null);
+  const [now, setNow] = useState(0); // advanced by each load and click, so render stays pure
 
   const load = useCallback(async () => {
     const res = await authed("/api/app/sync");
-    if (res.ok) setSync(await res.json());
+    if (!res.ok) return;
+    const next: SyncState = await res.json();
+    if (next.status === "running") setRequestedAt(null); // the server owns the state from here
+    setNow(Date.now());
+    setServer(next);
   }, []);
 
   useEffect(() => {
@@ -46,8 +55,11 @@ export default function AppHome() {
     })();
   }, [load]);
 
-  // C4: poll every 5 s while a sync is running.
+  const pending = requestedAt !== null && now - requestedAt < GRACE_MS;
+  const sync: SyncState | null = server && pending && server.status !== "running" ? { ...server, status: "running", itemsRead: 0 } : server;
   const running = sync?.status === "running";
+
+  // C4: poll every 5 s while a sync is running or requested.
   useEffect(() => {
     if (!running) return;
     const t = setInterval(load, 5000);
@@ -55,9 +67,16 @@ export default function AppHome() {
   }, [running, load]);
 
   async function resync() {
-    // Show running at once; the server confirms on the next poll. A failed POST is corrected by load().
-    setSync((s) => (s ? { ...s, status: "running", itemsRead: 0 } : s));
-    await authed("/api/app/sync", { method: "POST" });
+    const t = Date.now();
+    setNow(t);
+    setRequestedAt(t);
+    try {
+      const res = await authed("/api/app/sync", { method: "POST" });
+      if (res.ok) return; // keep polling; do not load() now, the job has not started yet
+    } catch {
+      // idToken or fetch threw: fall through to clear the optimistic state
+    }
+    setRequestedAt(null);
     await load();
   }
 
