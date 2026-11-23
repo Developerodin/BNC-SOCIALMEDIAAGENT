@@ -1,4 +1,5 @@
-import { boolean, integer, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, foreignKey, halfvec, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { EMBEDDING_DIMS } from "../lib/embedding-config";
 
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -54,4 +55,27 @@ export const products = pgTable(
     syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.storeId, t.shopifyId] })],
+);
+
+export const chunks = pgTable(
+  "chunks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    storeId: uuid("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
+    // 'product' for now; M6/M7 add 'doc' and 'faq' with their own id columns.
+    source: text("source").notNull(),
+    productId: text("product_id"),
+    ordinal: integer("ordinal").notNull(),
+    content: text("content").notNull(),
+    // sha256(model | dims | CHUNKER_VERSION | product contentHash), computed by the embed job.
+    sourceHash: text("source_hash").notNull(),
+    // D33: moving to 1536 dims needs a migration that runs DELETE FROM chunks first.
+    embedding: halfvec("embedding", { dimensions: EMBEDDING_DIMS }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    foreignKey({ columns: [t.storeId, t.productId], foreignColumns: [products.storeId, products.shopifyId] }).onDelete("cascade"),
+    index("chunks_store_product_idx").on(t.storeId, t.productId),
+    unique("chunks_store_product_ordinal_uq").on(t.storeId, t.productId, t.ordinal),
+  ],
 );

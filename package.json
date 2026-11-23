@@ -16,6 +16,7 @@
     "@shopify/shopify-api": "^15.1.2",
     "drizzle-orm": "^0.45.4",
     "next": "16.4.6",
+    "openai": "^7.62.0",
     "pg-boss": "^12.39.0",
     "postgres": "^4.1.1",
     "react": "19.3.0",

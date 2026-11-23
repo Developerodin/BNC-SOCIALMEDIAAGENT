@@ -29,6 +29,20 @@
       "when": 1795428693111,
       "tag": "0003_products_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795432131796,
+      "tag": "0004_magical_dormammu",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795432131797,
+      "tag": "0005_chunks_rls",
+      "breakpoints": true
     }
   ]
 }
