@@ -6,15 +6,18 @@ let admin: ReturnType<typeof postgres>;
 let session: typeof import("@/lib/shopify/session");
 let api: typeof import("@/lib/shopify/api");
 let client: typeof import("@/db/client");
+let jobs: typeof import("@/lib/jobs");
 
 beforeAll(async () => {
   session = await import("@/lib/shopify/session");
   api = await import("@/lib/shopify/api");
   client = await import("@/db/client");
+  jobs = await import("@/lib/jobs");
   admin = postgres(process.env.DATABASE_ADMIN_URL!, { max: 1 });
 });
 
 afterAll(async () => {
+  await jobs.boss.stop();
   await admin.end();
   await client.sql.end();
 });
@@ -62,6 +65,7 @@ test("first load exchanges an expiring offline token and creates the store", asy
   expect(s).toEqual({ id: first.storeId, active: true });
   const [t] = await admin`select access_token_enc from store_tokens`;
   expect(t.access_token_enc.startsWith("k1:")).toBe(true);
+  expect(await admin`select id from pgboss.job where name = 'store-sync' and singleton_key = ${first.storeId}`).toHaveLength(1);
 
   // Valid tokens now exist: no second exchange.
   expect(await session.authenticateEmbedded(req(`Bearer ${token}`))).toEqual(first);

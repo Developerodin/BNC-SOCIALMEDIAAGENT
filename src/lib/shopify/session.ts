@@ -1,10 +1,12 @@
 import { eq, sql as dsql } from "drizzle-orm";
-import { RequestedTokenType, Session } from "@shopify/shopify-api";
+import { RequestedTokenType } from "@shopify/shopify-api";
 import { type Conn, db, forStore } from "@/db/client";
 import { stores, storeTokens } from "@/db/schema";
 import { upsertStore } from "@/lib/stores";
+import { enqueueSync } from "@/lib/sync";
+import { adminGraphql } from "./admin";
 import { shopify } from "./api";
-import { getAccessToken, saveTokens } from "./tokens";
+import { saveTokens } from "./tokens";
 
 const unauthorized = () => new Response(null, { status: 401 });
 
@@ -37,10 +39,10 @@ export async function authenticateEmbedded(req: Request): Promise<{ storeId: str
   // Serialise exchanges per shop so concurrent first loads can't store a superseded token.
   // All writes run on the lock's own connection, so waiters holding pool slots can't starve the holder.
   // ponytail: each waiter holds a pooled connection across the exchange HTTP call; fine while exchanges are rare.
-  const storeId = await db.transaction(async (lock) => {
+  const { storeId, exchanged } = await db.transaction(async (lock) => {
     await lock.execute(dsql`select pg_advisory_xact_lock(hashtext(${shop}))`);
     const winner = await hasValidTokens(shop, lock);
-    if (winner) return winner;
+    if (winner) return { storeId: winner, exchanged: false };
 
     const { session } = await shopify.auth.tokenExchange({
       shop,
@@ -55,9 +57,11 @@ export async function authenticateEmbedded(req: Request): Promise<{ storeId: str
       refreshToken: session.refreshToken ?? null,
       refreshExpiresAt: session.refreshTokenExpires ?? null,
     }, lock);
-    // TODO(M2): enqueue the initial catalog sync when upsertStore reports created.
-    return storeId;
+    return { storeId, exchanged: true };
   });
+  // After commit, so the job never sees an uncommitted store. Install and reinstall both sync the catalog.
+  // ponytail: if this send fails the request errors, and the next load finds valid tokens and won't retry the sync.
+  if (exchanged) await enqueueSync(storeId);
   return { storeId, shop };
 }
 
@@ -66,10 +70,9 @@ export async function ensureShopName(storeId: string, shop: string): Promise<str
   const [s] = await db.select({ name: stores.name }).from(stores).where(eq(stores.id, storeId));
   if (s.name) return s.name;
   try {
-    const session = new Session({ id: `offline_${shop}`, shop, state: "", isOnline: false, accessToken: await getAccessToken(storeId) });
-    const { data } = await new shopify.clients.Graphql({ session }).request<{ shop: { name: string } }>("{ shop { name } }");
-    await db.update(stores).set({ name: data!.shop.name }).where(eq(stores.id, storeId));
-    return data!.shop.name;
+    const data = await adminGraphql<{ shop: { name: string } }>(storeId, shop, "{ shop { name } }");
+    await db.update(stores).set({ name: data.shop.name }).where(eq(stores.id, storeId));
+    return data.shop.name;
   } catch (e) {
     console.error(`Shop name fetch failed for ${shop}`, e);
     return null;

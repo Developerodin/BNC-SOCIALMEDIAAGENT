@@ -18,5 +18,9 @@ api_version = "2026-10"
   uri = "/api/webhooks/shopify"
 
   [[webhooks.subscriptions]]
+  topics = ["bulk_operations/finish"]
+  uri = "/api/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
   compliance_topics = ["customers/data_request","customers/redact","shop/redact"]
   uri = "/api/webhooks/shopify"

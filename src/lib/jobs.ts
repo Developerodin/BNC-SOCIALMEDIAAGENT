@@ -13,6 +13,10 @@ function init(): Promise<void> {
   return (ready ??= (async () => {
     await boss.start();
     await boss.createQueue("shop-redact", { retryLimit: 5, retryBackoff: true });
+    // stately + singletonKey storeId: at most one queued and one active job per store.
+    for (const name of ["store-sync", "sync-poll"]) {
+      await boss.createQueue(name, { policy: "stately", retryLimit: 5, retryBackoff: true });
+    }
   })());
 }
 
@@ -36,6 +40,14 @@ export async function startWorkers(): Promise<void> {
   await init();
   await boss.work<{ shopDomain: string }>("shop-redact", async (jobs) => {
     for (const job of jobs) await shopRedact(job.data);
+  });
+  // Dynamic import: sync.ts imports enqueue from this module.
+  const { startSync, pollSync } = await import("@/lib/sync");
+  await boss.work<{ storeId: string }>("store-sync", async (jobs) => {
+    for (const job of jobs) await startSync(job.data);
+  });
+  await boss.work<{ storeId: string }>("sync-poll", async (jobs) => {
+    for (const job of jobs) await pollSync(job.data);
   });
 }
 

@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { type Conn, db, forStore } from "@/db/client";
 import { stores, storeTokens, webhookEvents } from "@/db/schema";
 import { enqueue } from "@/lib/jobs";
+import { enqueuePoll } from "@/lib/sync";
 import { shopify } from "./api";
 
 type Handler = (shopDomain: string, tx: Conn) => Promise<void>;
@@ -25,6 +26,12 @@ export const handlers: Record<string, Handler> = {
     if (!s) return;
     // ponytail: enqueued on pg-boss's own connection, so it is not rolled back with tx; the job is idempotent, so a duplicate is harmless.
     await enqueue("shop-redact", { shopDomain });
+  },
+  async BULK_OPERATIONS_FINISH(shopDomain, tx) {
+    const [s] = await tx.select({ id: stores.id }).from(stores).where(eq(stores.shopDomain, shopDomain));
+    if (!s) return;
+    // Poll now instead of waiting for the timer; pollSync reads the store's own operation, so the payload isn't needed.
+    await enqueuePoll(s.id);
   },
 };
 

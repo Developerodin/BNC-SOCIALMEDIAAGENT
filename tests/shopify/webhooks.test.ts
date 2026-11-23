@@ -104,3 +104,12 @@ test("a valid customers/redact gives 200", async () => {
   const res = await webhooks.handleWebhook(webhook("customers/redact", "c.myshopify.com"));
   expect(res.status).toBe(200);
 });
+
+test("bulk_operations/finish for a known store queues sync-poll", async () => {
+  const id = await installedStore(`b-${randomUUID()}.myshopify.com`);
+  const [s] = await admin`select shop_domain from stores where id = ${id}`;
+  const res = await webhooks.handleWebhook(webhook("bulk_operations/finish", s.shop_domain));
+  expect(res.status).toBe(200);
+  const queued = await admin`select id from pgboss.job where name = 'sync-poll' and singleton_key = ${id}`;
+  expect(queued).toHaveLength(1);
+});
