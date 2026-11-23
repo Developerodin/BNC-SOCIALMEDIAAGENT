@@ -18,7 +18,7 @@ function init(): Promise<void> {
     // createQueue is a no-op for an existing queue, so updateQueue applies the retry options to databases created earlier.
     // Backoff from 30s, capped at 15 min: 5 retries span roughly 15-30 min, enough to ride out throttling or a Shopify 5xx.
     const retry = { retryLimit: 5, retryBackoff: true, retryDelay: 30, retryDelayMax: 900 };
-    for (const [name, policy] of [["store-sync", "stately"], ["sync-poll", "stately"], ["product-sync", "standard"]] as const) {
+    for (const [name, policy] of [["store-sync", "stately"], ["sync-poll", "stately"], ["product-sync", "standard"], ["embed-products", "stately"]] as const) {
       await boss.createQueue(name, { policy, ...retry });
       await boss.updateQueue(name, retry);
     }
@@ -60,6 +60,14 @@ export async function startWorkers(): Promise<void> {
   });
   await boss.work<{ storeId: string; productId: string }>("product-sync", async (jobs) => {
     for (const job of jobs) await syncProduct(job.data);
+  });
+  const { embedStore } = await import("@/lib/indexing");
+  await boss.work<{ storeId: string }>("embed-products", async (jobs) => {
+    for (const job of jobs) {
+      const r = await embedStore(job.data, job.signal);
+      // C10: tokens are logged for M10's usage accounting.
+      console.info("embed-products done", { storeId: job.data.storeId, ...r });
+    }
   });
   await boss.work("resync-scan", async () => {
     await resyncScan();

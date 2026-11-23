@@ -5,6 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import type { JobWithMetadata } from "pg-boss";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
+import { enqueueEmbed } from "@/lib/indexing";
 import { enqueue } from "@/lib/jobs";
 import { deleteProduct, PRODUCT_FIELDS, type ShopifyProduct, sweepProducts, toShopifyProduct, upsertProducts } from "@/lib/products";
 import { adminGraphql } from "@/lib/shopify/admin";
@@ -46,6 +47,8 @@ export async function resyncScan(): Promise<void> {
     .where(eq(stores.active, true));
   const now = new Date();
   for (const r of rows) {
+    // Costs no OpenAI call when nothing changed; recovers lost or exhausted embed runs and stores synced before M3.
+    await enqueueEmbed(r.id);
     if (r.syncStatus === "running") {
       await enqueuePoll(r.id);
       continue;
@@ -136,6 +139,7 @@ export async function pollSync({ storeId }: { storeId: string }): Promise<void> 
     }
     await sweepProducts(storeId, s.startedAt!);
     await db.update(stores).set({ syncStatus: "idle", lastSyncAt: sql`now()`, bulkOperationId: null }).where(eq(stores.id, storeId));
+    await enqueueEmbed(storeId);
     return;
   }
   // FAILED, CANCELED, CANCELING, EXPIRED, or an operation Shopify no longer knows.
@@ -152,8 +156,9 @@ export async function syncProduct({ storeId, productId }: { storeId: string; pro
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     product: (Record<string, any> & { metafields: { edges: { node: ShopifyProduct["metafields"][number] }[] } }) | null;
   }>(storeId, s.shop, PRODUCT, { id: productId });
-  if (!product) return deleteProduct(storeId, productId);
-  await upsertProducts(storeId, [toShopifyProduct(product, product.metafields.edges.map((e) => e.node))]);
+  if (!product) await deleteProduct(storeId, productId);
+  else await upsertProducts(storeId, [toShopifyProduct(product, product.metafields.edges.map((e) => e.node))]);
+  await enqueueEmbed(storeId);
 }
 
 /**
