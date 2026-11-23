@@ -35,9 +35,9 @@ test("empty input makes no call", async () => {
   expect(create).not.toHaveBeenCalled();
 });
 
-test("batches split on the estimated token budget (CJK = 1 token per char)", async () => {
-  const big = "漢".repeat(150_000);
-  await embed(["1", big.slice(0, 120_000), big.slice(0, 120_000)]);
+test("batches split on the estimated token budget (CJK = 2 tokens per char)", async () => {
+  const big = "漢".repeat(60_000);
+  await embed(["1", big, big]);
   expect(create.mock.calls.map((c) => c[0].input.length)).toEqual([2, 1]);
 });
 

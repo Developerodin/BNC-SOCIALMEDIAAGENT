@@ -6,10 +6,11 @@ export { EMBEDDING_DIMS, EMBEDDING_MODEL, CHUNKER_VERSION } from "./embedding-co
 const MAX_INPUTS = 100;
 const MAX_BATCH_TOKENS = 200_000;
 
-// Rough: CJK = 1 token per char, everything else ~ 1 per 3 chars (conservative vs. ~4).
+// Rough: CJK = 2 tokens per char (conservative, keeps CJK-heavy batches under OpenAI's per-request cap),
+// everything else ~ 1 per 3 chars (conservative vs. ~4).
 function estimateTokens(text: string): number {
   const cjk = (text.match(/[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/g) ?? []).length;
-  return cjk + Math.ceil((text.length - cjk) / 3);
+  return cjk * 2 + Math.ceil((text.length - cjk) / 3);
 }
 
 // An OpenAI error (including a 400 for one bad input) propagates: the caller (embed job)

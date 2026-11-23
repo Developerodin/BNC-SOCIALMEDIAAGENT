@@ -29,18 +29,17 @@ test("long content splits into <=3200 char chunks with ~400 overlap and a Title 
 });
 
 test("no chunk cuts a word in half", () => {
-  const content = words(1300).slice(0, 8000);
+  const content = words(1300);
   const tokens = new Set(content.split(" "));
   const chunks = chunkText("T", content);
-  for (const c of chunks) {
-    const body = c.startsWith("Title: T\n") ? c.slice("Title: T\n".length) : c;
-    const parts = body.split(" ");
-    // interior words must be whole; edge words may be a partial only if the content's own edge
-    for (const p of parts.slice(1, -1)) expect(tokens.has(p)).toBe(true);
-  }
-  // every word of the content appears whole in some chunk
-  const joined = chunks.join(" ");
-  expect(joined).toContain("word1299".slice(0, 7));
+  expect(chunks.length).toBeGreaterThan(2);
+  chunks.forEach((c, i) => {
+    const body = i === 0 ? c : c.slice("Title: T\n".length);
+    const parts = body.trim().split(" ");
+    expect(tokens.has(parts[0])).toBe(true);
+    expect(tokens.has(parts[parts.length - 1])).toBe(true);
+  });
+  expect(chunks[chunks.length - 1].endsWith("word1299")).toBe(true);
 });
 
 test("whitespace-free content is hard-cut at 3200 characters", () => {
