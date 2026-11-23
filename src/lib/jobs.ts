@@ -19,6 +19,7 @@ function init(): Promise<void> {
     }
     // Default policy: sendDebounced dedupes with singleton_on slots, which stately's singletonKey rules would fight.
     await boss.createQueue("product-sync", { retryLimit: 5, retryBackoff: true });
+    await boss.createQueue("resync-scan", { retryLimit: 5, retryBackoff: true });
   })());
 }
 
@@ -44,7 +45,7 @@ export async function startWorkers(): Promise<void> {
     for (const job of jobs) await shopRedact(job.data);
   });
   // Dynamic import: sync.ts imports enqueue from this module.
-  const { startSync, pollSync, syncProduct } = await import("@/lib/sync");
+  const { startSync, pollSync, syncProduct, resyncScan } = await import("@/lib/sync");
   await boss.work<{ storeId: string }>("store-sync", async (jobs) => {
     for (const job of jobs) await startSync(job.data);
   });
@@ -54,6 +55,10 @@ export async function startWorkers(): Promise<void> {
   await boss.work<{ storeId: string; productId: string }>("product-sync", async (jobs) => {
     for (const job of jobs) await syncProduct(job.data);
   });
+  await boss.work("resync-scan", async () => {
+    await resyncScan();
+  });
+  await boss.schedule("resync-scan", "0 * * * *");
 }
 
 export async function enqueue(name: string, data: object, opts?: SendOptions): Promise<string | null> {

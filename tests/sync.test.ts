@@ -214,3 +214,38 @@ test("syncProduct does nothing for an inactive store", async () => {
   await sync.syncProduct({ storeId, productId: "gid://shopify/Product/1" });
   expect(gql).not.toHaveBeenCalled();
 });
+
+test("isResyncDue follows the frequency", () => {
+  const now = new Date("2026-03-10T00:00:00Z");
+  const ago = (h: number) => new Date(now.getTime() - h * 3600_000);
+  expect(sync.isResyncDue("daily", ago(23), now)).toBe(false);
+  expect(sync.isResyncDue("daily", ago(25), now)).toBe(true);
+  expect(sync.isResyncDue("weekly", ago(6 * 24), now)).toBe(false);
+  expect(sync.isResyncDue("weekly", ago(8 * 24), now)).toBe(true);
+  expect(sync.isResyncDue("off", ago(1000), now)).toBe(false);
+  expect(sync.isResyncDue("off", null, now)).toBe(false);
+  expect(sync.isResyncDue(undefined, null, now)).toBe(true);
+  expect(sync.isResyncDue(undefined, ago(25), now)).toBe(true);
+});
+
+test("resyncScan queues overdue active idle stores only", async () => {
+  const mk = async (o: { active?: boolean; status?: string; settings?: object; last?: Date | null }) => {
+    const id = await newStore({ active: o.active });
+    await admin`update stores set sync_status = ${o.status ?? "idle"}, settings = ${admin.json((o.settings ?? {}) as never)},
+      last_sync_at = ${o.last === undefined ? new Date(Date.now() - 48 * 3600_000) : o.last} where id = ${id}`;
+    return id;
+  };
+  const due = await mk({});
+  const never = await mk({ last: null });
+  const off = await mk({ settings: { resyncFrequency: "off" } });
+  const inactive = await mk({ active: false });
+  const running = await mk({ status: "running" });
+  await sync.resyncScan();
+  const queued = async (id: string) =>
+    (await admin`select id from pgboss.job where name = 'store-sync' and singleton_key = ${id} and state = 'created'`).length;
+  expect(await queued(due)).toBe(1);
+  expect(await queued(never)).toBe(1);
+  expect(await queued(off)).toBe(0);
+  expect(await queued(inactive)).toBe(0);
+  expect(await queued(running)).toBe(0);
+});

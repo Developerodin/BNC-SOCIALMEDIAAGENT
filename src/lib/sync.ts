@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
 import { enqueue } from "@/lib/jobs";
@@ -19,6 +19,33 @@ const POLL = `query($id: ID!) { node(id: $id) { ... on BulkOperation { status ob
 
 export async function enqueueSync(storeId: string): Promise<void> {
   await enqueue("store-sync", { storeId }, { singletonKey: storeId });
+}
+
+const HOUR_MS = 3600_000;
+export type ResyncFrequency = "daily" | "weekly" | "off";
+
+/** D47/D66: daily (default), weekly or off. A store never synced is due unless off (R6 safety net for a failed first enqueue). */
+export function isResyncDue(frequency: ResyncFrequency | undefined, lastSyncAt: Date | null, now: Date): boolean {
+  const f = frequency ?? "daily";
+  if (f === "off") return false;
+  if (!lastSyncAt) return true;
+  return now.getTime() - lastSyncAt.getTime() >= (f === "weekly" ? 168 : 24) * HOUR_MS;
+}
+
+/**
+ * The hourly `resync-scan` handler. enqueueSync is singleton per store, so overlapping scans are harmless.
+ * ponytail: one query over all stores each hour. Page it once the store count reaches the thousands.
+ */
+export async function resyncScan(): Promise<void> {
+  const rows = await db
+    .select({ id: stores.id, settings: stores.settings, lastSyncAt: stores.lastSyncAt })
+    .from(stores)
+    .where(and(eq(stores.active, true), ne(stores.syncStatus, "running")));
+  const now = new Date();
+  for (const r of rows) {
+    const f = (r.settings as { resyncFrequency?: ResyncFrequency }).resyncFrequency;
+    if (isResyncDue(f, r.lastSyncAt, now)) await enqueueSync(r.id);
+  }
 }
 
 /** `stately` keeps one queued poll per store, so extra sends (webhook + timer) are absorbed. */
