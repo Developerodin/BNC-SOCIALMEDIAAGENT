@@ -19,7 +19,11 @@ function init(): Promise<void> {
 /** Deletes the store (store_tokens go with it via ON DELETE CASCADE), then its account if no other store uses it. Idempotent. */
 export async function shopRedact({ shopDomain }: { shopDomain: string }): Promise<void> {
   await db.transaction(async (tx) => {
-    const [s] = await tx.delete(stores).where(eq(stores.shopDomain, shopDomain)).returning({ accountId: stores.accountId });
+    // D65: a store that reinstalled before the job ran is active again, so it is kept.
+    const [s] = await tx
+      .delete(stores)
+      .where(and(eq(stores.shopDomain, shopDomain), eq(stores.active, false)))
+      .returning({ accountId: stores.accountId });
     if (!s) return;
     await tx
       .delete(accounts)

@@ -489,5 +489,7 @@ The design above was rewritten to match these. If anything conflicts, these win.
 - **D62 (P59) Staging**: a **small staging EC2** linked to a **separate "Shop Assistant (staging)" Shopify app** on the dev store. Every release goes to staging first.
 - **D63 (P60) Load test**: a **k6 test in M10**, about 50 concurrent chats with OpenAI mocked, plus one short real-OpenAI run to measure cost per message.
 - **D64 (P61) Data-loss window**: **24 h (nightly backups) is kept until the beta**, and revisited when the DB moves to RDS (point-in-time recovery).
+- **D65 Redact after reinstall**: the `shop-redact` job **deletes only a store that is still uninstalled** (`active = false`). A merchant who reinstalls before the job runs keeps their data.
+- **D66 Build-time Shopify env**: `next build` **requires the `SHOPIFY_*` env vars**, and fails without them. `SHOPIFY_API_KEY` is needed at build time anyway, so a missing key fails early.
 
 **P1–P56 and P26b are decided. The production domain (P57) is deferred to before M10. P58–P61 were decided as D61–D64.**

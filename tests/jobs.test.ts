@@ -21,7 +21,7 @@ afterAll(async () => {
 
 test("shop-redact removes the store, its tokens and its orphaned account, and is safe to repeat", async () => {
   const [acc] = await admin`insert into accounts default values returning id`;
-  const [s] = await admin`insert into stores (account_id, shop_domain) values (${acc.id}, 'gone.myshopify.com') returning id`;
+  const [s] = await admin`insert into stores (account_id, shop_domain, active) values (${acc.id}, 'gone.myshopify.com', false) returning id`;
   await tokens.saveTokens(s.id, { accessToken: "t", accessExpiresAt: null, refreshToken: null, refreshExpiresAt: null });
   const [other] = await admin`insert into accounts default values returning id`;
   await admin`insert into stores (account_id, shop_domain) values (${other.id}, 'kept.myshopify.com')`;
@@ -38,11 +38,21 @@ test("shop-redact removes the store, its tokens and its orphaned account, and is
 
 test("shop-redact keeps an account another store still uses", async () => {
   const [acc] = await admin`insert into accounts default values returning id`;
-  await admin`insert into stores (account_id, shop_domain) values (${acc.id}, 'one.myshopify.com')`;
+  await admin`insert into stores (account_id, shop_domain, active) values (${acc.id}, 'one.myshopify.com', false)`;
   await admin`insert into stores (account_id, shop_domain) values (${acc.id}, 'two.myshopify.com')`;
 
   await jobs.shopRedact({ shopDomain: "one.myshopify.com" });
 
   expect(await admin`select id from stores where account_id = ${acc.id}`).toHaveLength(1);
+  expect(await admin`select id from accounts where id = ${acc.id}`).toHaveLength(1);
+});
+
+test("shop-redact keeps a store that reinstalled before the job ran", async () => {
+  const [acc] = await admin`insert into accounts default values returning id`;
+  const [s] = await admin`insert into stores (account_id, shop_domain) values (${acc.id}, 'back.myshopify.com') returning id`;
+
+  await jobs.shopRedact({ shopDomain: "back.myshopify.com" });
+
+  expect(await admin`select id from stores where id = ${s.id}`).toHaveLength(1);
   expect(await admin`select id from accounts where id = ${acc.id}`).toHaveLength(1);
 });
