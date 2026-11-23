@@ -6,18 +6,12 @@ import { chunks, products, stores } from "@/db/schema";
 import { chunkText } from "@/lib/chunking";
 import { CHUNKER_VERSION, EMBEDDING_DIMS, EMBEDDING_MODEL } from "@/lib/embedding-config";
 import { embed } from "@/lib/embeddings";
-import { enqueue } from "@/lib/jobs";
 
 const BATCH = 100;
 
 /** Changing the model, the dimensions or the chunker changes every hash, so every product re-embeds. */
 export function sourceHash(contentHash: string): string {
   return createHash("sha256").update(`${EMBEDDING_MODEL}|${EMBEDDING_DIMS}|${CHUNKER_VERSION}|${contentHash}`).digest("hex");
-}
-
-/** `stately` + singletonKey: a burst of webhooks collapses into at most one queued and one active run per store. */
-export async function enqueueEmbed(storeId: string): Promise<void> {
-  await enqueue("embed-products", { storeId }, { singletonKey: storeId });
 }
 
 type Stale = { id: string; title: string; content: string; contentHash: string };

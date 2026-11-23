@@ -88,3 +88,8 @@ export async function enqueueProductSync(storeId: string, productId: string): Pr
   await init();
   await boss.sendDebounced("product-sync", { storeId, productId }, null, 60, `${storeId}:${productId}`);
 }
+
+/** `stately` + singletonKey: a burst of webhooks collapses into at most one queued and one active run per store. */
+export async function enqueueEmbed(storeId: string): Promise<void> {
+  await enqueue("embed-products", { storeId }, { singletonKey: storeId });
+}

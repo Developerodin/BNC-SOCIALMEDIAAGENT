@@ -5,8 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import type { JobWithMetadata } from "pg-boss";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
-import { enqueueEmbed } from "@/lib/indexing";
-import { enqueue } from "@/lib/jobs";
+import { enqueue, enqueueEmbed } from "@/lib/jobs";
 import { deleteProduct, PRODUCT_FIELDS, type ShopifyProduct, sweepProducts, toShopifyProduct, upsertProducts } from "@/lib/products";
 import { adminGraphql } from "@/lib/shopify/admin";
 
