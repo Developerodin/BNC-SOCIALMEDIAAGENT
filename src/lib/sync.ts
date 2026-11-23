@@ -5,7 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
 import { enqueue } from "@/lib/jobs";
-import { PRODUCT_FIELDS, type ShopifyProduct, sweepProducts, toShopifyProduct, upsertProducts } from "@/lib/products";
+import { deleteProduct, PRODUCT_FIELDS, type ShopifyProduct, sweepProducts, toShopifyProduct, upsertProducts } from "@/lib/products";
 import { adminGraphql } from "@/lib/shopify/admin";
 
 const BATCH = 250;
@@ -91,6 +91,20 @@ export async function pollSync({ storeId }: { storeId: string }): Promise<void> 
   }
   // FAILED, CANCELED, CANCELING, EXPIRED, or an operation Shopify no longer knows.
   await fail({ status: op?.status ?? null, errorCode: op?.errorCode ?? null });
+}
+
+const PRODUCT = `query($id: ID!) { product(id: $id) { ${PRODUCT_FIELDS} metafields(first: 50) { edges { node { namespace key type value } } } } }`;
+
+/** The `product-sync` handler: re-reads one product and upserts it, or deletes it when Shopify no longer has it. */
+export async function syncProduct({ storeId, productId }: { storeId: string; productId: string }): Promise<void> {
+  const [s] = await db.select({ shop: stores.shopDomain, active: stores.active }).from(stores).where(eq(stores.id, storeId));
+  if (!s?.active) return;
+  const { product } = await adminGraphql<{
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    product: (Record<string, any> & { metafields: { edges: { node: ShopifyProduct["metafields"][number] }[] } }) | null;
+  }>(storeId, s.shop, PRODUCT, { id: productId });
+  if (!product) return deleteProduct(storeId, productId);
+  await upsertProducts(storeId, [toShopifyProduct(product, product.metafields.edges.map((e) => e.node))]);
 }
 
 /**

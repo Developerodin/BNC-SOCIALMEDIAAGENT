@@ -187,3 +187,30 @@ test("pollSync on COMPLETED with a refused download marks the sync failed instea
   expect(s.sync_status).toBe("failed");
   expect(s.bulk_operation_id).toBeNull();
 });
+
+test("syncProduct deletes the row when Shopify returns no product", async () => {
+  const storeId = await newStore();
+  const gid = "gid://shopify/Product/gone";
+  await products.upsertProducts(storeId, [products.toShopifyProduct(node("gone"), [])]);
+  gql.mockResolvedValue({ product: null });
+  await sync.syncProduct({ storeId, productId: gid });
+  expect(await admin`select shopify_id from products where store_id = ${storeId}`).toHaveLength(0);
+});
+
+test("syncProduct upserts the product with its metafields", async () => {
+  const storeId = await newStore();
+  gql.mockResolvedValue({
+    product: { ...node("live", "Live"), metafields: { edges: [{ node: { namespace: "n", key: "k", type: "single_line_text_field", value: "metaval" } }] } },
+  });
+  await sync.syncProduct({ storeId, productId: "gid://shopify/Product/live" });
+  const rows = await admin`select title, content from products where store_id = ${storeId}`;
+  expect(rows).toHaveLength(1);
+  expect(rows[0].title).toBe("Live");
+  expect(rows[0].content).toContain("n.k: metaval");
+});
+
+test("syncProduct does nothing for an inactive store", async () => {
+  const storeId = await newStore({ active: false });
+  await sync.syncProduct({ storeId, productId: "gid://shopify/Product/1" });
+  expect(gql).not.toHaveBeenCalled();
+});

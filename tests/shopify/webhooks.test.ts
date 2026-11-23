@@ -24,8 +24,8 @@ afterAll(async () => {
   await client.sql.end();
 });
 
-function webhook(topic: string, shop: string, id = randomUUID(), secret = process.env.SHOPIFY_API_SECRET!) {
-  const body = JSON.stringify({ shop_domain: shop });
+function webhook(topic: string, shop: string, id = randomUUID(), secret = process.env.SHOPIFY_API_SECRET!, payload: object = {}) {
+  const body = JSON.stringify({ shop_domain: shop, ...payload });
   return new Request("https://test.example.com/api/webhooks/shopify", {
     method: "POST",
     body,
@@ -121,4 +121,36 @@ test("app/uninstalled on a running store resets its sync", async () => {
   expect((await webhooks.handleWebhook(webhook("app/uninstalled", shop))).status).toBe(200);
   const [s] = await admin`select sync_status, bulk_operation_id from stores where id = ${id}`;
   expect(s).toEqual({ sync_status: "idle", bulk_operation_id: null });
+});
+
+test("repeated products/update webhooks for one product are debounced to a current and a next-window job", async () => {
+  const id = await installedStore(`pu-${randomUUID()}.myshopify.com`);
+  const [s] = await admin`select shop_domain from stores where id = ${id}`;
+  const gid = "gid://shopify/Product/42";
+  for (let i = 0; i < 3; i++) {
+    const res = await webhooks.handleWebhook(webhook("products/update", s.shop_domain, randomUUID(), undefined, { admin_graphql_api_id: gid }));
+    expect(res.status).toBe(200);
+  }
+  const queued = await admin`select data from pgboss.job where name = 'product-sync' and data->>'storeId' = ${id}`;
+  // pg-boss sendDebounced: first runs now, second takes the next slot (so the last change is re-read), the third is dropped.
+  expect(queued).toHaveLength(2);
+  expect(queued[0].data).toEqual({ storeId: id, productId: gid });
+});
+
+test("products/delete for a product we never stored gives 200 and queues the gid built from id", async () => {
+  const id = await installedStore(`pd-${randomUUID()}.myshopify.com`);
+  const [s] = await admin`select shop_domain from stores where id = ${id}`;
+  const res = await webhooks.handleWebhook(webhook("products/delete", s.shop_domain, randomUUID(), undefined, { id: 7 }));
+  expect(res.status).toBe(200);
+  const queued = await admin`select data from pgboss.job where name = 'product-sync' and data->>'storeId' = ${id}`;
+  expect(queued[0].data.productId).toBe("gid://shopify/Product/7");
+});
+
+test("shop/update sets the store name", async () => {
+  const id = await installedStore(`su-${randomUUID()}.myshopify.com`);
+  const [s] = await admin`select shop_domain from stores where id = ${id}`;
+  const res = await webhooks.handleWebhook(webhook("shop/update", s.shop_domain, randomUUID(), undefined, { name: "New name" }));
+  expect(res.status).toBe(200);
+  const [after] = await admin`select name from stores where id = ${id}`;
+  expect(after.name).toBe("New name");
 });

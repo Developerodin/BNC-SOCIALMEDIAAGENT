@@ -17,6 +17,8 @@ function init(): Promise<void> {
     for (const name of ["store-sync", "sync-poll"]) {
       await boss.createQueue(name, { policy: "stately", retryLimit: 5, retryBackoff: true });
     }
+    // Default policy: sendDebounced dedupes with singleton_on slots, which stately's singletonKey rules would fight.
+    await boss.createQueue("product-sync", { retryLimit: 5, retryBackoff: true });
   })());
 }
 
@@ -42,16 +44,28 @@ export async function startWorkers(): Promise<void> {
     for (const job of jobs) await shopRedact(job.data);
   });
   // Dynamic import: sync.ts imports enqueue from this module.
-  const { startSync, pollSync } = await import("@/lib/sync");
+  const { startSync, pollSync, syncProduct } = await import("@/lib/sync");
   await boss.work<{ storeId: string }>("store-sync", async (jobs) => {
     for (const job of jobs) await startSync(job.data);
   });
   await boss.work<{ storeId: string }>("sync-poll", async (jobs) => {
     for (const job of jobs) await pollSync(job.data);
   });
+  await boss.work<{ storeId: string; productId: string }>("product-sync", async (jobs) => {
+    for (const job of jobs) await syncProduct(job.data);
+  });
 }
 
 export async function enqueue(name: string, data: object, opts?: SendOptions): Promise<string | null> {
   await init();
   return boss.send(name, data, opts);
+}
+
+/**
+ * Debounced per product: the first webhook in a 60s window runs at once, one more is queued for the next window
+ * (so the final state is always re-read), and any further ones in that window are dropped. The job carries only ids; it re-reads the product.
+ */
+export async function enqueueProductSync(storeId: string, productId: string): Promise<void> {
+  await init();
+  await boss.sendDebounced("product-sync", { storeId, productId }, null, 60, `${storeId}:${productId}`);
 }

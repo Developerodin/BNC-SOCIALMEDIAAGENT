@@ -1,11 +1,12 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type Conn, db, forStore } from "@/db/client";
 import { stores, storeTokens, webhookEvents } from "@/db/schema";
-import { enqueue } from "@/lib/jobs";
+import { enqueue, enqueueProductSync } from "@/lib/jobs";
 import { enqueuePoll } from "@/lib/sync";
 import { shopify } from "./api";
 
-type Handler = (shopDomain: string, tx: Conn) => Promise<void>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Handler = (shopDomain: string, tx: Conn, payload: any) => Promise<void>;
 
 /** Keyed by the topic as `shopify.webhooks.validate` returns it (app/uninstalled -> APP_UNINSTALLED). */
 export const handlers: Record<string, Handler> = {
@@ -38,7 +39,22 @@ export const handlers: Record<string, Handler> = {
     // Poll now instead of waiting for the timer; pollSync reads the store's own operation, so the payload isn't needed.
     await enqueuePoll(s.id);
   },
+  PRODUCTS_CREATE: (shopDomain, tx, payload) => productChanged(shopDomain, tx, payload.admin_graphql_api_id),
+  PRODUCTS_UPDATE: (shopDomain, tx, payload) => productChanged(shopDomain, tx, payload.admin_graphql_api_id),
+  // Delete payloads carry only the numeric id.
+  PRODUCTS_DELETE: (shopDomain, tx, payload) => productChanged(shopDomain, tx, `gid://shopify/Product/${payload.id}`),
+  async SHOP_UPDATE(shopDomain, tx, payload) {
+    await tx.update(stores).set({ name: payload.name }).where(eq(stores.shopDomain, shopDomain));
+  },
 };
+
+async function productChanged(shopDomain: string, tx: Conn, productId: string): Promise<void> {
+  const [s] = await tx
+    .select({ id: stores.id })
+    .from(stores)
+    .where(and(eq(stores.shopDomain, shopDomain), eq(stores.active, true)));
+  if (s) await enqueueProductSync(s.id, productId);
+}
 
 export async function handleWebhook(req: Request): Promise<Response> {
   const rawBody = await req.text();
@@ -54,7 +70,7 @@ export async function handleWebhook(req: Request): Promise<Response> {
         .onConflictDoNothing()
         .returning({ id: webhookEvents.id });
       if (!fresh) return;
-      await handlers[v.topic]?.(v.domain, tx);
+      await handlers[v.topic]?.(v.domain, tx, JSON.parse(rawBody));
     });
   } catch (e) {
     console.error("webhook handler failed", { topic: v.topic, shopDomain: v.domain, webhookId: v.webhookId }, e);
