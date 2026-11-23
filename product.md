@@ -491,5 +491,12 @@ The design above was rewritten to match these. If anything conflicts, these win.
 - **D64 (P61) Data-loss window**: **24 h (nightly backups) is kept until the beta**, and revisited when the DB moves to RDS (point-in-time recovery).
 - **D65 Redact after reinstall**: the `shop-redact` job **deletes only a store that is still uninstalled** (`active = false`). A merchant who reinstalls before the job runs keeps their data.
 - **D66 Build-time Shopify env**: `next build` **requires the `SHOPIFY_*` env vars**, and fails without them. `SHOPIFY_API_KEY` is needed at build time anyway, so a missing key fails early.
+- **D67 M2 sync details**: choices C1–C6 in `docs/superpowers/plans/2026-11-23-m2-product-sync.md`:
+  - keep every product, with flags for which are live,
+  - save the stable text on the product row,
+  - use text-like metafields, skipping `app--` namespaces,
+  - show progress as "items read",
+  - sync after every token exchange,
+  - `shop/update` updates the name only.
 
 **P1–P56 and P26b are decided. The production domain (P57) is deferred to before M10. P58–P61 were decided as D61–D64.**
