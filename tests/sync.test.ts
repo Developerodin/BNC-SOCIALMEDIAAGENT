@@ -166,3 +166,11 @@ test("startSync throws on userErrors so the job is retried", async () => {
   await expect(sync.startSync({ storeId })).rejects.toThrow(/already in progress/);
   expect((await store(storeId)).sync_status).toBe("idle");
 });
+
+test("startSync on a store left running polls its operation instead of starting another", async () => {
+  const storeId = await newStore({ bulkOperationId: "gid://shopify/BulkOperation/6", syncStartedAt: new Date() });
+  await sync.startSync({ storeId });
+  expect(gql).not.toHaveBeenCalled();
+  const queued = await admin`select id from pgboss.job where name = 'sync-poll' and singleton_key = ${storeId} and state = 'created'`;
+  expect(queued).toHaveLength(1);
+});

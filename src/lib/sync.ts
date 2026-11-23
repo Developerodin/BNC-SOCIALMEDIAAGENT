@@ -32,7 +32,9 @@ export async function startSync({ storeId }: { storeId: string }): Promise<void>
     .select({ shop: stores.shopDomain, active: stores.active, syncStatus: stores.syncStatus })
     .from(stores)
     .where(eq(stores.id, storeId));
-  if (!s?.active || s.syncStatus === "running") return;
+  if (!s?.active) return;
+  // A sync already running (or left running by a poll that ran out of retries): poll it to completion or failure instead.
+  if (s.syncStatus === "running") return enqueuePoll(storeId);
 
   const { bulkOperationRunQuery: r } = await adminGraphql<{
     bulkOperationRunQuery: { bulkOperation: { id: string } | null; userErrors: { field: string[] | null; message: string }[] };
@@ -51,7 +53,7 @@ export async function startSync({ storeId }: { storeId: string }): Promise<void>
 
 /**
  * The `sync-poll` handler. Safe to run twice on the same finished operation: the upserts and the sweep are idempotent.
- * ponytail: a poll that exhausts its retries leaves the store `running`, which blocks startSync until it is reset.
+ * A poll that exhausts its retries leaves the store `running`; the next startSync re-enqueues a poll for it.
  */
 export async function pollSync({ storeId }: { storeId: string }): Promise<void> {
   const [s] = await db
