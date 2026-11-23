@@ -167,6 +167,43 @@ test("startSync throws on userErrors so the job is retried", async () => {
   expect((await store(storeId)).sync_status).toBe("idle");
 });
 
+test("startSync starts a bulk operation, marks the store running and schedules a delayed poll", async () => {
+  const storeId = await newStore();
+  await admin`update stores set sync_object_count = 7 where id = ${storeId}`;
+  gql.mockResolvedValueOnce({ bulkOperationRunQuery: { bulkOperation: { id: "gid://shopify/BulkOperation/8" }, userErrors: [] } });
+
+  await sync.startSync({ storeId });
+
+  expect(gql).toHaveBeenCalledTimes(1);
+  expect(gql.mock.calls[0][2]).toContain("bulkOperationRunQuery");
+  const s = await store(storeId);
+  expect(s.bulk_operation_id).toBe("gid://shopify/BulkOperation/8");
+  expect(s.sync_status).toBe("running");
+  expect(s.sync_started_at).not.toBeNull();
+  expect(s.sync_object_count).toBe(0);
+  const queued = await admin`
+    select start_after > now() + interval '10 seconds' as delayed from pgboss.job
+    where name = 'sync-poll' and singleton_key = ${storeId} and state = 'created'`;
+  expect(queued).toEqual([{ delayed: true }]);
+});
+
+test("runSyncJob rethrows before the final attempt and marks the sync failed on it", async () => {
+  const storeId = await newStore({ bulkOperationId: "gid://shopify/BulkOperation/9", syncStartedAt: new Date() });
+  const job = (retryCount: number) => ({ name: "sync-poll", data: { storeId }, retryCount, retryLimit: 5 }) as never;
+  const boom = async () => {
+    throw new Error("throttled");
+  };
+  vi.spyOn(console, "error").mockImplementation(() => {});
+
+  await expect(sync.runSyncJob(job(4), boom)).rejects.toThrow("throttled");
+  expect((await store(storeId)).sync_status).toBe("running");
+
+  await sync.runSyncJob(job(5), boom);
+  const s = await store(storeId);
+  expect(s.sync_status).toBe("failed");
+  expect(s.bulk_operation_id).toBeNull();
+});
+
 test("startSync on a store left running polls its operation instead of starting another", async () => {
   const storeId = await newStore({ bulkOperationId: "gid://shopify/BulkOperation/6", syncStartedAt: new Date() });
   await sync.startSync({ storeId });
@@ -228,7 +265,7 @@ test("isResyncDue follows the frequency", () => {
   expect(sync.isResyncDue(undefined, ago(25), now)).toBe(true);
 });
 
-test("resyncScan queues overdue active idle stores only", async () => {
+test("resyncScan queues overdue idle stores and polls running ones", async () => {
   const mk = async (o: { active?: boolean; status?: string; settings?: object; last?: Date | null }) => {
     const id = await newStore({ active: o.active });
     await admin`update stores set sync_status = ${o.status ?? "idle"}, settings = ${admin.json((o.settings ?? {}) as never)},
@@ -248,4 +285,6 @@ test("resyncScan queues overdue active idle stores only", async () => {
   expect(await queued(off)).toBe(0);
   expect(await queued(inactive)).toBe(0);
   expect(await queued(running)).toBe(0);
+  const polls = await admin`select id from pgboss.job where name = 'sync-poll' and singleton_key = ${running} and state = 'created'`;
+  expect(polls).toHaveLength(1);
 });

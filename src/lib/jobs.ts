@@ -14,11 +14,14 @@ function init(): Promise<void> {
     await boss.start();
     await boss.createQueue("shop-redact", { retryLimit: 5, retryBackoff: true });
     // stately + singletonKey storeId: at most one queued and one active job per store.
-    for (const name of ["store-sync", "sync-poll"]) {
-      await boss.createQueue(name, { policy: "stately", retryLimit: 5, retryBackoff: true });
+    // Default policy for product-sync: sendDebounced dedupes with singleton_on slots, which stately's singletonKey rules would fight.
+    // createQueue is a no-op for an existing queue, so updateQueue applies the retry options to databases created earlier.
+    // Backoff from 30s, capped at 15 min: 5 retries span roughly 15-30 min, enough to ride out throttling or a Shopify 5xx.
+    const retry = { retryLimit: 5, retryBackoff: true, retryDelay: 30, retryDelayMax: 900 };
+    for (const [name, policy] of [["store-sync", "stately"], ["sync-poll", "stately"], ["product-sync", "standard"]] as const) {
+      await boss.createQueue(name, { policy, ...retry });
+      await boss.updateQueue(name, retry);
     }
-    // Default policy: sendDebounced dedupes with singleton_on slots, which stately's singletonKey rules would fight.
-    await boss.createQueue("product-sync", { retryLimit: 5, retryBackoff: true });
     await boss.createQueue("resync-scan", { retryLimit: 5, retryBackoff: true });
   })());
 }
@@ -45,12 +48,15 @@ export async function startWorkers(): Promise<void> {
     for (const job of jobs) await shopRedact(job.data);
   });
   // Dynamic import: sync.ts imports enqueue from this module.
-  const { startSync, pollSync, syncProduct, resyncScan } = await import("@/lib/sync");
-  await boss.work<{ storeId: string }>("store-sync", async (jobs) => {
-    for (const job of jobs) await startSync(job.data);
+  const { startSync, pollSync, syncProduct, resyncScan, runSyncJob } = await import("@/lib/sync");
+  // ponytail: pg-boss defaults, so each queue runs one job at a time in this process, across all stores; one slow
+  // catalog download delays every other store's poll. Upgrade path: `localConcurrency` on these work() calls, or
+  // `groupConcurrency` with a per-store group once several workers run.
+  await boss.work<{ storeId: string }, void, { includeMetadata: true }>("store-sync", { includeMetadata: true }, async (jobs) => {
+    for (const job of jobs) await runSyncJob(job, startSync);
   });
-  await boss.work<{ storeId: string }>("sync-poll", async (jobs) => {
-    for (const job of jobs) await pollSync(job.data);
+  await boss.work<{ storeId: string }, void, { includeMetadata: true }>("sync-poll", { includeMetadata: true }, async (jobs) => {
+    for (const job of jobs) await runSyncJob(job, pollSync);
   });
   await boss.work<{ storeId: string; productId: string }>("product-sync", async (jobs) => {
     for (const job of jobs) await syncProduct(job.data);

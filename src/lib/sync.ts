@@ -1,7 +1,8 @@
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
-import { and, eq, ne, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import type { JobWithMetadata } from "pg-boss";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
 import { enqueue } from "@/lib/jobs";
@@ -33,16 +34,22 @@ export function isResyncDue(frequency: ResyncFrequency | undefined, lastSyncAt: 
 }
 
 /**
- * The hourly `resync-scan` handler. enqueueSync is singleton per store, so overlapping scans are harmless.
+ * The hourly `resync-scan` handler. enqueueSync and enqueuePoll are singleton per store, so overlapping scans are harmless.
+ * A running store gets a poll instead: a healthy one already has a queued poll that absorbs it, and a stuck one is driven
+ * to completion or failure.
  * ponytail: one query over all stores each hour. Page it once the store count reaches the thousands.
  */
 export async function resyncScan(): Promise<void> {
   const rows = await db
-    .select({ id: stores.id, settings: stores.settings, lastSyncAt: stores.lastSyncAt })
+    .select({ id: stores.id, settings: stores.settings, lastSyncAt: stores.lastSyncAt, syncStatus: stores.syncStatus })
     .from(stores)
-    .where(and(eq(stores.active, true), ne(stores.syncStatus, "running")));
+    .where(eq(stores.active, true));
   const now = new Date();
   for (const r of rows) {
+    if (r.syncStatus === "running") {
+      await enqueuePoll(r.id);
+      continue;
+    }
     const f = (r.settings as { resyncFrequency?: ResyncFrequency }).resyncFrequency;
     if (isResyncDue(f, r.lastSyncAt, now)) await enqueueSync(r.id);
   }
@@ -51,6 +58,24 @@ export async function resyncScan(): Promise<void> {
 /** `stately` keeps one queued poll per store, so extra sends (webhook + timer) are absorbed. */
 export async function enqueuePoll(storeId: string, startAfter = 0): Promise<void> {
   await enqueue("sync-poll", { storeId }, { singletonKey: storeId, startAfter });
+}
+
+export async function failSync(storeId: string, detail: object): Promise<void> {
+  console.error("bulk sync failed", { storeId, ...detail });
+  await db.update(stores).set({ syncStatus: "failed", bulkOperationId: null }).where(eq(stores.id, storeId));
+}
+
+/**
+ * Runs a `store-sync` or `sync-poll` job. On the final attempt (pg-boss fails a job once retryCount reaches retryLimit),
+ * an error marks the store's sync failed instead of being rethrown, so the store can't stay `running` with no job left.
+ */
+export async function runSyncJob(job: JobWithMetadata<{ storeId: string }>, run: (d: { storeId: string }) => Promise<void>): Promise<void> {
+  try {
+    await run(job.data);
+  } catch (e) {
+    if (job.retryCount < job.retryLimit) throw e;
+    await failSync(job.data.storeId, { queue: job.name, attempts: job.retryCount + 1, error: e });
+  }
 }
 
 /** The `store-sync` handler: starts a bulk query over the catalog and schedules the first poll. */
@@ -80,7 +105,8 @@ export async function startSync({ storeId }: { storeId: string }): Promise<void>
 
 /**
  * The `sync-poll` handler. Safe to run twice on the same finished operation: the upserts and the sweep are idempotent.
- * A poll that exhausts its retries leaves the store `running`; the next startSync re-enqueues a poll for it.
+ * Errors are retried with backoff (jobs.ts). The final failed attempt marks the sync failed (runSyncJob); a store still
+ * `running` is re-polled by startSync and by the hourly resyncScan.
  */
 export async function pollSync({ storeId }: { storeId: string }): Promise<void> {
   const [s] = await db
@@ -98,17 +124,13 @@ export async function pollSync({ storeId }: { storeId: string }): Promise<void> 
     await enqueuePoll(storeId, POLL_DELAY_S);
     return;
   }
-  const fail = async (detail: object) => {
-    console.error("bulk sync failed", { storeId, ...detail });
-    await db.update(stores).set({ syncStatus: "failed", bulkOperationId: null }).where(eq(stores.id, storeId));
-  };
   if (op?.status === "COMPLETED") {
     // Docs: "If the query produced no results, then the url field will return null."
     if (op.url) {
       const res = await fetch(op.url);
       // Final, not retried: the same URL won't start working (an expired one gives 403), and throwing would leave the store running.
       // A thrown fetch (network error) still throws, so pg-boss retries it.
-      if (!res.ok || !res.body) return fail({ status: op.status, downloadStatus: res.status });
+      if (!res.ok || !res.body) return failSync(storeId, { status: op.status, downloadStatus: res.status });
       const input = Readable.fromWeb(res.body as WebReadableStream<Uint8Array>);
       await importJsonl(storeId, createInterface({ input, crlfDelay: Infinity }));
     }
@@ -117,7 +139,7 @@ export async function pollSync({ storeId }: { storeId: string }): Promise<void> 
     return;
   }
   // FAILED, CANCELED, CANCELING, EXPIRED, or an operation Shopify no longer knows.
-  await fail({ status: op?.status ?? null, errorCode: op?.errorCode ?? null });
+  await failSync(storeId, { status: op?.status ?? null, errorCode: op?.errorCode ?? null });
 }
 
 const PRODUCT = `query($id: ID!) { product(id: $id) { ${PRODUCT_FIELDS} metafields(first: 50) { edges { node { namespace key type value } } } } }`;
