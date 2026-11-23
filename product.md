@@ -498,5 +498,10 @@ The design above was rewritten to match these. If anything conflicts, these win.
   - show progress as "items read",
   - sync after every token exchange,
   - `shop/update` updates the name only.
+- **D68 M3 retrieval details**: choices C7–C10 in `docs/superpowers/plans/2026-11-23-m3-retrieval.md`:
+  - chunk products like PDFs (about 800 tokens, with overlap, and the title repeated in every chunk),
+  - only `ACTIVE` and published products get chunks,
+  - exact search only in phase 1, with HNSW added above 20k chunks per store,
+  - embedding spend tracking waits for M10.
 
 **P1–P56 and P26b are decided. The production domain (P57) is deferred to before M10. P58–P61 were decided as D61–D64.**
