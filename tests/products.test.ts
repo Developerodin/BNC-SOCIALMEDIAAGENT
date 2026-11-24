@@ -42,6 +42,7 @@ function product(over: Partial<import("@/lib/products").ShopifyProduct> = {}): i
     updatedAt: "2026-01-02T00:00:00Z",
     metafields: [],
     collections: [],
+    category: null,
     ...over,
   };
 }
@@ -186,4 +187,82 @@ test("toShopifyProduct maps a PRODUCT_FIELDS node, null-safe on the image", () =
   expect(products.toShopifyProduct({ ...node, featuredMedia: null }, []).imageUrl).toBeNull();
   expect(products.toShopifyProduct({ ...node, featuredMedia: { preview: null } }, []).imageUrl).toBeNull();
   expect(products.PRODUCT_FIELDS).toContain("featuredMedia");
+});
+
+test("buildContent adds the taxonomy category when present", () => {
+  expect(products.buildContent(product({ category: "Apparel & Accessories > Clothing > Shirts & Tops" }))).toContain(
+    "Category: Apparel & Accessories > Clothing > Shirts & Tops",
+  );
+  expect(products.buildContent(product({ category: null }))).not.toContain("Category:");
+  expect(products.PRODUCT_FIELDS).toContain("category { fullName }");
+  expect(products.toShopifyProduct({ ...product(), category: { fullName: "A > B" } }, []).category).toBe("A > B");
+  expect(products.toShopifyProduct({ ...product(), category: null }, []).category).toBeNull();
+});
+
+test("buildContent flattens rich text, keeps legacy types and joins list values as plain text", () => {
+  const rich = JSON.stringify({
+    type: "root",
+    children: [
+      { type: "heading", level: 2, children: [{ type: "text", value: "Care" }] },
+      { type: "paragraph", children: [{ type: "text", value: "Wash " }, { type: "text", value: "cold", bold: true }] },
+      { type: "list", listType: "unordered", children: [{ type: "list-item", children: [{ type: "text", value: "No bleach" }] }] },
+    ],
+  });
+  const out = products.buildContent(
+    product({
+      metafields: [
+        mf("custom", "care", "rich_text_field", rich),
+        mf("legacy", "s", "string", "old text"),
+        mf("legacy", "i", "integer", "42"),
+        mf("custom", "sizes", "list.single_line_text_field", '["S","M"]'),
+        mf("custom", "counts", "list.number_integer", "[1,2]"),
+        mf("custom", "ratios", "list.number_decimal", '["1.5","2.25"]'),
+        mf("custom", "ref", "metaobject_reference", "gid://shopify/Metaobject/1"),
+      ],
+    }),
+  );
+  expect(out).toContain("custom.care: Care\nWash cold\nNo bleach");
+  expect(out).not.toContain('"type"');
+  expect(out).toContain("legacy.s: old text");
+  expect(out).toContain("legacy.i: 42");
+  expect(out).toContain("custom.sizes: S, M");
+  expect(out).toContain("custom.counts: 1, 2");
+  expect(out).toContain("custom.ratios: 1.5, 2.25");
+  expect(out).not.toContain("Metaobject");
+});
+
+test("a measurement without value or unit is kept as written", () => {
+  const out = products.buildContent(
+    product({ metafields: [mf("m", "a", "weight", '{"value":2}'), mf("m", "b", "dimension", '{"unit":"CM"}')] }),
+  );
+  expect(out).toContain('m.a: {"value":2}');
+  expect(out).toContain('m.b: {"unit":"CM"}');
+  expect(out).not.toContain("undefined");
+});
+
+test("buildContent never cuts an emoji in half at the 500-character limit", () => {
+  const out = products.buildContent(product({ metafields: [mf("custom", "e", "multi_line_text_field", "x" + "😀".repeat(300))] }));
+  const value = out.split("custom.e: ")[1];
+  expect(value).toBe("x" + "😀".repeat(249));
+});
+
+test("buildContent sorts collections, then keeps the first 20", () => {
+  const cols = Array.from({ length: 25 }, (_, i) => `C${String(i).padStart(2, "0")}`);
+  const out = products.buildContent(product({ collections: [...cols].reverse() }));
+  expect(out).toContain(`Collections: ${cols.slice(0, 20).join(", ")}`);
+  expect(out).not.toContain("C20");
+});
+
+test("a scheduled product (publishedAt in the future) is not published yet", async () => {
+  const storeId = await newStore("sched.myshopify.com");
+  await products.upsertProducts(storeId, [product({ publishedAt: new Date(Date.now() + 86_400_000).toISOString() })]);
+  const [row] = await client.forStore(storeId, (tx) => tx.select().from(schema.products));
+  expect(row.published).toBe(false);
+});
+
+test("the built product link encodes the handle", async () => {
+  const storeId = await newStore("enc.myshopify.com");
+  await products.upsertProducts(storeId, [product({ onlineStoreUrl: null, handle: "tée bleue" })]);
+  const [row] = await client.forStore(storeId, (tx) => tx.select().from(schema.products));
+  expect(row.url).toBe("https://enc.myshopify.com/products/t%C3%A9e%20bleue");
 });

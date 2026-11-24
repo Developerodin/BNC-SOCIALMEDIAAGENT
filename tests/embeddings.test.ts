@@ -35,7 +35,7 @@ test("empty input makes no call", async () => {
   expect(create).not.toHaveBeenCalled();
 });
 
-test("batches split on the estimated token budget (CJK = 2 tokens per char)", async () => {
+test("batches split on the estimated token budget (CJK = 3 bytes per char)", async () => {
   const big = "漢".repeat(60_000);
   await embed(["1", big, big]);
   expect(create.mock.calls.map((c) => c[0].input.length)).toEqual([2, 1]);
@@ -52,4 +52,10 @@ test("passes the abort signal and does not retry in the SDK", async () => {
 test("an OpenAI error propagates", async () => {
   create.mockRejectedValueOnce(new Error("boom"));
   await expect(embed(["1"])).rejects.toThrow("boom");
+});
+
+test("batches budget by UTF-8 bytes, so emoji and Burmese can't overshoot the estimate", async () => {
+  const emoji = "😀".repeat(30_000); // 60k UTF-16 units, 120k bytes
+  await embed(["1", emoji, emoji]);
+  expect(create.mock.calls.map((c) => c[0].input.length)).toEqual([2, 1]);
 });

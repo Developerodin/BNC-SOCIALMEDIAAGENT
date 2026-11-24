@@ -14,6 +14,16 @@ export type RefreshFn = (p: { shop: string; refreshToken: string }) => Promise<T
 
 const REFRESH_WINDOW_MS = 5 * 60_000;
 
+/** stores.sync_error for a store whose access and refresh tokens have both expired. Opening the app clears it (session.ts). */
+export const RECONNECT_NEEDED = "Reconnect needed: open the app in Shopify admin";
+
+/** Only a new token exchange, run when the merchant opens the app, can give this store a token again. */
+export class ReconnectNeededError extends Error {
+  constructor(storeId: string) {
+    super(`Refresh token missing or expired for store ${storeId}; token exchange required`);
+  }
+}
+
 const defaultRefresh: RefreshFn = async (p) => {
   const { session } = await shopify.auth.refreshToken(p);
   return {
@@ -42,8 +52,21 @@ export function saveTokens(storeId: string, t: TokenSet, conn: Conn = db): Promi
   }, conn);
 }
 
-/** Returns a valid access token, refreshing (once, under a row lock) when <5 min of validity remains. */
-export function getAccessToken(storeId: string, refresh: RefreshFn = defaultRefresh): Promise<string> {
+/**
+ * Returns a valid access token, refreshing (once, under a row lock) when <5 min of validity remains.
+ * When the refresh token has expired too, marks the store RECONNECT_NEEDED (so Shopify jobs skip it) and throws ReconnectNeededError.
+ */
+export async function getAccessToken(storeId: string, refresh: RefreshFn = defaultRefresh): Promise<string> {
+  try {
+    return await readOrRefresh(storeId, refresh);
+  } catch (e) {
+    // Marked outside the token transaction, which the throw rolls back.
+    if (e instanceof ReconnectNeededError) await db.update(stores).set({ syncError: RECONNECT_NEEDED }).where(eq(stores.id, storeId));
+    throw e;
+  }
+}
+
+function readOrRefresh(storeId: string, refresh: RefreshFn): Promise<string> {
   return forStore(storeId, async (tx) => {
     // ponytail: the row lock is held across the refresh HTTP call; fine while refreshes are rare and fast.
     const [t] = await tx.select().from(storeTokens).where(eq(storeTokens.storeId, storeId)).for("update");
@@ -52,7 +75,7 @@ export function getAccessToken(storeId: string, refresh: RefreshFn = defaultRefr
     if (fresh) return decrypt(t.accessTokenEnc, storeId);
 
     if (!t.refreshTokenEnc || !t.refreshExpiresAt || t.refreshExpiresAt.getTime() <= Date.now()) {
-      throw new Error(`Refresh token missing or expired for store ${storeId}; token exchange required`);
+      throw new ReconnectNeededError(storeId);
     }
     const [s] = await tx.select({ shopDomain: stores.shopDomain }).from(stores).where(eq(stores.id, storeId));
     const next = await refresh({ shop: s.shopDomain, refreshToken: decrypt(t.refreshTokenEnc, storeId) });

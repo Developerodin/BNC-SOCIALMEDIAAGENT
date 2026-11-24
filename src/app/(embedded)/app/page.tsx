@@ -17,7 +17,17 @@ declare module "react" {
   }
 }
 
-type SyncState = { status: "idle" | "running" | "failed"; lastSyncAt: string | null; itemsRead: number; productCount: number };
+type SyncState = {
+  status: "idle" | "running" | "failed";
+  lastSyncAt: string | null;
+  itemsRead: number;
+  /** Why the store can't sync, in words for the merchant. */
+  syncError: string | null;
+  /** Searchable: ACTIVE and published to the Online Store. */
+  productCount: number;
+  totalCount: number;
+  embeddedCount: number;
+};
 
 async function authed(url: string, init?: RequestInit) {
   return fetch(url, { ...init, headers: { Authorization: "Bearer " + (await shopify.idToken()) } });
@@ -25,7 +35,7 @@ async function authed(url: string, init?: RequestInit) {
 
 function statusLine(s: SyncState): string {
   if (s.status === "running") return `Syncing your catalog… ${s.itemsRead} items read`;
-  if (s.status === "failed") return "The last sync failed.";
+  if (s.status === "failed") return s.syncError ? `The last sync failed. ${s.syncError}` : "The last sync failed.";
   const when = s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleString() : "never";
   return `${s.productCount} products synced · last synced ${when}`;
 }
@@ -38,12 +48,16 @@ export default function AppHome() {
   // When Resync was clicked. The worker sets 'running' later than the POST returns, so for GRACE_MS a non-running server status is not trusted.
   const [requestedAt, setRequestedAt] = useState<number | null>(null);
   const [now, setNow] = useState(0); // advanced by each load and click, so render stays pure
+  const [refused, setRefused] = useState(false); // the last Resync found a sync already queued
 
   const load = useCallback(async () => {
     const res = await authed("/api/app/sync");
     if (!res.ok) return;
     const next: SyncState = await res.json();
-    if (next.status === "running") setRequestedAt(null); // the server owns the state from here
+    if (next.status === "running") {
+      setRequestedAt(null); // the server owns the state from here
+      setRefused(false); // the queued sync has started
+    }
     setNow(Date.now());
     setServer(next);
   }, []);
@@ -70,9 +84,11 @@ export default function AppHome() {
     const t = Date.now();
     setNow(t);
     setRequestedAt(t);
+    setRefused(false);
     try {
       const res = await authed("/api/app/sync", { method: "POST" });
       if (res.ok) return; // keep polling; do not load() now, the job has not started yet
+      if (res.status === 409) setRefused(true);
     } catch {
       // idToken or fetch threw: fall through to clear the optimistic state
     }
@@ -84,6 +100,11 @@ export default function AppHome() {
     <s-page heading="Shop Assistant">
       <s-text>Connected to {name}</s-text>
       {sync && <s-text>{statusLine(sync)}</s-text>}
+      {refused && <s-text>A sync is already queued.</s-text>}
+      {sync && sync.status === "idle" && sync.syncError && <s-text>{sync.syncError}</s-text>}
+      {sync && sync.status === "idle" && sync.productCount === 0 && sync.totalCount > 0 && (
+        <s-text>None of your {sync.totalCount} products is both active and published to the Online Store, so search has nothing to show.</s-text>
+      )}
       <s-button onClick={resync} disabled={running}>
         Resync
       </s-button>

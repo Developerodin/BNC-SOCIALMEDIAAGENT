@@ -103,3 +103,22 @@ test("/api/app/me fetches a missing shop name, and retries on a later load after
   await GET(req(auth));
   expect(fetchName).toHaveBeenCalledTimes(1);
 });
+
+test("a fresh token exchange clears the reconnect flag, and only that reason", async () => {
+  const { RECONNECT_NEEDED } = await import("@/lib/shopify/tokens");
+  const exchange = vi.spyOn(api.shopify.auth, "tokenExchange").mockResolvedValue(exchanged());
+  const auth = `Bearer ${idToken(process.env.SHOPIFY_API_SECRET!)}`;
+  const { storeId } = await session.authenticateEmbedded(req(auth));
+  const expire = () => admin`update store_tokens set access_expires_at = now() - interval '1 hour', refresh_expires_at = now() - interval '1 hour'`;
+
+  await admin`update stores set sync_error = ${RECONNECT_NEEDED} where id = ${storeId}`;
+  await expire();
+  await session.authenticateEmbedded(req(auth));
+  expect((await admin`select sync_error from stores`)[0].sync_error).toBeNull();
+
+  await admin`update stores set sync_error = 'Bulk operations are not enabled' where id = ${storeId}`;
+  await expire();
+  await session.authenticateEmbedded(req(auth));
+  expect((await admin`select sync_error from stores`)[0].sync_error).toBe("Bulk operations are not enabled");
+  expect(exchange).toHaveBeenCalledTimes(3);
+});

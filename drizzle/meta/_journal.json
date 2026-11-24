@@ -43,6 +43,13 @@
       "when": 1795432131797,
       "tag": "0005_chunks_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795502825025,
+      "tag": "0006_stores_sync_error",
+      "breakpoints": true
     }
   ]
 }

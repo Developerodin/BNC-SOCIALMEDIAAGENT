@@ -5,8 +5,13 @@ import { embed } from "@/lib/embeddings";
 
 export type SearchHit = { chunkId: string; source: "product"; productId: string; content: string; score: number };
 
+const PER_PRODUCT = 2;
+// How many nearest chunks are read, as a multiple of k, before the per-product cap is applied.
+const OVERFETCH = 4;
+
 /**
- * The only retrieval entry point (§7.5): the k chunks of this store nearest to the query, score = 1 - cosine distance.
+ * The only retrieval entry point (§7.5): the k chunks of this store nearest to the query, score = 1 - cosine distance,
+ * with at most PER_PRODUCT chunks from any one product so one long product can't fill every slot.
  * With opts.productId (a GID or a numeric id), up to 2 of that product's nearest chunks not already among the hits
  * are appended after the top k, so a product page always has its own product in context.
  * The query must already be masked (D41); this sends it to OpenAI as is.
@@ -35,7 +40,23 @@ export async function search(
     // D42: filter on store_id as well as RLS.
     // ponytail: exact scan, fine below 20k chunks per store. Above that, add an HNSW index and
     // set hnsw.iterative_scan = relaxed_order so the store filter still returns k rows (§7.5, C9).
-    const hits = await tx.select(cols).from(chunks).where(eq(chunks.storeId, storeId)).orderBy(asc(distance)).limit(k);
+    // ponytail: the cap filters the k*OVERFETCH nearest chunks, so when those come from fewer than k/PER_PRODUCT
+    // products the result has fewer than k hits. Upgrade path: a row_number() over (partition by product_id) window,
+    // at the cost of the exact scan (an HNSW index can't serve it).
+    const near = await tx
+      .select(cols)
+      .from(chunks)
+      .where(eq(chunks.storeId, storeId))
+      .orderBy(asc(distance))
+      .limit(k * OVERFETCH);
+    const perProduct = new Map<string, number>();
+    const hits = near
+      .filter((h) => {
+        const n = perProduct.get(h.productId) ?? 0;
+        perProduct.set(h.productId, n + 1);
+        return n < PER_PRODUCT;
+      })
+      .slice(0, k);
     if (!productId) return hits;
     const extra = await tx
       .select(cols)

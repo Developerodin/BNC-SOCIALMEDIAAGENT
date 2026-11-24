@@ -303,3 +303,69 @@ test("resyncScan queues overdue idle stores and polls running ones", async () =>
   const polls = await admin`select id from pgboss.job where name = 'sync-poll' and singleton_key = ${running} and state = 'created'`;
   expect(polls).toHaveLength(1);
 });
+
+const ACCESS_DENIED = "Access denied for bulkOperationRunQuery field. Required access: `read_products` access scope.";
+
+test("startSync fails at once, without retrying, when bulk operations are access-denied, and stores why", async () => {
+  const storeId = await newStore();
+  gql.mockRejectedValueOnce(new Error(ACCESS_DENIED));
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+  await sync.startSync({ storeId });
+
+  const s = await store(storeId);
+  expect(s.sync_status).toBe("failed");
+  expect(s.sync_error).toBe(sync.BULK_ACCESS_DENIED);
+  expect(log.mock.calls[0][1]).toMatchObject({ storeId, reason: sync.BULK_ACCESS_DENIED });
+});
+
+test("startSync still throws other errors so the job is retried", async () => {
+  const storeId = await newStore();
+  gql.mockRejectedValueOnce(new Error("Internal error"));
+  await expect(sync.startSync({ storeId })).rejects.toThrow("Internal error");
+  expect((await store(storeId)).sync_status).toBe("idle");
+});
+
+test("a successful sync clears the stored failure reason", async () => {
+  const storeId = await newStore({ bulkOperationId: "gid://shopify/BulkOperation/10", syncStartedAt: new Date() });
+  await admin`update stores set sync_error = 'old reason' where id = ${storeId}`;
+  gql.mockResolvedValueOnce(completed(null));
+  await sync.pollSync({ storeId });
+  const s = await store(storeId);
+  expect(s.sync_status).toBe("idle");
+  expect(s.sync_error).toBeNull();
+});
+
+test("Shopify job handlers skip a store that needs reconnecting, without calling Shopify", async () => {
+  const { RECONNECT_NEEDED } = await import("@/lib/shopify/tokens");
+  const storeId = await newStore({ bulkOperationId: "gid://shopify/BulkOperation/11", syncStartedAt: new Date() });
+  await admin`update stores set sync_error = ${RECONNECT_NEEDED} where id = ${storeId}`;
+  await sync.pollSync({ storeId });
+  await sync.syncProduct({ storeId, productId: "gid://shopify/Product/1" });
+  await admin`update stores set sync_status = 'idle', bulk_operation_id = null where id = ${storeId}`;
+  await sync.startSync({ storeId });
+  expect(gql).not.toHaveBeenCalled();
+  expect((await admin`select id from pgboss.job where name = 'sync-poll' and singleton_key = ${storeId}`)).toHaveLength(0);
+});
+
+test("runSyncJob does not retry or fail the sync when the store needs reconnecting", async () => {
+  const { ReconnectNeededError } = await import("@/lib/shopify/tokens");
+  const storeId = await newStore({ bulkOperationId: "gid://shopify/BulkOperation/12", syncStartedAt: new Date() });
+  const job = { name: "sync-poll", data: { storeId }, retryCount: 0, retryLimit: 5 } as never;
+  await sync.runSyncJob(job, async () => {
+    throw new ReconnectNeededError(storeId);
+  });
+  expect((await store(storeId)).sync_status).toBe("running");
+});
+
+test("the bulk query and the single-product query ask for the same nested limits", async () => {
+  const storeId = await newStore();
+  gql.mockResolvedValueOnce({ bulkOperationRunQuery: { bulkOperation: { id: "gid://shopify/BulkOperation/13" }, userErrors: [] } });
+  await sync.startSync({ storeId });
+  gql.mockResolvedValueOnce({ product: null });
+  await sync.syncProduct({ storeId, productId: "gid://shopify/Product/1" });
+  const limits = (q: string) => q.match(/(metafields|collections)\(first: \d+\)/g);
+  const bulk = limits(gql.mock.calls[0][3].query);
+  expect(bulk).toEqual(["metafields(first: 50)", "collections(first: 20)"]);
+  expect(limits(gql.mock.calls[1][2])).toEqual(bulk);
+});

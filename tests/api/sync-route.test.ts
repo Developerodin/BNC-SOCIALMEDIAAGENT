@@ -38,20 +38,33 @@ test("POST without a bearer is 401", async () => {
   expect((await route.POST(req("POST", false))).status).toBe(401);
 });
 
-test("two POSTs answer 202 and leave one queued job", async () => {
+test("a second POST while a sync is queued answers 409 with a reason, leaving one queued job", async () => {
   expect((await route.POST(req("POST"))).status).toBe(202);
-  expect((await route.POST(req("POST"))).status).toBe(202);
+  const refused = await route.POST(req("POST"));
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toEqual({ reason: "already_queued" });
   const q = await admin`select id from pgboss.job where name = 'store-sync' and singleton_key = ${storeId} and state = 'created'`;
   expect(q.length).toBe(1);
 });
 
-test("GET counts only ACTIVE published products", async () => {
+test("GET counts searchable (ACTIVE published), total and embedded products, and returns the failure reason", async () => {
   const row = (id: string, status: string, published: boolean) =>
     admin`insert into products (store_id, shopify_id, handle, title, status, published, content, content_hash, shopify_updated_at)
           values (${storeId}, ${id}, ${id}, 't', ${status}, ${published}, 'c', ${id}, now())`;
   await row("1", "ACTIVE", true);
   await row("2", "ACTIVE", false);
   await row("3", "DRAFT", true);
+  await admin`insert into chunks (store_id, source, product_id, ordinal, content, source_hash, embedding)
+    select ${storeId}, 'product', '1', o, 'c', 'h', array_fill(0.1, array[512])::halfvec from generate_series(0, 1) o`;
+  await admin`update stores set sync_status = 'failed', sync_error = 'why' where id = ${storeId}`;
   const body = await (await route.GET(req("GET"))).json();
-  expect(body).toEqual({ status: "idle", lastSyncAt: null, itemsRead: 0, productCount: 1 });
+  expect(body).toEqual({
+    status: "failed",
+    lastSyncAt: null,
+    itemsRead: 0,
+    syncError: "why",
+    productCount: 1,
+    totalCount: 3,
+    embeddedCount: 1,
+  });
 });

@@ -20,6 +20,8 @@ export const stores = pgTable("stores", {
   bulkOperationId: text("bulk_operation_id"),
   syncStartedAt: timestamp("sync_started_at", { withTimezone: true }),
   syncObjectCount: integer("sync_object_count").notNull().default(0),
+  // Why the store can't sync, in words the merchant can act on; null when nothing is wrong.
+  syncError: text("sync_error"),
 });
 
 export const storeTokens = pgTable("store_tokens", {

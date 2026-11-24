@@ -48,3 +48,26 @@ test("whitespace-free content is hard-cut at 3200 characters", () => {
   expect(chunks.length).toBeGreaterThan(2);
   for (const c of chunks) expect(c.length).toBeLessThanOrEqual(3200);
 });
+
+const bytes = (s: string) => Buffer.byteLength(s, "utf8");
+const loneSurrogate = (s: string) => /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(s);
+
+test("every chunk fits 8,000 UTF-8 bytes, so it stays under the model's 8,191-token input limit", () => {
+  // Burmese: 3 bytes per char, often more than one token per char.
+  const burmese = "မြန်မာစာ".repeat(1000);
+  expect(burmese.length).toBeGreaterThan(3200);
+  const chunks = chunkText("ခေါင်းစဉ်", burmese);
+  expect(chunks.length).toBeGreaterThan(2);
+  for (const c of chunks) expect(bytes(c)).toBeLessThanOrEqual(8000);
+  expect(chunkText("T", "က".repeat(3000))).toHaveLength(2); // 3,000 chars but 9,000 bytes
+});
+
+test("hard cuts and overlaps never split a surrogate pair", () => {
+  const chunks = chunkText("T", "😀".repeat(5000));
+  expect(chunks.length).toBeGreaterThan(2);
+  for (const c of chunks) expect(loneSurrogate(c)).toBe(false);
+});
+
+test("CHUNKER_VERSION is bumped for byte-capped chunks", async () => {
+  expect((await import("@/lib/embedding-config")).CHUNKER_VERSION).toBe(2);
+});

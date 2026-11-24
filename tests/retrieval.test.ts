@@ -111,3 +111,15 @@ test("a productId the store doesn't have returns the normal top-k", async () => 
   expect(await retrieval.search(a, "hiking boots", 2, { productId: "999" })).toEqual(plain);
   expect(await retrieval.search(a, "hiking boots", 2, { productId: gid("5") })).toEqual(plain);
 });
+
+test("one long product fills at most 2 of the k slots; the rest go to other products", async () => {
+  const long = node("4", { title: "Hiking boots guide", description: "hiking boots trail ".repeat(700) });
+  const a = await seeded(boots("1"), dress("2"), bottle("3"), long);
+  expect((await admin`select count(*)::int as n from chunks where store_id = ${a} and product_id = ${gid("4")}`)[0].n).toBeGreaterThan(3);
+
+  const hits = await retrieval.search(a, "hiking boots trail", 4);
+  expect(hits).toHaveLength(4);
+  expect(hits.filter((h) => h.productId === gid("4"))).toHaveLength(2);
+  expect(new Set(hits.map((h) => h.productId)).size).toBe(3);
+  for (let i = 1; i < hits.length; i++) expect(hits[i - 1].score).toBeGreaterThanOrEqual(hits[i].score);
+});

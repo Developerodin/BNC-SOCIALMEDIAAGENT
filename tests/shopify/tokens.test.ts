@@ -60,3 +60,9 @@ test("expired refresh token throws a clear error", async () => {
   });
   await expect(tokens.getAccessToken(A, vi.fn())).rejects.toThrow(/refresh token/i);
 });
+
+test("an expired refresh token marks the store as needing a reconnect", async () => {
+  await admin`update stores set sync_error = null where id = ${A}`;
+  await expect(tokens.getAccessToken(A, vi.fn())).rejects.toBeInstanceOf(tokens.ReconnectNeededError);
+  expect((await admin`select sync_error from stores where id = ${A}`)[0].sync_error).toBe(tokens.RECONNECT_NEEDED);
+});

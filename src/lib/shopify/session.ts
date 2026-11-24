@@ -1,4 +1,4 @@
-import { eq, sql as dsql } from "drizzle-orm";
+import { and, eq, sql as dsql } from "drizzle-orm";
 import { RequestedTokenType } from "@shopify/shopify-api";
 import { type Conn, db, forStore } from "@/db/client";
 import { stores, storeTokens } from "@/db/schema";
@@ -6,7 +6,7 @@ import { upsertStore } from "@/lib/stores";
 import { enqueueSync } from "@/lib/sync";
 import { adminGraphql } from "./admin";
 import { shopify } from "./api";
-import { saveTokens } from "./tokens";
+import { RECONNECT_NEEDED, saveTokens } from "./tokens";
 
 const unauthorized = () => new Response(null, { status: 401 });
 
@@ -57,6 +57,11 @@ export async function authenticateEmbedded(req: Request): Promise<{ storeId: str
       refreshToken: session.refreshToken ?? null,
       refreshExpiresAt: session.refreshTokenExpires ?? null,
     }, lock);
+    // Jobs can reach Shopify again. Any other sync_error is left for the next sync to clear.
+    await lock
+      .update(stores)
+      .set({ syncError: null })
+      .where(and(eq(stores.id, storeId), eq(stores.syncError, RECONNECT_NEEDED)));
     return { storeId, exchanged: true };
   });
   // After commit, so the job never sees an uncommitted store. Install and reinstall both sync the catalog.
