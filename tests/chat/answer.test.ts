@@ -92,6 +92,9 @@ test("[[escalate]] split across deltas: no small-model text, small aborted, larg
   expect(signals[0].aborted).toBe(true);
   expect(create).toHaveBeenCalledTimes(2);
   expect(create.mock.calls[1][0]).toMatchObject({ model: "large-model", instructions: "SYSTEM-LARGE", input: "INPUT", store: false });
+  // Low thinking keeps the first word fast: none for the small model, low for the large one (overridable in .env).
+  expect(create.mock.calls[0][0]).toMatchObject({ reasoning: { effort: "none" } });
+  expect(create.mock.calls[1][0]).toMatchObject({ reasoning: { effort: "low" } });
   expect(products).toEqual(["gid://shopify/Product/101"]);
   // the aborted small call reports no usage, so only the large call's tokens are counted
   expect(r).toEqual({ model: "large", text: "Here  it is", status: "ok", tokens: { input: 200, output: 30 } });

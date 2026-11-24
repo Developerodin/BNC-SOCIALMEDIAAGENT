@@ -1,3 +1,4 @@
+import type { ReasoningEffort } from "openai/resources/shared";
 import OpenAI from "openai";
 
 // One client per process, created on first use so importing this file needs no key.
@@ -13,6 +14,15 @@ export function chatModel(size: "small" | "large"): string {
   const name = size === "small" ? process.env.OPENAI_MODEL_SMALL : process.env.OPENAI_MODEL_LARGE;
   if (!name) throw new Error(`OPENAI_MODEL_${size.toUpperCase()} is not set`);
   return name;
+}
+
+/**
+ * Reasoning effort per model size. Chat needs a fast first word, so the small model doesn't reason and the
+ * large one reasons lightly. OPENAI_REASONING_SMALL / _LARGE override it (gpt-6.2-sol rejects "none").
+ */
+export function chatReasoning(size: "small" | "large"): { effort: ReasoningEffort } {
+  const env = size === "small" ? process.env.OPENAI_REASONING_SMALL : process.env.OPENAI_REASONING_LARGE;
+  return { effort: (env || (size === "small" ? "none" : "low")) as ReasoningEffort };
 }
 
 // An AbortSignal that fires after `ms` or when `parent` aborts, whichever is first.

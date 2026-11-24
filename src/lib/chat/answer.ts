@@ -1,7 +1,7 @@
 import type { ResponseInput } from "openai/resources/responses/responses";
 import { MAX_ANSWER_TOKENS } from "./limits";
 import { createMarkerParser } from "./markers";
-import { chatModel, errorStatus, openai } from "./openai";
+import { chatModel, chatReasoning, errorStatus, openai } from "./openai";
 
 // OpenAI could not start an answer (§8: "Assistant unavailable right now"). Thrown only before
 // anything reached the shopper; after that, failures end the answer with status "cut_off".
@@ -88,6 +88,7 @@ export async function answer(opts: {
       const events = await openai().responses.create(
         {
           model: chatModel(size),
+          reasoning: chatReasoning(size),
           instructions: size === "large" ? (opts.largeSystem ?? opts.system) : opts.system,
           input: opts.input,
           stream: true,

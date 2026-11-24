@@ -117,3 +117,15 @@ test("the shopper's abort signal aborts the rewrite call", async () => {
   ac.abort();
   expect((await p).query).toBe("wax");
 });
+
+test("the rewrite asks the small model for no reasoning, overridable by OPENAI_REASONING_SMALL", async () => {
+  create.mockResolvedValueOnce(ok({ query: "q", includeGiftCards: false }));
+  await rewriteQuery({ message: "m", history: [], storeLocale: null, signal: new AbortController().signal });
+  expect(create.mock.calls[0][0]).toMatchObject({ reasoning: { effort: "none" } });
+
+  process.env.OPENAI_REASONING_SMALL = "low";
+  create.mockResolvedValueOnce(ok({ query: "q", includeGiftCards: false }));
+  await rewriteQuery({ message: "m", history: [], storeLocale: null, signal: new AbortController().signal });
+  expect(create.mock.calls[1][0]).toMatchObject({ reasoning: { effort: "low" } });
+  delete process.env.OPENAI_REASONING_SMALL;
+});

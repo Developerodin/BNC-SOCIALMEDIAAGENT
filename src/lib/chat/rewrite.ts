@@ -1,4 +1,4 @@
-import { chatModel, deadline, errorStatus, openai } from "./openai";
+import { chatModel, chatReasoning, deadline, errorStatus, openai } from "./openai";
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 export type Rewrite = { query: string; includeGiftCards: boolean; tokens: { input: number; output: number } };
@@ -64,6 +64,7 @@ export async function rewriteQuery(opts: {
     const res = await openai().responses.create(
       {
         model: chatModel("small"),
+        reasoning: chatReasoning("small"),
         store: false,
         instructions: instructions(opts.storeLocale),
         input: [
