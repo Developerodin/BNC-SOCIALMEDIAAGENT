@@ -11,7 +11,7 @@ import { appOrigin, resolveWidgetConfig, syncWidgetConfig } from "@/lib/widget-c
 
 const MAX_BODY = 8 * 1024; // 4 questions of 120 chars, a welcome, a URL: well under this
 const TOP = ["name", "accent", "avatarUrl", "welcome", "suggested"] as const;
-const GROUPS = { launcher: ["style", "label", "side", "offset"], teaser: ["enabled", "text", "delaySec"] } as const;
+const GROUPS = { launcher: ["style", "label", "side"], teaser: ["enabled", "text", "delaySec"] } as const;
 // Fields this card edits; a stored bad value elsewhere (e.g. `enabled`) must not block saving these.
 const EDITABLE = new Set<string>([...TOP, ...Object.entries(GROUPS).flatMap(([g, ks]) => ks.map((k) => `${g}.${k}`))]);
 

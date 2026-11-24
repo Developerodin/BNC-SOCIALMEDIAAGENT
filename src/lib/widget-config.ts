@@ -114,7 +114,8 @@ export function resolveWidgetConfig(store: StoreInput, apiBase: string): WidgetR
     v: 1,
     enabled: pick("enabled", w.enabled, bool, true),
     apiBase,
-    name: pick("name", w.name, text(40), store.name ?? ""),
+    // Shopify store names can be longer than 40; the default is cut so an untouched name never fails the check on save.
+    name: pick("name", w.name, text(40), (store.name ?? "").slice(0, 40)),
     accent: pick("accent", w.accent, (v) => typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v), "#0A0A0A"),
     avatarUrl: pick("avatarUrl", w.avatarUrl, isShopifyCdnUrl, null), // UD7b
     launcher: {

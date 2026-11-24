@@ -604,8 +604,14 @@ function WidgetSettingsCard() {
       welcome: form.welcome,
       suggested: form.suggested.map((q) => q.trim()).filter(Boolean),
       launcher: { style: form.style, label: form.label, side: form.side },
-      teaser: { enabled: form.teaserOn, text: form.teaserText, delaySec: form.teaserDelay.trim() === "" ? null : Number(form.teaserDelay) },
+      teaser: { enabled: form.teaserOn, text: form.teaserText, delaySec: teaserDelayValue(form.teaserDelay) },
     });
+  }
+
+  // s-text-field has no numeric mode: keep digits only, so letters can't silently fall back to the default delay.
+  function teaserDelayValue(raw: string): number | null {
+    const t = raw.trim();
+    return /^\d{1,3}$/.test(t) ? Number(t) : t === "" ? null : -1; // -1 fails the server check and shows the field error
   }
 
   return (
@@ -640,7 +646,7 @@ function WidgetSettingsCard() {
           </s-select>
         </s-stack>
         <s-text-field label="Button label" value={form.label} maxLength={40} details="Empty uses the theme's default." error={err("launcher.label")} onInput={(e) => set("label", valueOf(e))} />
-        <s-text-area label="Welcome message" value={form.welcome} maxLength={300} rows={3} error={err("welcome")} onInput={(e) => set("welcome", valueOf(e))} />
+        <s-text-area label="Welcome message" details="Leave empty to use the default greeting in your store's language." value={form.welcome} maxLength={300} rows={3} error={err("welcome")} onInput={(e) => set("welcome", valueOf(e))} />
         <s-divider />
         <s-heading>Suggested questions (up to 4)</s-heading>
         {form.suggested.map((q, i) => (
