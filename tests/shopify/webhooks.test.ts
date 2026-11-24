@@ -154,3 +154,16 @@ test("shop/update sets the store name", async () => {
   const [after] = await admin`select name from stores where id = ${id}`;
   expect(after.name).toBe("New name");
 });
+
+test("shop/update sets the store language and currency when the payload carries them, and keeps them otherwise", async () => {
+  const id = await installedStore(`sl-${randomUUID()}.myshopify.com`);
+  const [s] = await admin`select shop_domain from stores where id = ${id}`;
+  const send = (payload: object) => webhooks.handleWebhook(webhook("shop/update", s.shop_domain, randomUUID(), undefined, payload));
+
+  expect((await send({ name: "N", primary_locale: "fr", currency: "EUR" })).status).toBe(200);
+  expect((await admin`select primary_locale, currency_code from stores where id = ${id}`)[0]).toEqual({ primary_locale: "fr", currency_code: "EUR" });
+
+  expect((await send({ name: "N2" })).status).toBe(200);
+  expect((await admin`select name, primary_locale, currency_code from stores where id = ${id}`)[0])
+    .toEqual({ name: "N2", primary_locale: "fr", currency_code: "EUR" });
+});

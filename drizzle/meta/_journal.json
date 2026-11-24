@@ -57,6 +57,20 @@
       "when": 1795503139186,
       "tag": "0007_products_is_gift_card",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795504217503,
+      "tag": "0008_chat_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795504217504,
+      "tag": "0009_chat_rls",
+      "breakpoints": true
     }
   ]
 }

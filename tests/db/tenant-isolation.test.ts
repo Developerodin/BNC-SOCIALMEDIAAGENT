@@ -50,3 +50,21 @@ test("every table with a store_id column has RLS enabled and forced", async () =
     expect(r.relforcerowsecurity, r.relname).toBe(true);
   }
 });
+
+test("store A reads none of store B's conversations or messages", async () => {
+  for (const [id, n] of [[A, "a"], [B, "b"]]) {
+    const [c] = await admin`insert into conversations (store_id, token_hash) values (${id}, ${`hash-${n}`}) returning id`;
+    await admin`insert into messages (store_id, conversation_id, role, content) values (${id}, ${c.id}, 'user', ${`hi from ${n}`})`;
+  }
+  const convs = await mod.forStore(A, (tx) => tx.select().from(schema.conversations));
+  const msgs = await mod.forStore(A, (tx) => tx.select().from(schema.messages));
+  expect(convs.map((c) => c.storeId)).toEqual([A]);
+  expect(msgs.map((m) => m.content)).toEqual(["hi from a"]);
+  expect(await mod.db.select().from(schema.messages)).toHaveLength(0);
+});
+
+test("conversations and messages are covered by the RLS check", async () => {
+  const rows = await admin`
+    select relname from pg_class where relname in ('conversations', 'messages') and relrowsecurity and relforcerowsecurity`;
+  expect(rows.map((r) => r.relname).sort()).toEqual(["conversations", "messages"]);
+});

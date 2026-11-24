@@ -6,6 +6,7 @@ import type { JobWithMetadata } from "pg-boss";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
 import { enqueue, enqueueEmbed } from "@/lib/jobs";
+import { refreshShopInfo } from "@/lib/shop-info";
 import { deleteProduct, PRODUCT_FIELDS, type ShopifyProduct, sweepProducts, toShopifyProduct, upsertProducts } from "@/lib/products";
 import { adminGraphql } from "@/lib/shopify/admin";
 import { RECONNECT_NEEDED, ReconnectNeededError } from "@/lib/shopify/tokens";
@@ -105,6 +106,13 @@ export async function startSync({ storeId }: { storeId: string }): Promise<void>
   if (!s?.active || s.syncError === RECONNECT_NEEDED) return;
   // A sync already running (or left running by a poll that ran out of retries): poll it to completion or failure instead.
   if (s.syncStatus === "running") return enqueuePoll(storeId);
+
+  // Every full sync refreshes the storefront domains, language and currency. A failure keeps the old values and the sync goes on.
+  try {
+    await refreshShopInfo(storeId, s.shop);
+  } catch (e) {
+    console.error("shop info refresh failed", { storeId }, e);
+  }
 
   let r: { bulkOperation: { id: string } | null; userErrors: { field: string[] | null; message: string }[] };
   try {

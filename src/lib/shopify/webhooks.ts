@@ -44,7 +44,15 @@ export const handlers: Record<string, Handler> = {
   // Delete payloads carry only the numeric id.
   PRODUCTS_DELETE: (shopDomain, tx, payload) => productChanged(shopDomain, tx, `gid://shopify/Product/${payload.id}`),
   async SHOP_UPDATE(shopDomain, tx, payload) {
-    await tx.update(stores).set({ name: payload.name }).where(eq(stores.shopDomain, shopDomain));
+    // REST shop payload: `primary_locale` and `currency` (2026-10 sample). Absent fields keep the stored value.
+    await tx
+      .update(stores)
+      .set({
+        name: payload.name,
+        ...(payload.primary_locale ? { primaryLocale: payload.primary_locale } : {}),
+        ...(payload.currency ? { currencyCode: payload.currency } : {}),
+      })
+      .where(eq(stores.shopDomain, shopDomain));
   },
 };
 

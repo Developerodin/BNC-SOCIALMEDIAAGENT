@@ -1,4 +1,5 @@
-import { boolean, foreignKey, halfvec, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, check, foreignKey, halfvec, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { EMBEDDING_DIMS } from "../lib/embedding-config";
 
 export const accounts = pgTable("accounts", {
@@ -22,6 +23,11 @@ export const stores = pgTable("stores", {
   syncObjectCount: integer("sync_object_count").notNull().default(0),
   // Why the store can't sync, in words the merchant can act on; null when nothing is wrong.
   syncError: text("sync_error"),
+  // The storefront hosts chat requests may come from (lowercased): myshopify, primary and every other domain (refreshShopInfo).
+  domains: text("domains").array().notNull().default(sql`'{}'::text[]`),
+  // D76: the store's language, from the primary domain; null when Shopify doesn't give one (no query translation then).
+  primaryLocale: text("primary_locale"),
+  currencyCode: text("currency_code"),
 });
 
 export const storeTokens = pgTable("store_tokens", {
@@ -81,5 +87,41 @@ export const chunks = pgTable(
     foreignKey({ columns: [t.storeId, t.productId], foreignColumns: [products.storeId, products.shopifyId] }).onDelete("cascade"),
     index("chunks_store_product_idx").on(t.storeId, t.productId),
     unique("chunks_store_product_ordinal_uq").on(t.storeId, t.productId, t.ordinal),
+  ],
+);
+
+export const conversations = pgTable("conversations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  storeId: uuid("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull().unique(),
+  pageUrl: text("page_url"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// store_id is not in §7.13's Message; RLS needs it (D42).
+export const messages = pgTable(
+  "messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    storeId: uuid("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
+    role: text("role").$type<"user" | "assistant">().notNull(),
+    // Already masked (D41).
+    content: text("content").notNull(),
+    productIds: text("product_ids").array().notNull().default(sql`'{}'::text[]`),
+    // C15: the cards exactly as the shopper saw them.
+    cards: jsonb("cards"),
+    model: text("model").$type<"small" | "large">(),
+    // C19: an answer cut off mid-stream is saved as shown.
+    status: text("status").$type<"ok" | "cut_off">().notNull().default("ok"),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("messages_conversation_created_idx").on(t.conversationId, t.createdAt),
+    check("messages_role_chk", sql`${t.role} in ('user', 'assistant')`),
+    check("messages_model_chk", sql`${t.model} in ('small', 'large')`),
+    check("messages_status_chk", sql`${t.status} in ('ok', 'cut_off')`),
   ],
 );

@@ -2,9 +2,9 @@ import { and, eq, sql as dsql } from "drizzle-orm";
 import { RequestedTokenType } from "@shopify/shopify-api";
 import { type Conn, db, forStore } from "@/db/client";
 import { stores, storeTokens } from "@/db/schema";
+import { refreshShopInfo } from "@/lib/shop-info";
 import { upsertStore } from "@/lib/stores";
 import { enqueueSync } from "@/lib/sync";
-import { adminGraphql } from "./admin";
 import { shopify } from "./api";
 import { RECONNECT_NEEDED, saveTokens, tokensUsable } from "./tokens";
 
@@ -76,16 +76,19 @@ export async function authenticateEmbedded(req: Request): Promise<{ storeId: str
   return { storeId, shop };
 }
 
-/** Returns the stored shop name, fetching and saving it while it is still null. A failed fetch returns null and is retried next load. */
+/**
+ * Returns the stored shop name. While the name or the store language is still null, refreshes the shop info first
+ * (refreshShopInfo). A failed fetch returns the stored name (or null) and is retried next load.
+ * ponytail: a store whose primary domain has no localization keeps a null language, so every app load refetches.
+ * One small query per load; C17 decides the fallback if that turns out to happen.
+ */
 export async function ensureShopName(storeId: string, shop: string): Promise<string | null> {
-  const [s] = await db.select({ name: stores.name }).from(stores).where(eq(stores.id, storeId));
-  if (s.name) return s.name;
+  const [s] = await db.select({ name: stores.name, primaryLocale: stores.primaryLocale }).from(stores).where(eq(stores.id, storeId));
+  if (s.name && s.primaryLocale) return s.name;
   try {
-    const data = await adminGraphql<{ shop: { name: string } }>(storeId, shop, "{ shop { name } }");
-    await db.update(stores).set({ name: data.shop.name }).where(eq(stores.id, storeId));
-    return data.shop.name;
+    return (await refreshShopInfo(storeId, shop)).name;
   } catch (e) {
-    console.error(`Shop name fetch failed for ${shop}`, e);
-    return null;
+    console.error(`Shop info fetch failed for ${shop}`, e);
+    return s.name;
   }
 }

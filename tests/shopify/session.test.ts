@@ -46,6 +46,9 @@ const exchanged = () => ({
   session: { accessToken: "at", expires: new Date(Date.now() + 3_600_000), refreshToken: "rt",
     refreshTokenExpires: new Date(Date.now() + 86_400_000) },
 }) as never;
+const shopInfo = (name: string) => ({
+  shop: { name, currencyCode: "USD", myshopifyDomain: "a.myshopify.com", primaryDomain: { host: "a.myshopify.com", localization: { defaultLocale: "en" } }, domains: [] },
+});
 const mockShopName = (impl: () => Promise<unknown>) =>
   vi.spyOn(api.shopify.clients, "Graphql").mockImplementation(class { request = impl; } as never);
 
@@ -94,7 +97,7 @@ test("/api/app/me fetches a missing shop name, and retries on a later load after
   expect(failed.status).toBe(200);
   expect(await failed.json()).toEqual({ shop: "a.myshopify.com", name: null });
 
-  const fetchName = vi.fn(async () => ({ data: { shop: { name: "A Shop" } } }));
+  const fetchName = vi.fn(async () => ({ data: shopInfo("A Shop") }));
   mockShopName(fetchName);
   expect(await (await GET(req(auth))).json()).toEqual({ shop: "a.myshopify.com", name: "A Shop" });
   expect((await admin`select name from stores`)[0].name).toBe("A Shop");
@@ -151,4 +154,21 @@ test("an access token inside the refresh window with an expired refresh token is
   await admin`update store_tokens set access_expires_at = now() + interval '2 minutes', refresh_expires_at = now() - interval '1 hour'`;
   await session.authenticateEmbedded(req(auth));
   expect(exchange).toHaveBeenCalledTimes(2);
+});
+
+test("/api/app/me refreshes the shop info while the store language is missing, even with a name", async () => {
+  vi.spyOn(api.shopify.auth, "tokenExchange").mockResolvedValue(exchanged());
+  const { GET } = await import("@/app/api/app/me/route");
+  const auth = `Bearer ${idToken(process.env.SHOPIFY_API_SECRET!)}`;
+  await session.authenticateEmbedded(req(auth));
+  await admin`update stores set name = 'Old name'`;
+
+  const fetchInfo = vi.fn(async () => ({ data: shopInfo("New name") }));
+  mockShopName(fetchInfo);
+  expect(await (await GET(req(auth))).json()).toEqual({ shop: "a.myshopify.com", name: "New name" });
+  expect((await admin`select primary_locale, currency_code, domains from stores`)[0])
+    .toEqual({ primary_locale: "en", currency_code: "USD", domains: ["a.myshopify.com"] });
+
+  await GET(req(auth));
+  expect(fetchInfo).toHaveBeenCalledTimes(1);
 });

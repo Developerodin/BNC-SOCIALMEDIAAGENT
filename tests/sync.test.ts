@@ -3,6 +3,8 @@ import postgres from "postgres";
 import { randomUUID } from "node:crypto";
 
 vi.mock("@/lib/shopify/admin", () => ({ adminGraphql: vi.fn() }));
+// Mocked so the adminGraphql calls below are the sync's own; shop-info.test.ts covers the real one.
+vi.mock("@/lib/shop-info", () => ({ refreshShopInfo: vi.fn() }));
 
 let admin: ReturnType<typeof postgres>;
 let sync: typeof import("@/lib/sync");
@@ -370,4 +372,21 @@ test("the bulk query and the single-product query ask for the same nested limits
   const bulk = limits(gql.mock.calls[0][3].query);
   expect(bulk).toEqual(["metafields(first: 50)", "collections(first: 20)"]);
   expect(limits(gql.mock.calls[1][2])).toEqual(bulk);
+});
+
+test("startSync refreshes the shop info before the bulk query, and still syncs when that refresh fails", async () => {
+  const { refreshShopInfo } = await import("@/lib/shop-info");
+  const refresh = refreshShopInfo as unknown as ReturnType<typeof vi.fn>;
+  refresh.mockReset();
+  refresh.mockRejectedValueOnce(new Error("Throttled"));
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const storeId = await newStore();
+  const [s] = await admin`select shop_domain from stores where id = ${storeId}`;
+  gql.mockResolvedValueOnce({ bulkOperationRunQuery: { bulkOperation: { id: "gid://shopify/BulkOperation/14" }, userErrors: [] } });
+
+  await sync.startSync({ storeId });
+
+  expect(refresh).toHaveBeenCalledWith(storeId, s.shop_domain);
+  expect(refresh.mock.invocationCallOrder[0]).toBeLessThan(gql.mock.invocationCallOrder[0]);
+  expect((await store(storeId)).sync_status).toBe("running");
 });
