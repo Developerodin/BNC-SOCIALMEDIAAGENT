@@ -221,7 +221,12 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
 
   async function load() {
     showWelcome();
-    const token = tokens.get();
+    let token = tokens.get();
+    if (!token) {
+      // A signed-in shopper with no local chat continues their latest one (a chat started in the app shows up here).
+      token = await api.latest();
+      if (token) tokens.set(token);
+    }
     if (token) {
       const h = await api.history(token);
       if (h === "reset") tokens.clear();

@@ -7,7 +7,7 @@
 {%- if cfg.enabled -%}
   {%- capture product_id -%}{%- if request.page_type == 'product' and product -%}{{ product.id | append: '' | json }}{%- else -%}null{%- endif -%}{%- endcapture -%}
   {%- capture ctx -%}
-    {"shop":{{ shop.permanent_domain | json }},"locale":{{ request.locale.iso_code | json }},"country":{{ localization.country.iso_code | json }},"currency":{{ cart.currency.iso_code | json }},"productId":{{ product_id }},"cartAddUrl":{{ routes.cart_add_url | json }},"cartUrl":{{ routes.cart_url | json }},"privacyUrl":{{ shop.privacy_policy.url | json }},"designMode":{{ request.design_mode | json }}}
+    {"shop":{{ shop.permanent_domain | json }},"locale":{{ request.locale.iso_code | json }},"country":{{ localization.country.iso_code | json }},"currency":{{ cart.currency.iso_code | json }},"productId":{{ product_id }},"cartAddUrl":{{ routes.cart_add_url | json }},"cartUrl":{{ routes.cart_url | json }},"privacyUrl":{{ shop.privacy_policy.url | json }},"designMode":{{ request.design_mode | json }},"loggedIn":{% if customer %}true{% else %}false{% endif %}}
   {%- endcapture -%}
   {%- comment -%} C20: the chat script is an extension asset on Shopify's CDN; the launcher injects it on first click. {%- endcomment -%}
   <div

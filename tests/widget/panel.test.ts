@@ -33,6 +33,7 @@ function mockApi(over: Partial<WidgetApi> = {}): WidgetApi & { [K in keyof Widge
     deleteConversation: vi.fn(async () => true),
     rate: vi.fn(async () => true),
     logCartAdd: vi.fn(async () => {}),
+    latest: vi.fn(async () => null as string | null),
     faq: vi.fn(async () => []),
     ...over,
   } as never;
@@ -306,6 +307,20 @@ describe("history (UD13)", () => {
     expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
     expect(bubbles()).toHaveLength(0);
     expect(q(".welcome")!.textContent).toBe("Hi! Ask me anything.");
+  });
+
+  it("no local token but a signed-in shopper's latest chat: it is opened and kept", async () => {
+    const api = mockApi({ latest: vi.fn(async () => "app-tok") });
+    await setup(api).open();
+    expect(api.history).toHaveBeenCalledWith("app-tok");
+    expect(localStorage.getItem(`askcart:${SHOP}:token`)).toBe("app-tok");
+  });
+
+  it("a local token wins: the latest chat is not looked up", async () => {
+    localStorage.setItem(`askcart:${SHOP}:token`, "tok");
+    const api = mockApi();
+    await setup(api).open();
+    expect(api.latest).not.toHaveBeenCalled();
   });
 
   it("no token, no history call", async () => {

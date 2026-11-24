@@ -28,6 +28,8 @@ export type PageContext = {
   cartUrl: string;
   privacyUrl: string | null;
   designMode: boolean;
+  /** Whether a customer is logged in on the storefront (a boolean from Liquid, never the id). Absent on the hosted page. */
+  loggedIn?: boolean;
   /** Only on the hosted chat page (/chat/<shop>): there is no storefront cart, so a card opens the product on the store. */
   hosted?: boolean;
 };
@@ -69,6 +71,8 @@ export type WidgetApi = {
   deleteConversation(token: string): Promise<boolean>;
   rate(token: string, messageId: string, rating: -1 | 1 | null): Promise<boolean>;
   logCartAdd(token: string, event: { messageId: string | null; productId: string; variantId: string; quantity: number; eventId: string }): Promise<void>;
+  /** Logged-in storefront shoppers only: the token of their latest conversation (e.g. one started in the mobile app), else null. */
+  latest(): Promise<string | null>;
   faq(productId: string): Promise<{ question: string; answer: string }[]>;
 };
 

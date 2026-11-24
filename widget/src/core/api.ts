@@ -25,17 +25,64 @@ function normalize(m: Record<string, unknown>): HistoryItem | null {
   };
 }
 
-export function createApi(apiBase: string, shop: string): WidgetApi {
+// The storefront's own App Proxy route (shopify.app.askcart.toml [app_proxy]); only the Shopify theme has it.
+const SESSION_URL = "/apps/askcart/session";
+const SESSION_SLACK_MS = 30_000; // refresh a little early so a session doesn't lapse mid-request
+const SESSION_RETRY_MS = 60_000; // after a failed fetch, don't ask again for a minute
+
+/**
+ * `customer`: the shopper is logged in on the Shopify storefront (the embed's page context says so). Only then do we fetch a
+ * customer session from the proxy and send it as X-AskCart-Customer; guests make no extra request and send no extra header.
+ */
+export function createApi(apiBase: string, shop: string, opts: { customer?: boolean } = {}): WidgetApi {
   const href = safeHttpsUrl(apiBase);
   if (!href) throw new Error("AskCart: apiBase must be an https URL");
   const base = new URL(href).origin;
   const q = `?shop=${encodeURIComponent(shop)}`;
-  const req = (path: string, init: RequestInit & { token?: string } = {}) => {
-    const { token, ...rest } = init;
-    const headers: Record<string, string> = {};
-    if (token) headers["X-Conversation-Token"] = token;
-    if (rest.body) headers["Content-Type"] = "application/json";
-    return fetch(base + path, { ...rest, headers, credentials: "omit" });
+  // The session lives in memory only. In-flight fetches are shared, so a burst of requests asks the proxy once.
+  let session: { token: string; exp: number } | null = null;
+  let pending: Promise<string | null> | null = null;
+  let retryAt = 0;
+  const sessionToken = (force = false): Promise<string | null> => {
+    if (!opts.customer) return Promise.resolve(null);
+    if (!force && session && session.exp - SESSION_SLACK_MS > Date.now()) return Promise.resolve(session.token);
+    if (!force && Date.now() < retryAt) return Promise.resolve(null);
+    pending ??= (async () => {
+      try {
+        const res = await fetch(SESSION_URL, { credentials: "same-origin" });
+        const j = res.ok ? ((await res.json()) as { sessionToken?: unknown; expiresAt?: unknown }) : null;
+        if (j && typeof j.sessionToken === "string" && typeof j.expiresAt === "number") {
+          session = { token: j.sessionToken, exp: j.expiresAt };
+          return session.token;
+        }
+      } catch {}
+      session = null;
+      retryAt = Date.now() + SESSION_RETRY_MS;
+      return null;
+    })().finally(() => (pending = null));
+    return pending;
+  };
+  // `customer: false` for routes that don't take the header (faq).
+  const req = (path: string, init: RequestInit & { token?: string; customer?: boolean } = {}): Promise<Response> => {
+    const { token, customer = true, ...rest } = init;
+    const go = (cs: string | null) => {
+      const headers: Record<string, string> = {};
+      if (token) headers["X-Conversation-Token"] = token;
+      if (cs) headers["X-AskCart-Customer"] = cs;
+      if (rest.body) headers["Content-Type"] = "application/json";
+      return fetch(base + path, { ...rest, headers, credentials: "omit" });
+    };
+    if (!customer || !opts.customer) return go(null); // guests: fetch at once, as before
+    return (async () => {
+      const cs = await sessionToken();
+      const res = await go(cs);
+      if (!cs || res.status !== 401) return res;
+      // An expired or rejected session: get a new one and repeat the request once.
+      const err = await res.clone().json().catch(() => null);
+      if (err?.error !== "invalid_session") return res;
+      const fresh = await sessionToken(true);
+      return fresh ? go(fresh) : res;
+    })();
   };
   const post = (path: string, token: string, body: unknown, keepalive = false) =>
     req(path + q, { method: "POST", token, body: JSON.stringify(body), keepalive });
@@ -84,9 +131,22 @@ export function createApi(apiBase: string, shop: string): WidgetApi {
       } catch {}
     },
 
+    async latest() {
+      if (!(await sessionToken())) return null; // guests: no request
+      try {
+        const res = await req("/api/chat/conversations" + q + "&limit=1");
+        if (!res.ok) return null;
+        const { conversations } = (await res.json()) as { conversations?: { conversationToken?: unknown }[] };
+        const t = conversations?.[0]?.conversationToken;
+        return typeof t === "string" ? t : null;
+      } catch {
+        return null;
+      }
+    },
+
     async faq(productId) {
       try {
-        const res = await req(`/api/faq${q}&product=${encodeURIComponent(productId)}`);
+        const res = await req(`/api/faq${q}&product=${encodeURIComponent(productId)}`, { customer: false });
         if (!res.ok) return [];
         const { items } = (await res.json()) as { items?: unknown };
         if (!Array.isArray(items)) return [];

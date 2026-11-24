@@ -13,7 +13,7 @@ export function mount(host: HTMLElement, config: WidgetConfig, page: PageContext
     renderCards,
     renderFeedback,
     ...opts,
-    api: opts.api ?? createApi(config.apiBase, page.shop),
+    api: opts.api ?? createApi(config.apiBase, page.shop, { customer: page.loggedIn === true }),
   });
 }
 
