@@ -97,6 +97,15 @@ test("a password-protected store's product (no onlineStoreUrl, but a publishedAt
   await products.upsertProducts(storeId, [product({ onlineStoreUrl: null })]);
   const [row] = await client.forStore(storeId, (tx) => tx.select().from(schema.products));
   expect(row.published).toBe(true);
+  // D71: no onlineStoreUrl, so the link is built from the shop domain and handle.
+  expect(row.url).toBe("https://pw.myshopify.com/products/tee");
+});
+
+test("a product with an onlineStoreUrl keeps Shopify's link", async () => {
+  const storeId = await newStore("live.myshopify.com");
+  await products.upsertProducts(storeId, [product()]);
+  const [row] = await client.forStore(storeId, (tx) => tx.select().from(schema.products));
+  expect(row.url).toBe("https://shop.example.com/products/tee");
 });
 
 test("an older updatedAt does not overwrite, a newer one does", async () => {

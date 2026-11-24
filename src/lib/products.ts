@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, eq, lt, sql } from "drizzle-orm";
-import { forStore, type Conn } from "@/db/client";
-import { products } from "@/db/schema";
+import { db, forStore, type Conn } from "@/db/client";
+import { products, stores } from "@/db/schema";
 
 export type ShopifyProduct = {
   id: string;
@@ -84,6 +84,11 @@ export function buildContent(p: ShopifyProduct): string {
 /** Last write wins by Shopify's updatedAt, so a late webhook can't overwrite newer bulk data. */
 export async function upsertProducts(storeId: string, ps: ShopifyProduct[], conn?: Conn): Promise<void> {
   if (ps.length === 0) return;
+  // D71: password-protected stores get no onlineStoreUrl, so build the link from the shop domain and handle.
+  // The myshopify domain redirects to the store's primary domain.
+  const [shop] = ps.some((p) => !p.onlineStoreUrl)
+    ? await (conn ?? db).select({ domain: stores.shopDomain }).from(stores).where(eq(stores.id, storeId))
+    : [];
   const rows = ps.map((p) => {
     const content = buildContent(p);
     return {
@@ -91,7 +96,7 @@ export async function upsertProducts(storeId: string, ps: ShopifyProduct[], conn
       shopifyId: p.id,
       handle: p.handle,
       title: p.title,
-      url: p.onlineStoreUrl,
+      url: p.onlineStoreUrl ?? (shop ? `https://${shop.domain}/products/${p.handle}` : null),
       imageUrl: p.imageUrl,
       status: p.status,
       // onlineStoreUrl is null on password-protected stores (every dev store, and live stores before launch).
