@@ -120,6 +120,13 @@
       "when": 1795525521538,
       "tag": "0016_mobile_key",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1795528054341,
+      "tag": "0017_customer_identity",
+      "breakpoints": true
     }
   ]
 }

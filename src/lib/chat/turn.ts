@@ -90,7 +90,7 @@ export type OpenedTurn =
  */
 export async function openTurn(
   store: TurnStore,
-  opts: { token?: string; message: string; pageUrl: string | null; requestId?: string },
+  opts: { token?: string; message: string; pageUrl: string | null; requestId?: string; customer?: string },
 ): Promise<OpenedTurn> {
   const message = maskPII(opts.message);
   let conversationId: string;
@@ -111,8 +111,16 @@ export async function openTurn(
     if (isNew) {
       await tx
         .insert(conversations)
-        .values({ id: conversationId, storeId: store.id, tokenHash: tokenHash(token), pageUrl: opts.pageUrl, busyUntil: TURN_LOCK });
+        .values({
+          id: conversationId,
+          storeId: store.id,
+          tokenHash: tokenHash(token),
+          pageUrl: opts.pageUrl,
+          ownerCustomerId: opts.customer ?? null,
+          busyUntil: TURN_LOCK,
+        });
     } else {
+      if (!(await ownerAllows(tx, store.id, conversationId, opts.customer))) return { ok: false, status: 404 };
       if (opts.requestId) {
         [earlier] = await tx
           .select({ id: messages.id, content: messages.content })
@@ -144,6 +152,20 @@ export async function openTurn(
     await tx.insert(messages).values({ storeId: store.id, conversationId, role: "user", content: message, requestId: opts.requestId });
     return { ok: true, conversationId, token, history: rows.reverse(), message };
   });
+}
+
+/**
+ * Customer identity: false when the conversation is owned by one customer and the request carries a session for another.
+ * A request with no session always passes (the conversation token alone grants access, as it does for guests), and so does
+ * a conversation nobody owns. Callers answer 404, the same as a conversation that is gone, so ownership isn't revealed.
+ */
+async function ownerAllows(tx: Conn, storeId: string, conversationId: string, customer: string | undefined): Promise<boolean> {
+  if (customer === undefined) return true;
+  const [c] = await tx
+    .select({ owner: conversations.ownerCustomerId })
+    .from(conversations)
+    .where(and(eq(conversations.storeId, storeId), eq(conversations.id, conversationId)));
+  return !c?.owner || c.owner === customer;
 }
 
 /** A message's created_at, compared in SQL: a JS Date would drop Postgres' microseconds. */
@@ -211,11 +233,13 @@ export type HistoryMessage = {
 export async function readHistory(
   storeId: string,
   token: string,
+  customer?: string,
 ): Promise<{ ok: true; messages: HistoryMessage[] } | { ok: false; status: 401 | 404 }> {
   const conversationId = verifyToken(storeId, token);
   if (!conversationId) return { ok: false, status: 401 };
   return forStore(storeId, async (tx) => {
     if (!(await conversationExists(tx, storeId, conversationId))) return { ok: false as const, status: 404 as const };
+    if (!(await ownerAllows(tx, storeId, conversationId, customer))) return { ok: false as const, status: 404 as const };
     const rows = await tx
       .select({
         id: messages.id,
@@ -241,10 +265,15 @@ export async function readHistory(
  * so one waits for the other and then sees its result: either the delete skips the now-busy row (409), or the claim finds
  * no row and openTurn answers 404.
  */
-export async function deleteConversation(storeId: string, token: string): Promise<{ ok: true } | { ok: false; status: 401 | 409 }> {
+export async function deleteConversation(
+  storeId: string,
+  token: string,
+  customer?: string,
+): Promise<{ ok: true } | { ok: false; status: 401 | 404 | 409 }> {
   const conversationId = verifyToken(storeId, token);
   if (!conversationId) return { ok: false, status: 401 };
   return forStore(storeId, async (tx) => {
+    if (!(await ownerAllows(tx, storeId, conversationId, customer))) return { ok: false as const, status: 404 as const };
     const deleted = await tx
       .delete(conversations)
       .where(

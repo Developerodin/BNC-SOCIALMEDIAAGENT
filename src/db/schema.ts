@@ -45,6 +45,9 @@ export const storeTokens = pgTable("store_tokens", {
   refreshTokenEnc: text("refresh_token_enc"),
   refreshExpiresAt: timestamp("refresh_expires_at", { withTimezone: true }),
   keyId: text("key_id").notNull(),
+  // Storefront API token AskCart created for this store (storefrontAccessTokenCreate), used only to check a mobile
+  // customer's customerAccessToken. Encrypted like the tokens above; null until the first customer sign-in.
+  storefrontTokenEnc: text("storefront_token_enc"),
 });
 
 export const webhookEvents = pgTable("webhook_events", {
@@ -105,12 +108,19 @@ export const conversations = pgTable(
     storeId: uuid("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
     tokenHash: text("token_hash").notNull().unique(),
     pageUrl: text("page_url"),
+    // Customer GID of the signed-in shopper who started this conversation; null for guests. Set once at creation, never
+    // changed, so a guest chat is not claimed later. Ownership is checked against the customer session, never the body.
+    ownerCustomerId: text("owner_customer_id"),
     // D81: set while a turn runs (one turn at a time); null when free. A crashed turn frees itself when it expires.
     busyUntil: timestamp("busy_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   // Target of messages' (store_id, conversation_id) FK, so a message can't point at another store's conversation.
-  (t) => [unique("conversations_store_id_id_uq").on(t.storeId, t.id)],
+  (t) => [
+    unique("conversations_store_id_id_uq").on(t.storeId, t.id),
+    // Serves GET /api/chat/conversations (a customer's list, latest first).
+    index("conversations_owner_idx").on(t.storeId, t.ownerCustomerId, t.createdAt),
+  ],
 );
 
 // store_id is not in §7.13's Message; RLS needs it (D42).

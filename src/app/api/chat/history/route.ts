@@ -1,3 +1,4 @@
+import { customerOf } from "@/lib/chat/customer";
 import { preflight, storeFor } from "@/lib/chat/cors";
 import { readHistory } from "@/lib/chat/turn";
 
@@ -18,7 +19,9 @@ export async function GET(req: Request) {
 
   const token = req.headers.get("x-conversation-token");
   if (!token) return Response.json({ error: "invalid_token" }, { status: 401, headers });
-  const history = await readHistory(found.store.id, token);
+  const who = customerOf(req, found.store.id);
+  if (!who.ok) return Response.json({ error: "invalid_session" }, { status: 401, headers });
+  const history = await readHistory(found.store.id, token, who.customer);
   if (!history.ok) {
     const error = history.status === 401 ? "invalid_token" : "conversation_not_found";
     return Response.json({ error }, { status: history.status, headers });

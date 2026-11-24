@@ -21,6 +21,11 @@ export function mintToken(storeId: string): { conversationId: string; token: str
   return { conversationId, token: `${conversationId}.${mac(storeId, conversationId)}` };
 }
 
+/** The token of an existing conversation. It is a MAC of (store, id), so it can be re-derived: a signed-in customer's list hands these out. */
+export function tokenFor(storeId: string, conversationId: string): string {
+  return `${conversationId}.${mac(storeId, conversationId)}`;
+}
+
 /** Returns the conversation id, or null for a bad format, the wrong store, or a tampered MAC. */
 export function verifyToken(storeId: string, token: string): string | null {
   const parts = token.split(".");

@@ -1,4 +1,5 @@
 import { preflight, storeFor } from "@/lib/chat/cors";
+import { customerOf } from "@/lib/chat/customer";
 import { MAX_INPUT_CHARS } from "@/lib/chat/limits";
 import { PING, PING_MS, SSE_HEADERS, sseEvent } from "@/lib/chat/sse";
 import { UUID } from "@/lib/chat/token";
@@ -23,6 +24,10 @@ export async function POST(req: Request) {
   const { store, cors } = found;
   const fail = (error: string, status: number) => Response.json({ error }, { status, headers: cors });
 
+  // Signed-in customer (X-AskCart-Customer): a bad or expired session is a 401 the client answers by re-issuing; no header = guest.
+  const who = customerOf(req, store.id);
+  if (!who.ok) return fail("invalid_session", 401);
+
   const { message, conversationToken } = body;
   if (typeof message !== "string" || !message.trim()) return fail("empty_message", 400);
   if (message.length > MAX_INPUT_CHARS) return fail("message_too_long", 413); // D35
@@ -32,7 +37,7 @@ export async function POST(req: Request) {
   if (requestId != null && (typeof requestId !== "string" || !UUID.test(requestId))) return fail("invalid_request_id", 400);
   const pageUrl = typeof body.pageUrl === "string" ? body.pageUrl.slice(0, MAX_PAGE_URL) : null;
 
-  const opened = await openTurn(store, { token: conversationToken ?? undefined, message, pageUrl, requestId: typeof requestId === "string" ? requestId : undefined });
+  const opened = await openTurn(store, { token: conversationToken ?? undefined, message, pageUrl, requestId: typeof requestId === "string" ? requestId : undefined, customer: who.customer });
   if (!opened.ok) return fail(OPEN_ERRORS[opened.status], opened.status);
   // Every stream starts with `meta` (MetaEvent): the token is known before any text, for new, continued and replayed turns.
   const meta = sseEvent("meta", { conversationToken: opened.token });

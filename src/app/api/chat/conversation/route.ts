@@ -1,3 +1,4 @@
+import { customerOf } from "@/lib/chat/customer";
 import { preflight, storeFor } from "@/lib/chat/cors";
 import { deleteConversation } from "@/lib/chat/turn";
 
@@ -17,9 +18,11 @@ export async function DELETE(req: Request) {
 
   const token = req.headers.get("x-conversation-token");
   if (!token) return Response.json({ error: "invalid_token" }, { status: 401, headers });
-  const deleted = await deleteConversation(found.store.id, token);
+  const who = customerOf(req, found.store.id);
+  if (!who.ok) return Response.json({ error: "invalid_session" }, { status: 401, headers });
+  const deleted = await deleteConversation(found.store.id, token, who.customer);
   if (!deleted.ok) {
-    const error = deleted.status === 401 ? "invalid_token" : "turn_in_progress";
+    const error = deleted.status === 401 ? "invalid_token" : deleted.status === 404 ? "conversation_not_found" : "turn_in_progress";
     return Response.json({ error }, { status: deleted.status, headers });
   }
   return new Response(null, { status: 204, headers });
