@@ -60,7 +60,7 @@ async function seedStore(products: Seed[]): Promise<string> {
 }
 
 /** One turn as runTurn runs it, with the live check mocked from `products`. Logs latency and token usage. */
-async function ask(storeId: string, products: Seed[], message: string, storeLocale: string | null = "en") {
+async function ask(storeId: string, products: Seed[], message: string, storeLocale: string | null = "en", o: { note?: string; dropAll?: boolean } = {}) {
   const { rewriteQuery } = await import("@/lib/chat/rewrite");
   const { search } = await import("@/lib/retrieval");
   const { buildInput, SYSTEM_PROMPT, LARGE_SYSTEM_PROMPT } = await import("@/lib/chat/prompt");
@@ -75,10 +75,11 @@ async function ask(storeId: string, products: Seed[], message: string, storeLoca
   const byId = new Map(products.map((p) => [gid(p.id), p]));
   const liveMap = new Map<string, LiveProduct>();
   for (const h of hits) {
+    if (o.dropAll) break; // as D87's budget filter does when no product fits
     const p = byId.get(h.productId)!;
     liveMap.set(h.productId, liveProduct(p.id, p.title, { stock: p.stock }));
   }
-  const { input, allowed } = buildInput({ hits, live: { ok: true, products: liveMap }, history: [], message, threshold: 5 });
+  const { input, allowed } = buildInput({ hits, live: { ok: true, products: liveMap }, history: [], message, threshold: 5, note: o.note });
 
   const shown: string[] = [];
   const tAnswer = Date.now();
@@ -122,6 +123,46 @@ describe.skipIf(!live)("chat (real OpenAI)", () => {
       expect(result.text).not.toContain("19.99");
       expect(result.text).not.toMatch(/[$€£]\s?\d|\d\s?(?:[$€£]|USD|EUR|dollars?)/i);
       expect(result.text).not.toMatch(/\b2\s+(?:left|remaining|in stock)\b|\btwo\s+(?:left|remaining)\b/i);
+    },
+    T,
+  );
+
+  test(
+    "D85: a price question is pointed to the product card, with no amount",
+    async () => {
+      const products: Seed[] = [
+        { id: "1", title: "Trail rain jacket", description: "Lightweight waterproof shell for hiking." },
+        { id: "2", title: "Cotton summer dress", description: "Light and breezy" },
+      ];
+      const storeId = await seedStore(products);
+      const { result } = await ask(storeId, products, "How much does the trail rain jacket cost?");
+
+      expect(result.status).toBe("ok");
+      expect(result.text).toMatch(/card/i);
+      expect(result.text).not.toContain("24");
+      expect(result.text).not.toMatch(/[$€£]\s?\d|\d\s?(?:[$€£]|USD|EUR|dollars?)/i);
+    },
+    T,
+  );
+
+  test(
+    "D85/D87: a budget note with no products in budget is said honestly, with the budget but no product price",
+    async () => {
+      const products: Seed[] = [
+        { id: "1", title: "Trail rain jacket", description: "Lightweight waterproof shell for hiking." },
+        { id: "2", title: "Cotton summer dress", description: "Light and breezy" },
+      ];
+      const storeId = await seedStore(products);
+      const { result, shown } = await ask(storeId, products, "Do you have rain jackets under $10?", "en", {
+        note: "No products are within the shopper's budget of at most $10.",
+        dropAll: true,
+      });
+
+      expect(result.status).toBe("ok");
+      expect(result.text.trim()).not.toBe("");
+      expect(shown).toEqual([]);
+      expect(result.text).toMatch(/budget|\$\s?10\b/i);
+      expect(result.text).not.toContain("24"); // the product's price (liveProduct's default) never appears
     },
     T,
   );
@@ -182,6 +223,7 @@ describe.skipIf(!live)("chat (real OpenAI)", () => {
       expect(shown.every((id) => [...allowed.values()].includes(id))).toBe(true);
       expect(result.text).not.toMatch(/\[\[|\]\]|product:\s*99/i);
       expect(result.text).not.toMatch(/[$€£]\s?\d/);
+      expect(result.text.trim()).not.toBe(""); // D85: never only cards
     },
     T,
   );
