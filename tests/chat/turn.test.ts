@@ -212,7 +212,7 @@ test("search gets the rewritten query, 8 hits, the current product as a GID and 
   liveCheck.mockResolvedValue(liveMap(live("1"), live("2"), live("9")));
   create.mockImplementationOnce(fakeStream(["ok"]));
   await run({ productId: "9", country: "FR" });
-  expect(search).toHaveBeenCalledWith(storeId, "gift card", 8, { productId: gid("9"), includeGiftCards: true });
+  expect(search).toHaveBeenCalledWith(storeId, "gift card", 8, { productId: gid("9"), includeGiftCards: true, signal: expect.any(AbortSignal) });
   expect(liveCheck.mock.calls[0][0]).toBe(storeId);
   expect(liveCheck.mock.calls[0][2]).toEqual([gid("1"), gid("2"), gid("9")]);
   expect(liveCheck.mock.calls[0][3]).toMatchObject({ country: "FR", includeGiftCards: true, currency: "EUR" });
@@ -379,7 +379,7 @@ test("a cheapest question searches 30 hits, checks them in one call, and only th
   liveCheck.mockResolvedValue(liveMap(...ids.map((id) => priced(id, `${100 - Number(id)}.00`))));
   create.mockImplementationOnce(fakeStream(["[[product:1]]"]));
   const r = await run();
-  expect(search).toHaveBeenCalledWith(storeId, "tee", 30, { includeGiftCards: false });
+  expect(search).toHaveBeenCalledWith(storeId, "tee", 30, { includeGiftCards: false, signal: expect.any(AbortSignal) });
   expect(liveCheck).toHaveBeenCalledTimes(1);
   expect(liveCheck.mock.calls[0][2]).toHaveLength(30);
   const prompt = promptOf();
@@ -417,7 +417,7 @@ test("a budget question also searches 30 hits and keeps the first 8 in-budget pr
   liveCheck.mockResolvedValue(liveMap(...ids.map((id) => priced(id, Number(id) % 2 ? "90.00" : "20.00"))));
   create.mockImplementationOnce(fakeStream(["ok"]));
   await run();
-  expect(search).toHaveBeenCalledWith(storeId, "tee", 30, { includeGiftCards: false });
+  expect(search).toHaveBeenCalledWith(storeId, "tee", 30, { includeGiftCards: false, signal: expect.any(AbortSignal) });
   expect(liveCheck).toHaveBeenCalledTimes(1);
   const prompt = promptOf();
   expect(prompt).toMatch(/^#1 Tee 2$/m);

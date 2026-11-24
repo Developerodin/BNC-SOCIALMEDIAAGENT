@@ -31,7 +31,7 @@ export async function searchProducts(
     console.warn("search provider falls back to ours", { storeId: store.id, provider, reason: "UCP_AGENT_PROFILE_URL is not set" });
     provider = "ours";
   }
-  const ourOpts = { productId: opts.productId, includeGiftCards: opts.includeGiftCards };
+  const ourOpts = { productId: opts.productId, includeGiftCards: opts.includeGiftCards, signal: opts.signal };
   const mcp = () => mcpSearch(store.shopDomain, query, k, { storeId: store.id, includeGiftCards: opts.includeGiftCards, signal: opts.signal });
 
   if (provider === "ours") return search(store.id, query, k, ourOpts);

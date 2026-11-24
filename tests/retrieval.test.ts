@@ -168,3 +168,28 @@ test("k = 0 with opts.productId returns only that product's chunks (the MCP prov
   expect(hits.length).toBeGreaterThan(0);
   expect(hits.every((h) => h.productId === gid("3"))).toBe(true);
 });
+
+test("the query embedding gets a signal and a hung call is cut at 3s", async () => {
+  const storeId = await seeded(boots("1"));
+  vi.useFakeTimers();
+  try {
+    embed.mockImplementation((_t: string[], o: { signal: AbortSignal }) => {
+      expect(o.signal.aborted).toBe(false);
+      return new Promise((_res, rej) => o.signal.addEventListener("abort", () => rej(new Error("aborted"))));
+    });
+    const p = retrieval.search(storeId, "boots", 4).catch((e: Error) => e.message);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(await p).toBe("aborted");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("the caller's abort cancels the query embedding at once", async () => {
+  const storeId = await seeded(boots("1"));
+  const ac = new AbortController();
+  embed.mockImplementation((_t: string[], o: { signal: AbortSignal }) => new Promise((_res, rej) => o.signal.addEventListener("abort", () => rej(new Error("aborted")))));
+  const p = retrieval.search(storeId, "boots", 4, { signal: ac.signal }).catch((e: Error) => e.message);
+  ac.abort();
+  expect(await p).toBe("aborted");
+});

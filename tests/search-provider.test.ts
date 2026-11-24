@@ -36,9 +36,10 @@ test("searchProvider: ours, mcp, hybrid; anything else (missing, invalid, wrong 
 });
 
 test("default (no setting) uses our search with the same arguments as before, and never MCP", async () => {
-  const hits = await searchProducts(store({}), "boots", 8, { productId: gid("9"), includeGiftCards: true, signal: new AbortController().signal });
+  const signal = new AbortController().signal;
+  const hits = await searchProducts(store({}), "boots", 8, { productId: gid("9"), includeGiftCards: true, signal });
   expect(hits).toEqual([hit("1")]);
-  expect(search).toHaveBeenCalledWith("store-1", "boots", 8, { productId: gid("9"), includeGiftCards: true });
+  expect(search).toHaveBeenCalledWith("store-1", "boots", 8, { productId: gid("9"), includeGiftCards: true, signal });
   expect(mcpSearch).not.toHaveBeenCalled();
 });
 

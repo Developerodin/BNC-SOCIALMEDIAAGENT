@@ -1,6 +1,7 @@
 import { and, asc, cosineDistance, eq, notInArray, sql } from "drizzle-orm";
 import { forStore } from "@/db/client";
 import { chunks, products } from "@/db/schema";
+import { deadline } from "@/lib/chat/openai";
 import { embed } from "@/lib/embeddings";
 import { productGid } from "@/lib/ids";
 
@@ -18,6 +19,7 @@ const OVERFETCH = 4;
 // So this drops the clearly unrelated, not everything unrelated; the chat prompt must still judge relevance.
 // Upgrade path: a reranker or an LLM relevance check on the top hits, or per-language thresholds.
 export const MIN_SCORE = 0.18;
+const EMBED_TIMEOUT_MS = 3000;
 
 /**
  * The only retrieval entry point (§7.5): the k chunks of this store nearest to the query, score = 1 - cosine distance,
@@ -33,12 +35,15 @@ export async function search(
   storeId: string,
   query: string,
   k = 8,
-  opts: { productId?: string; includeGiftCards?: boolean; minScore?: number } = {},
+  opts: { productId?: string; includeGiftCards?: boolean; minScore?: number; signal?: AbortSignal } = {},
 ): Promise<SearchHit[]> {
   if (!query.trim()) return [];
+  // The embeddings client has no retries and an SDK default timeout of 10 minutes, so a hung call would hold the turn;
+  // 3s, or the caller's abort. A failure or timeout throws, like any other embed error, and the caller handles it.
+  const d = deadline(EMBED_TIMEOUT_MS, opts.signal);
   const {
     vectors: [q],
-  } = await embed([query]);
+  } = await embed([query], { signal: d.signal }).finally(d.clear);
   const productId = productGid(opts.productId);
 
   const distance = cosineDistance(chunks.embedding, q);
