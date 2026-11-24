@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gt, isNull, lt, or, sql, type SQL } from "drizzle-o
 import { forStore, type Conn } from "@/db/client";
 import { conversations, messages } from "@/db/schema";
 import { productGid } from "@/lib/ids";
+import type { SearchHit } from "@/lib/retrieval";
 import { searchProducts } from "@/lib/search-provider";
 import { fallbackCards, liveCheck, type FallbackCard, type LiveProduct, type LiveVariant, type Stock } from "@/lib/shopify/live-products";
 import { answer, ChatUnavailable } from "./answer";
@@ -44,6 +45,15 @@ export type Card = {
 };
 
 const SEARCH_K = 8;
+// D87: a budget or "cheapest"/"priciest" question searches wider, so the price filter and sort pick from more than the
+// usual 8; only the first PROMPT_PRODUCTS products after them reach the prompt and cards. liveCheck still makes one call:
+// its requested cost doesn't grow with the ids (measured on the dev store: 28 points for 0, 9, 17 or 100 ids with
+// VARIANT_CAP 50, against Shopify's 1,000 single-query limit).
+// `// ponytail:` the actual cost does grow with real products and variants, so a 30-product check on a store with
+// many variants spends more of the per-store bucket (2,000 points, 100/s). Upgrade path: a smaller variant cap for
+// the price pass, or a per-store live-check cache.
+const PRICE_SEARCH_K = 30;
+const PROMPT_PRODUCTS = 8;
 const DEFAULT_STOCK_THRESHOLD = 5; // UD10
 const UNAVAILABLE = "Assistant unavailable right now"; // §8, C13
 const COUNTRY = /^[A-Z]{2}$/;
@@ -287,6 +297,17 @@ function fallbackCard(c: FallbackCard): Card {
   };
 }
 
+/** The hits of the first `n` products (in hit order) still in `live`, so a wide price search sends the prompt ~8. */
+function topProducts(hits: SearchHit[], live: PromptProducts, n: number): SearchHit[] {
+  const known = live.ok ? live.products : live.cards;
+  const keep = new Set<string>();
+  for (const h of hits) {
+    if (keep.size >= n) break;
+    if (known.has(h.productId)) keep.add(h.productId);
+  }
+  return hits.filter((h) => keep.has(h.productId));
+}
+
 /** The live check, or C11 (b) fallback cards when it fails. A store with no known currency never shows a price either. */
 async function checkProducts(
   store: TurnStore,
@@ -339,11 +360,18 @@ export async function runTurn(t: {
       signal,
     });
     // D89: the store's search provider (ours by default, or Shopify's Catalog MCP).
-    const found = await searchProducts(store, rw.query, SEARCH_K, { productId: currentProductId, includeGiftCards: rw.includeGiftCards, signal });
+    const wide = !!rw.budget || !!rw.sort;
+    const found = await searchProducts(store, rw.query, wide ? PRICE_SEARCH_K : SEARCH_K, {
+      productId: currentProductId,
+      includeGiftCards: rw.includeGiftCards,
+      signal,
+    });
     const ids = [...new Set([...found.map((h) => h.productId), ...(currentProductId ? [currentProductId] : [])])];
     const checked = await checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal });
     // D87: drop products outside the budget and order by price, by the live price (never the index's).
-    const { hits, live, note } = applyBudget({ hits: found, live: checked, budget: rw.budget, sort: rw.sort, currency: store.currencyCode });
+    const priced = applyBudget({ hits: found, live: checked, budget: rw.budget, sort: rw.sort, currency: store.currencyCode });
+    const { live, note } = priced;
+    const hits = wide ? topProducts(priced.hits, live, PROMPT_PRODUCTS) : priced.hits;
     const { input, allowed } = buildInput({ hits, live, currentProductId, history: t.history, message: t.message, threshold, note });
 
     const cards: Card[] = [];

@@ -19,7 +19,7 @@ import { liveRegion, trapTab } from "./a11y";
 import { icon } from "./icons";
 import { createMenu } from "./menu";
 import { createMessages, type Renderers } from "./messages";
-import { CSS } from "./styles";
+import { CSS, FULL_BELOW } from "./styles";
 import { CARDS_CSS } from "../cards";
 
 export type PanelOptions = Renderers & {
@@ -40,7 +40,6 @@ export type Panel = {
 
 const MAX = 2000; // the server's message limit
 const COUNT_FROM = 1800;
-const FULL_BELOW = 640; // UD4
 const DEFAULT_ACCENT = "#0A0A0A";
 const DELETE_RETRY_MS = [500, 1000, 2000]; // D84: the server may hold the aborted turn's lock for a moment
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

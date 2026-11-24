@@ -41,8 +41,8 @@ function formatBudget(b: Budget, currency: string): string {
  * "priciest" question, reorders the hits by price, since buildInput numbers products in hit order. Returns a `note` for
  * the model when the budget left nothing, when products are sorted, or when prices couldn't be checked (C11 fallback:
  * nothing is filtered or sorted then).
- * `// ponytail:` only the 8 search hits are filtered, so "cheapest" means the cheapest of what search found, not of the
- * whole catalog, and a budget can empty a list the catalog could fill. Prices are kept out of the index (D87); a price
+ * `// ponytail:` only the search hits are filtered (runTurn searches 30 for these questions, not 8), so "cheapest" means
+ * the cheapest of what search found, not of the whole catalog, and a budget can empty a list the catalog could fill. Prices are kept out of the index (D87); a price
  * filter in search would need the live price there.
  * `// ponytail:` the current product, when it isn't a hit, stays last (buildInput) rather than sorted in with the hits.
  */

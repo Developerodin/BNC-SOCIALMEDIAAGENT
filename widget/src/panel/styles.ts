@@ -1,6 +1,9 @@
 // Panel CSS (Task 30). Everything lives in the shadow root; px only (themes set html { font-size: 62.5% }); the font is
 // inherited (UD7). --ac / --ac-fg are set on .panel from the checked accent and textOn() (UD17).
 // Input-like borders are #8a8a8a: 3.4:1 on white (WCAG 1.4.11). The textarea is 16px: iOS Safari zooms into smaller inputs.
+/** UD4: below this viewport width (px) the panel is full screen (panel.ts layout()); cards.ts uses it too. */
+export const FULL_BELOW = 640;
+
 export const CSS =
   ":host{all:initial;font-family:inherit}" +
   ".panel{position:fixed;z-index:2147483001;display:flex;flex-direction:column;box-sizing:border-box;width:380px;height:600px;" +

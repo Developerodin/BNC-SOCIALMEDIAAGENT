@@ -216,6 +216,7 @@ test("search gets the rewritten query, 8 hits, the current product as a GID and 
   expect(liveCheck.mock.calls[0][0]).toBe(storeId);
   expect(liveCheck.mock.calls[0][2]).toEqual([gid("1"), gid("2"), gid("9")]);
   expect(liveCheck.mock.calls[0][3]).toMatchObject({ country: "FR", includeGiftCards: true, currency: "EUR" });
+  expect(liveCheck).toHaveBeenCalledTimes(1);
 });
 
 test("D89: a store set to the MCP search provider gets its hits from mcpSearch, which reach the live check and the prompt", async () => {
@@ -368,6 +369,42 @@ test("a cheapest question numbers the products by live price, cheapest first", a
   expect(prompt.indexOf("#3 Tee 1")).toBeGreaterThan(prompt.indexOf("#2 Tee 3"));
   expect(prompt).toMatch(/cheapest to the most expensive/);
   expect(r.products.map((p) => p.id)).toEqual([gid("2")]);
+});
+
+test("a cheapest question searches 30 hits, checks them in one call, and only the 8 cheapest reach the prompt", async () => {
+  rewritten({ sort: "cheapest" });
+  const ids = Array.from({ length: 30 }, (_, i) => String(i + 1));
+  search.mockResolvedValue(ids.map((id) => hit(id)));
+  // Product n costs 100 - n: the cheapest is the last hit, far outside the normal 8.
+  liveCheck.mockResolvedValue(liveMap(...ids.map((id) => priced(id, `${100 - Number(id)}.00`))));
+  create.mockImplementationOnce(fakeStream(["[[product:1]]"]));
+  const r = await run();
+  expect(search).toHaveBeenCalledWith(storeId, "tee", 30, { includeGiftCards: false });
+  expect(liveCheck).toHaveBeenCalledTimes(1);
+  expect(liveCheck.mock.calls[0][2]).toHaveLength(30);
+  const prompt = promptOf();
+  expect(prompt).toMatch(/^#1 Tee 30$/m);
+  expect(prompt).toMatch(/^#8 Tee 23$/m);
+  expect(prompt).not.toContain("#9 ");
+  expect(prompt).not.toMatch(/^#\d+ Tee 22$/m);
+  expect(r.products.map((p) => p.id)).toEqual([gid("30")]);
+});
+
+test("a budget question also searches 30 hits and keeps the first 8 in-budget products in hit order", async () => {
+  rewritten({ budget: { max: 50 } });
+  const ids = Array.from({ length: 30 }, (_, i) => String(i + 1));
+  search.mockResolvedValue(ids.map((id) => hit(id)));
+  // Odd products cost 90, even ones 20: the in-budget ones are 2, 4, …, 30.
+  liveCheck.mockResolvedValue(liveMap(...ids.map((id) => priced(id, Number(id) % 2 ? "90.00" : "20.00"))));
+  create.mockImplementationOnce(fakeStream(["ok"]));
+  await run();
+  expect(search).toHaveBeenCalledWith(storeId, "tee", 30, { includeGiftCards: false });
+  expect(liveCheck).toHaveBeenCalledTimes(1);
+  const prompt = promptOf();
+  expect(prompt).toMatch(/^#1 Tee 2$/m);
+  expect(prompt).toMatch(/^#8 Tee 16$/m);
+  expect(prompt).not.toContain("#9 ");
+  expect(prompt).not.toMatch(/^#\d+ Tee (1|3|18)$/m);
 });
 
 test("a budget that leaves no product tells the model so, and no card can be shown", async () => {

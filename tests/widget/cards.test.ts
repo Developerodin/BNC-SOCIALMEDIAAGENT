@@ -307,14 +307,28 @@ describe("UD13: the panel doesn't reopen over a product the shopper chose", () =
   });
   const ui = () => JSON.parse(localStorage.getItem(UI)!);
 
-  it("the product title link closes it for the next page", () => {
+  // The panel is full screen below 640 px (UD4): only there would it cover the chosen product's page.
+  const width = (px: number) => vi.stubGlobal("innerWidth", px);
+
+  it("on a phone the product title link closes it for the next page", () => {
+    width(375);
     render([card()]).querySelector<HTMLAnchorElement>("a.ac-card__title")!.click();
     expect(ui()).toEqual({ open: false, teaserSeen: true });
   });
 
-  it("the View options link closes it for the next page", () => {
+  it("on a phone the View options link closes it for the next page", () => {
+    width(639);
     render([card({ action: "view_options" })]).querySelector<HTMLAnchorElement>("a.ac-card__options")!.click();
     expect(ui().open).toBe(false);
+  });
+
+  it("on a desktop (640 px and up) the floating panel stays open after either link", () => {
+    width(640);
+    render([card()]).querySelector<HTMLAnchorElement>("a.ac-card__title")!.click();
+    expect(ui().open).toBe(true);
+    width(1280);
+    render([card({ action: "view_options" })]).querySelector<HTMLAnchorElement>("a.ac-card__options")!.click();
+    expect(ui().open).toBe(true);
   });
 
   it("View cart keeps today's reopen", async () => {

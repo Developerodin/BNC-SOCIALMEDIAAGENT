@@ -5,6 +5,7 @@ import type { Card, CardsRenderer, WidgetCtx } from "../../src/lib/widget-contra
 import { addToCart } from "./cart";
 import { formatPrice, resolveHttpsUrl, safeHttpsUrl, safeImageUrl, stockLabel } from "./core/format";
 import { tokenStore, uiState } from "./core/storage";
+import { FULL_BELOW } from "./panel/styles";
 
 type Variant = Card["variants"][number];
 
@@ -28,11 +29,14 @@ function cardEl(card: Card, ctx: WidgetCtx, messageId: string | null): HTMLEleme
   const { t, page } = ctx;
   const root = el("div", "ac-card");
   const url = safeHttpsUrl(card.url);
-  // The shopper chose this product: don't reopen the panel over its page (on a phone it covers the whole page). Set
-  // before the navigation; other links (View cart, the theme's own) keep the UD13 reopen.
+  // The shopper chose this product: on a phone, where the panel is full screen (UD4), don't reopen it over the product's
+  // page. Set before the navigation. On a desktop the floating panel stays open; other links (View cart, the theme's own)
+  // keep the UD13 reopen.
   const productLink = (href: string, cls: string, text: string) => {
     const a = link(href, cls, text);
-    a.addEventListener("click", () => uiState(page.shop).open.set(false));
+    a.addEventListener("click", () => {
+      if (window.innerWidth < FULL_BELOW) uiState(page.shop).open.set(false);
+    });
     return a;
   };
 
