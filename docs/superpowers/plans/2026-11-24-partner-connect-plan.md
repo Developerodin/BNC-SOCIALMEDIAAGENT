@@ -52,6 +52,20 @@ This plan models it as a **`partner_grants`** record (store, client, scopes, cre
 **Spec:** this file plus product.md D69, D70, D73, D88–D90. The current implementation is `src/lib/partner/**`, `src/app/api/partner/**`, `docs/partner-api.md` and `tests/api/partner-*.test.ts` (commit `ed15d9b`). The earlier plans' Global Constraints still apply.
 
 
+
+## Decisions (user, 2026-11-24): every recommendation accepted
+
+C30 = (a): any staff member who can open AskCart and see orders and products may approve (agencies included).
+C31 = (a): keep the old B&C shared secret alongside the new tokens until the portal switches, then remove it (P11).
+C32 = (a): long-lived opaque tokens, valid until disconnected (access + refresh stays a switch).
+C33 = (a): a new connection of the same store to the same portal replaces the old grant.
+C34 = (a): after a first-time install, the merchant clicks Connect again.
+C35 = (b): a small "Connected apps" list with Disconnect on the AskCart home page now (M7 is not soon).
+C36 = (a): only the user's own portal, registered by script.
+C37 = (a): add the data-sharing line to the privacy policy and app listing now.
+Speed mode: tests first, one combined 4-lens review at the end.
+
+
 ## Research notes (checked 2026-11-24)
 
 The Shopify AI toolkit wasn't available, so these come from shopify.dev pages and Shopify community threads fetched directly. Items marked **verify** get a step in Task P0 on the dev store before any code relies on them.
