@@ -74,7 +74,7 @@ export function stockThreshold(settings: unknown): number {
 export type OpenedTurn =
   | { ok: true; replay?: undefined; conversationId: string; token: string; history: ChatTurn[]; message: string }
   | { ok: true; replay: { id: string; content: string; cards: Card[] }; conversationId: string; token: string }
-  | { ok: false; status: 401 | 404 | 409 };
+  | { ok: false; status: 401 | 404 | 409; session?: true };
 
 /**
  * Verifies or mints the conversation token, masks the message (D41), claims the conversation (D81), reads the history (the
@@ -120,7 +120,8 @@ export async function openTurn(
           busyUntil: TURN_LOCK,
         });
     } else {
-      if (!(await ownerAllows(tx, store.id, conversationId, opts.customer))) return { ok: false, status: 404 };
+      const denied = await ownerDenied(tx, store.id, conversationId, opts.customer);
+      if (denied) return denied;
       if (opts.requestId) {
         [earlier] = await tx
           .select({ id: messages.id, content: messages.content })
@@ -154,18 +155,23 @@ export async function openTurn(
   });
 }
 
+/** Why an owned conversation refuses a request: no/expired session (401, the client re-authenticates) or another customer's (404). */
+export type OwnerDenied = { ok: false; status: 401 | 404; session?: true };
+
 /**
- * Customer identity: false when the conversation is owned by one customer and the request carries a session for another.
- * A request with no session always passes (the conversation token alone grants access, as it does for guests), and so does
- * a conversation nobody owns. Callers answer 404, the same as a conversation that is gone, so ownership isn't revealed.
+ * Customer identity: a conversation with an owner needs a valid session for that same customer, whatever the route, so
+ * holding its token alone isn't enough. No session → 401 invalid_session; another customer's → 404, the same as a conversation
+ * that is gone, so ownership isn't revealed. Unowned (guest) conversations pass for everyone, as before: a session used on one
+ * leaves it unowned (by design: no adopting a guest chat that someone else may hold the token of).
  */
-async function ownerAllows(tx: Conn, storeId: string, conversationId: string, customer: string | undefined): Promise<boolean> {
-  if (customer === undefined) return true;
+export async function ownerDenied(tx: Conn, storeId: string, conversationId: string, customer: string | undefined): Promise<OwnerDenied | null> {
   const [c] = await tx
     .select({ owner: conversations.ownerCustomerId })
     .from(conversations)
     .where(and(eq(conversations.storeId, storeId), eq(conversations.id, conversationId)));
-  return !c?.owner || c.owner === customer;
+  if (!c?.owner) return null;
+  if (customer === undefined) return { ok: false, status: 401, session: true };
+  return c.owner === customer ? null : { ok: false, status: 404 };
 }
 
 /** A message's created_at, compared in SQL: a JS Date would drop Postgres' microseconds. */
@@ -234,12 +240,13 @@ export async function readHistory(
   storeId: string,
   token: string,
   customer?: string,
-): Promise<{ ok: true; messages: HistoryMessage[] } | { ok: false; status: 401 | 404 }> {
+): Promise<{ ok: true; messages: HistoryMessage[] } | { ok: false; status: 401 | 404; session?: true }> {
   const conversationId = verifyToken(storeId, token);
   if (!conversationId) return { ok: false, status: 401 };
   return forStore(storeId, async (tx) => {
     if (!(await conversationExists(tx, storeId, conversationId))) return { ok: false as const, status: 404 as const };
-    if (!(await ownerAllows(tx, storeId, conversationId, customer))) return { ok: false as const, status: 404 as const };
+    const denied = await ownerDenied(tx, storeId, conversationId, customer);
+    if (denied) return denied;
     const rows = await tx
       .select({
         id: messages.id,
@@ -269,11 +276,12 @@ export async function deleteConversation(
   storeId: string,
   token: string,
   customer?: string,
-): Promise<{ ok: true } | { ok: false; status: 401 | 404 | 409 }> {
+): Promise<{ ok: true } | { ok: false; status: 401 | 404 | 409; session?: true }> {
   const conversationId = verifyToken(storeId, token);
   if (!conversationId) return { ok: false, status: 401 };
   return forStore(storeId, async (tx) => {
-    if (!(await ownerAllows(tx, storeId, conversationId, customer))) return { ok: false as const, status: 404 as const };
+    const denied = await ownerDenied(tx, storeId, conversationId, customer);
+    if (denied) return denied;
     const deleted = await tx
       .delete(conversations)
       .where(

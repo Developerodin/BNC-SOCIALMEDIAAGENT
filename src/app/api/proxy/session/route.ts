@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
 import { customerGid, mintSession } from "@/lib/chat/customer";
+import { rateLimit } from "@/lib/partner/rate-limit";
 import { verifyProxy } from "@/lib/shopify/app-proxy";
 
 // GET /apps/askcart/session on the storefront → here (shopify.app.askcart.toml [app_proxy]). Shopify signs the request and
@@ -10,13 +11,18 @@ import { verifyProxy } from "@/lib/shopify/app-proxy";
 // Not cached: it is customer-specific (and a GET that reads req.url isn't prerendered, as in api/chat/history).
 
 const SHOP = /^[a-z0-9-]+\.myshopify\.com$/;
+// Per store and minute. Requests are signed, so this only caps a busy store; in-memory like cors.ts (N instances = N x).
+const PROXY_STORE_LIMIT = 300;
 
 export async function GET(req: Request) {
   const headers = { "Cache-Control": "no-store" };
   const params = new URL(req.url).searchParams;
   const secret = process.env.SHOPIFY_API_SECRET;
   const shop = params.get("shop");
-  if (!secret || !shop || !SHOP.test(shop) || !verifyProxy(params, secret)) return new Response(null, { status: 403, headers });
+  if (!secret || !shop || !SHOP.test(shop) || !(await verifyProxy(params))) return new Response(null, { status: 403, headers });
+
+  const wait = rateLimit(`proxy:${shop}`, Date.now(), PROXY_STORE_LIMIT);
+  if (wait) return Response.json({ error: "rate_limited" }, { status: 429, headers: { ...headers, "Retry-After": String(wait) } });
 
   const gid = customerGid(params.get("logged_in_customer_id") ?? "");
   if (!gid) return Response.json({ error: "not_logged_in" }, { status: 401, headers });

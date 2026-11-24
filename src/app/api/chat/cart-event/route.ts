@@ -1,3 +1,4 @@
+import { customerOf } from "@/lib/chat/customer";
 import { preflight, storeFor } from "@/lib/chat/cors";
 import { logCartEvent, parseCartEvent, readSmallJson } from "@/lib/chat/events";
 
@@ -8,7 +9,7 @@ import { logCartEvent, parseCartEvent, readSmallJson } from "@/lib/chat/events";
 // `// ponytail:` no rate limit until M10 (D40); add this route to M10's per-IP limit list.
 
 export function OPTIONS(req: Request) {
-  return preflight(req, { methods: "POST, OPTIONS", headers: "Content-Type, X-Conversation-Token" });
+  return preflight(req, { methods: "POST, OPTIONS", headers: "Content-Type, X-Conversation-Token, X-AskCart-Customer" });
 }
 
 export async function POST(req: Request) {
@@ -23,9 +24,11 @@ export async function POST(req: Request) {
   const event = body && parseCartEvent(body);
   if (!event) return Response.json({ error: "invalid_body" }, { status: 400, headers });
 
-  const logged = await logCartEvent(found.store.id, token, event);
+  const who = customerOf(req, found.store.id);
+  if (!who.ok) return Response.json({ error: "invalid_session" }, { status: 401, headers });
+  const logged = await logCartEvent(found.store.id, token, event, who.customer);
   if (!logged.ok) {
-    const error = logged.status === 401 ? "invalid_token" : "conversation_not_found";
+    const error = logged.session ? "invalid_session" : logged.status === 401 ? "invalid_token" : "conversation_not_found";
     return Response.json({ error }, { status: logged.status, headers });
   }
   return new Response(null, { status: 204, headers });

@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { forStore } from "@/db/client";
 import { cartEvents, conversations, messages } from "@/db/schema";
 import { UUID, verifyToken } from "./token";
+import { ownerDenied } from "./turn";
 
 // Task 27: the widget's two small write endpoints, POST /api/chat/feedback (UD14, C27) and POST /api/chat/cart-event (UD11,
 // §7.6). Review Focus 4: every write is scoped to the token's conversation in the token's store, inside forStore (RLS).
@@ -73,11 +74,18 @@ export function parseCartEvent(body: Record<string, unknown>): CartEvent | null 
  * Sets or clears the rating of an assistant message in the token's conversation. A bad or other-store token → 401; a
  * message that isn't an assistant message of this conversation in this store (or doesn't exist) → 404, nothing changed.
  */
-export async function rateMessage(storeId: string, token: string, f: Feedback): Promise<{ ok: true } | { ok: false; status: 401 | 404 }> {
+export async function rateMessage(
+  storeId: string,
+  token: string,
+  f: Feedback,
+  customer?: string,
+): Promise<{ ok: true } | { ok: false; status: 401 | 404; session?: true }> {
   const conversationId = verifyToken(storeId, token);
   if (!conversationId) return { ok: false, status: 401 };
-  const updated = await forStore(storeId, (tx) =>
-    tx
+  const updated = await forStore(storeId, async (tx) => {
+    const denied = await ownerDenied(tx, storeId, conversationId, customer);
+    if (denied) return denied;
+    return tx
       .update(messages)
       .set({ rating: f.rating })
       .where(
@@ -88,8 +96,9 @@ export async function rateMessage(storeId: string, token: string, f: Feedback): 
           eq(messages.role, "assistant"),
         ),
       )
-      .returning({ id: messages.id }),
-  );
+      .returning({ id: messages.id });
+  });
+  if (!Array.isArray(updated)) return updated;
   return updated.length > 0 ? { ok: true } : { ok: false, status: 404 };
 }
 
@@ -99,10 +108,17 @@ export async function rateMessage(storeId: string, token: string, f: Feedback): 
  * conversation existing, in the same statement, so a deleted conversation is a 404 rather than an FK error; a delete that
  * commits between that check and the FK check (SQLSTATE 23503) is a 404 too. A bad or other-store token → 401.
  */
-export async function logCartEvent(storeId: string, token: string, e: CartEvent): Promise<{ ok: true } | { ok: false; status: 401 | 404 }> {
+export async function logCartEvent(
+  storeId: string,
+  token: string,
+  e: CartEvent,
+  customer?: string,
+): Promise<{ ok: true } | { ok: false; status: 401 | 404; session?: true }> {
   const conversationId = verifyToken(storeId, token);
   if (!conversationId) return { ok: false, status: 401 };
-  const logged = forStore(storeId, async (tx) => {
+  const logged = forStore(storeId, async (tx): Promise<{ ok: true } | { ok: false; status: 401 | 404; session?: true }> => {
+    const denied = await ownerDenied(tx, storeId, conversationId, customer);
+    if (denied) return denied;
     const messageId = e.messageId
       ? sql`(select ${messages.id} from ${messages} where ${messages.id} = ${e.messageId} and ${messages.storeId} = ${storeId}
               and ${messages.conversationId} = ${conversationId} and ${messages.role} = 'assistant')`

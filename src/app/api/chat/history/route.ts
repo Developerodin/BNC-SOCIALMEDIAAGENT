@@ -9,7 +9,7 @@ import { readHistory } from "@/lib/chat/turn";
 // proxies from caching it too. No `runtime` export (cacheComponents doesn't support it).
 
 export function OPTIONS(req: Request) {
-  return preflight(req, { methods: "GET, OPTIONS", headers: "X-Conversation-Token" });
+  return preflight(req, { methods: "GET, OPTIONS", headers: "X-Conversation-Token, X-AskCart-Customer" });
 }
 
 export async function GET(req: Request) {
@@ -23,7 +23,7 @@ export async function GET(req: Request) {
   if (!who.ok) return Response.json({ error: "invalid_session" }, { status: 401, headers });
   const history = await readHistory(found.store.id, token, who.customer);
   if (!history.ok) {
-    const error = history.status === 401 ? "invalid_token" : "conversation_not_found";
+    const error = history.session ? "invalid_session" : history.status === 401 ? "invalid_token" : "conversation_not_found";
     return Response.json({ error }, { status: history.status, headers });
   }
   return Response.json({ messages: history.messages }, { headers });

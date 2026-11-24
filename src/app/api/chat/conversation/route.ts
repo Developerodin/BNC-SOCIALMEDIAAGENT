@@ -8,7 +8,7 @@ import { deleteConversation } from "@/lib/chat/turn";
 // running is a 409, and the widget can retry once the answer is done. No `runtime` export (cacheComponents doesn't support it).
 
 export function OPTIONS(req: Request) {
-  return preflight(req, { methods: "DELETE, OPTIONS", headers: "X-Conversation-Token" });
+  return preflight(req, { methods: "DELETE, OPTIONS", headers: "X-Conversation-Token, X-AskCart-Customer" });
 }
 
 export async function DELETE(req: Request) {
@@ -22,7 +22,7 @@ export async function DELETE(req: Request) {
   if (!who.ok) return Response.json({ error: "invalid_session" }, { status: 401, headers });
   const deleted = await deleteConversation(found.store.id, token, who.customer);
   if (!deleted.ok) {
-    const error = deleted.status === 401 ? "invalid_token" : deleted.status === 404 ? "conversation_not_found" : "turn_in_progress";
+    const error = deleted.session ? "invalid_session" : deleted.status === 401 ? "invalid_token" : deleted.status === 404 ? "conversation_not_found" : "turn_in_progress";
     return Response.json({ error }, { status: deleted.status, headers });
   }
   return new Response(null, { status: 204, headers });

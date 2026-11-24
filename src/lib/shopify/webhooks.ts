@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { type Conn, db, forStore } from "@/db/client";
-import { partnerConnectRequests, partnerGrants, stores, storeTokens, webhookEvents } from "@/db/schema";
+import { conversations, partnerConnectRequests, partnerGrants, stores, storeTokens, webhookEvents } from "@/db/schema";
 import { enqueue, enqueueProductSync } from "@/lib/jobs";
 import { enqueuePoll } from "@/lib/sync";
 import { shopify } from "./api";
@@ -42,8 +42,19 @@ export const handlers: Record<string, Handler> = {
   async CUSTOMERS_DATA_REQUEST(shopDomain) {
     console.info("webhook customers/data_request received", { shopDomain });
   },
-  async CUSTOMERS_REDACT(shopDomain) {
+  async CUSTOMERS_REDACT(shopDomain, tx, payload) {
     console.info("webhook customers/redact received", { shopDomain });
+    // Chat history owned by this customer (signed-in chats) goes; messages and cart_events cascade. Guest chats carry no
+    // customer id, so there is nothing to match. Idempotent: a repeat deletes nothing; an unknown store has nothing to delete.
+    const id = String(payload?.customer?.id ?? "");
+    if (!/^\d{1,20}$/.test(id)) return;
+    const [s] = await tx.select({ id: stores.id }).from(stores).where(eq(stores.shopDomain, shopDomain));
+    if (!s) return;
+    await forStore(
+      s.id,
+      (t) => t.delete(conversations).where(and(eq(conversations.storeId, s.id), eq(conversations.ownerCustomerId, `gid://shopify/Customer/${id}`))),
+      tx,
+    );
   },
   async SHOP_REDACT(shopDomain, tx) {
     const [s] = await tx.select({ id: stores.id }).from(stores).where(eq(stores.shopDomain, shopDomain));

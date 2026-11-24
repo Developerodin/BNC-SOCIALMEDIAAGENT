@@ -59,7 +59,10 @@ async function whoOwns(shop: string, storefrontToken: string, customerAccessToke
   if (!res.ok) throw new Error(`Storefront API ${res.status}`);
   const body = (await res.json()) as { data?: { customer: { id: string } | null } | null; errors?: unknown[] };
   // An ACCESS_DENIED error means the token lacks unauthenticated_read_customers; treat like a refused token.
-  if (body.errors?.length || !body.data) return "denied";
+  // Only an ACCESS_DENIED error counts (a throttle or outage must not mint tokens up to Shopify's cap of 100).
+  const errors = (body.errors ?? []) as { extensions?: { code?: string } }[];
+  if (errors.some((e) => e.extensions?.code === "ACCESS_DENIED")) return "denied";
+  if (errors.length || !body.data) throw new Error("Storefront API error");
   return body.data.customer?.id ?? null;
 }
 

@@ -168,7 +168,7 @@ test("OPTIONS allows POST, Content-Type and X-Conversation-Token", async () => {
   expect(res.status).toBe(204);
   expect(res.headers.get("access-control-allow-origin")).toBe(ORIGIN);
   expect(res.headers.get("access-control-allow-methods")).toContain("POST");
-  expect(res.headers.get("access-control-allow-headers")).toBe("Content-Type, X-Conversation-Token");
+  expect(res.headers.get("access-control-allow-headers")).toBe("Content-Type, X-Conversation-Token, X-AskCart-Customer");
   expect(res.headers.get("vary")).toBe("Origin");
   const bad = await route.OPTIONS(new Request("http://localhost/api/chat/feedback", { method: "OPTIONS", headers: { origin: "https://evil.com" } }));
   expect(bad.status).toBe(403);

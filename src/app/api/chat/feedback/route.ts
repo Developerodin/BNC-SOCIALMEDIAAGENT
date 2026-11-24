@@ -1,3 +1,4 @@
+import { customerOf } from "@/lib/chat/customer";
 import { preflight, storeFor } from "@/lib/chat/cors";
 import { parseFeedback, rateMessage, readSmallJson } from "@/lib/chat/events";
 
@@ -7,7 +8,7 @@ import { parseFeedback, rateMessage, readSmallJson } from "@/lib/chat/events";
 // rated (Review Focus 4); anything else is a 404. No `runtime` export (cacheComponents doesn't support it).
 
 export function OPTIONS(req: Request) {
-  return preflight(req, { methods: "POST, OPTIONS", headers: "Content-Type, X-Conversation-Token" });
+  return preflight(req, { methods: "POST, OPTIONS", headers: "Content-Type, X-Conversation-Token, X-AskCart-Customer" });
 }
 
 export async function POST(req: Request) {
@@ -22,9 +23,11 @@ export async function POST(req: Request) {
   const feedback = body && parseFeedback(body);
   if (!feedback) return Response.json({ error: "invalid_body" }, { status: 400, headers });
 
-  const rated = await rateMessage(found.store.id, token, feedback);
+  const who = customerOf(req, found.store.id);
+  if (!who.ok) return Response.json({ error: "invalid_session" }, { status: 401, headers });
+  const rated = await rateMessage(found.store.id, token, feedback, who.customer);
   if (!rated.ok) {
-    const error = rated.status === 401 ? "invalid_token" : "message_not_found";
+    const error = rated.session ? "invalid_session" : rated.status === 401 ? "invalid_token" : "message_not_found";
     return Response.json({ error }, { status: rated.status, headers });
   }
   return new Response(null, { status: 204, headers });

@@ -60,12 +60,15 @@ Storefront API `customerAccessTokenCreate`). AskCart checks it with Shopify and 
 AskCart never stores or logs the `customerAccessToken`.
 
 Send the session on later requests as the header `X-AskCart-Customer: <sessionToken>` on `POST /api/chat`,
-`GET /api/chat/history`, `DELETE /api/chat/conversation` and `GET /api/chat/conversations`. With it, a new conversation
+`GET /api/chat/history`, `DELETE /api/chat/conversation`, `POST /api/chat/feedback`, `POST /api/chat/cart-event` and
+`GET /api/chat/conversations`. With it, a new conversation
 belongs to that customer. Rules:
 
-- A conversation owned by customer A can't be read, continued or deleted with customer B's session (`404 conversation_not_found`).
-- A conversation without a session still works with its own token, as before, and anonymous conversations stay anonymous
-  (they are not adopted when the customer signs in).
+- A conversation owned by a customer needs that customer's session on **every** call that touches it (chat, history, delete,
+  feedback, cart-event); its token alone is not enough. No or expired session: `401 invalid_session`, sign in again and retry.
+  Another customer's session: `404 conversation_not_found` (`404 message_not_found` for feedback).
+- Anonymous conversations are unchanged: the token alone works, with or without a session, and a session used on one does
+  not make it the customer's (guest chats are not adopted when the customer signs in).
 - `401 invalid_session` (on any of those endpoints): the session expired or is invalid. Call `POST /api/chat/session` again
   and retry. A stream already running when the session expires finishes normally.
 - Omit the header for a guest. Never send a customer id yourself: only the session counts.

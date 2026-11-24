@@ -146,7 +146,7 @@ test("OPTIONS from an allowed origin returns the allow headers", async () => {
   expect(res.status).toBe(204);
   expect(res.headers.get("access-control-allow-origin")).toBe(ORIGIN);
   expect(res.headers.get("access-control-allow-methods")).toContain("POST");
-  expect(res.headers.get("access-control-allow-headers")).toBe("Content-Type");
+  expect(res.headers.get("access-control-allow-headers")).toBe("Content-Type, X-AskCart-Customer");
   expect(res.headers.get("vary")).toBe("Origin");
 });
 

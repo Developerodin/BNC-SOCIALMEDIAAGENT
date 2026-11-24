@@ -11,9 +11,11 @@ import { openTurn, runTurn } from "@/lib/chat/turn";
 
 const MAX_PAGE_URL = 2048;
 const OPEN_ERRORS = { 401: "invalid_token", 404: "conversation_not_found", 409: "turn_in_progress" } as const;
+// An owned conversation asked for without a valid session for its owner: the client re-issues the session (docs/mobile-api.md).
+const errorOf = (o: { status: 401 | 404 | 409; session?: true }) => (o.session ? "invalid_session" : OPEN_ERRORS[o.status]);
 
 export function OPTIONS(req: Request) {
-  return preflight(req);
+  return preflight(req, { methods: "POST, OPTIONS", headers: "Content-Type, X-AskCart-Customer" });
 }
 
 export async function POST(req: Request) {
@@ -38,7 +40,7 @@ export async function POST(req: Request) {
   const pageUrl = typeof body.pageUrl === "string" ? body.pageUrl.slice(0, MAX_PAGE_URL) : null;
 
   const opened = await openTurn(store, { token: conversationToken ?? undefined, message, pageUrl, requestId: typeof requestId === "string" ? requestId : undefined, customer: who.customer });
-  if (!opened.ok) return fail(OPEN_ERRORS[opened.status], opened.status);
+  if (!opened.ok) return fail(errorOf(opened), opened.status);
   // Every stream starts with `meta` (MetaEvent): the token is known before any text, for new, continued and replayed turns.
   const meta = sseEvent("meta", { conversationToken: opened.token });
   if (opened.replay) {

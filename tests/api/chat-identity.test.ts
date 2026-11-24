@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import postgres from "postgres";
 import { newStore } from "../helpers/seed";
-import { proxySignature } from "@/lib/shopify/app-proxy";
+import { createHmac } from "node:crypto";
 import { encrypt } from "@/lib/crypto";
 import { sha256Hex } from "@/lib/partner/secrets";
 
@@ -34,6 +34,21 @@ const post = (body: unknown, h: Record<string, string> = { "x-askcart-app-key": 
   sessionRoute.POST(new Request("http://x/api/chat/session", { method: "POST", headers: h, body: JSON.stringify(body) }));
 const appGet = (route: { GET: (r: Request) => Promise<Response> }, path: string, h: Record<string, string>) =>
   route.GET(new Request(`http://x${path}${path.includes("?") ? "&" : "?"}shop=${shop}`, { headers: { "x-askcart-app-key": APP_KEY, ...h } }));
+
+/** Calls a chat route handler by its path under /api/chat ('' = the chat POST itself), as the mobile app would. */
+async function fetchRoute(path: string, method: string, body: unknown, h: Record<string, string>) {
+  const routes: Record<string, () => Promise<Record<string, (r: Request) => Promise<Response>>>> = {
+    "": () => import("@/app/api/chat/route"),
+    history: () => import("@/app/api/chat/history/route"),
+    conversation: () => import("@/app/api/chat/conversation/route"),
+    feedback: () => import("@/app/api/chat/feedback/route"),
+    "cart-event": () => import("@/app/api/chat/cart-event/route"),
+  };
+  const handler = (await routes[path]())[method];
+  const init: RequestInit = { method, headers: { "x-askcart-app-key": APP_KEY, "content-type": "application/json", ...h } };
+  if (body !== undefined) init.body = JSON.stringify(path === "" ? { shop, ...(body as object) } : body);
+  return handler(new Request(`http://x/api/chat${path ? `/${path}` : ""}?shop=${shop}`, init));
+}
 
 function storefront(customer: { id: string } | null, status = 200) {
   return vi.fn(async () => new Response(JSON.stringify({ data: { customer } }), { status }));
@@ -121,9 +136,21 @@ test("session: a revoked storefront token is recreated once; a store still refus
   expect((await post({ shop, customerAccessToken: "c" })).status).toBe(200);
   expect(adminGraphql).toHaveBeenCalledTimes(1);
 
-  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ errors: [{ message: "ACCESS_DENIED" }] }))));
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ errors: [{ message: "denied", extensions: { code: "ACCESS_DENIED" } }] }))));
   const res = await post({ shop, customerAccessToken: "c" });
   expect(res.status).toBe(503);
+});
+
+test("session: a throttled or failing Storefront API is 503 and mints no new storefront token", async () => {
+  await tokenRow();
+  await admin`update store_tokens set storefront_token_enc = ${encrypt("sf", storeId)} where store_id = ${storeId}`;
+  const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ errors: [{ message: "Throttled", extensions: { code: "THROTTLED" } }] }))));
+  expect((await post({ shop, customerAccessToken: "c" })).status).toBe(503);
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("slow down", { status: 429 })));
+  expect((await post({ shop, customerAccessToken: "c" })).status).toBe(503);
+  expect(adminGraphql).not.toHaveBeenCalled();
+  spy.mockRestore();
 });
 
 test("session: the customer token is never logged", async () => {
@@ -146,24 +173,51 @@ test("session: no app key or a website Origin is refused", async () => {
 
 // --- website App Proxy ---
 
-function proxyReq(extra: Record<string, string>, opts: { secret?: string; ts?: number } = {}) {
-  const p = new URLSearchParams({ shop, path_prefix: "/apps/askcart", timestamp: String(opts.ts ?? Math.floor(Date.now() / 1000)), ...extra });
-  p.set("signature", proxySignature(p, opts.secret ?? process.env.SHOPIFY_API_SECRET!));
+/** Shopify's App Proxy signature: sorted "key=value" (repeats joined with ","), no separator, HMAC-SHA256 hex. */
+function sign(pairs: [string, string][]): string {
+  const g = new Map<string, string[]>();
+  for (const [k, v] of pairs) g.set(k, [...(g.get(k) ?? []), v]);
+  const msg = [...g].map(([k, v]) => `${k}=${v.join(",")}`).sort().join("");
+  return createHmac("sha256", process.env.SHOPIFY_API_SECRET!).update(msg).digest("hex");
+}
+function proxyReq(extra: [string, string][], opts: { ts?: number; secretOk?: boolean } = {}) {
+  const pairs: [string, string][] = [["shop", shop], ["path_prefix", "/apps/askcart"], ["timestamp", String(opts.ts ?? Math.floor(Date.now() / 1000))], ...extra];
+  const sig = opts.secretOk === false ? "00".repeat(32) : sign(pairs);
+  const p = new URLSearchParams([...pairs, ["signature", sig]]);
   return proxyRoute.GET(new Request(`http://x/api/proxy/session?${p}`));
 }
 
 test("proxy: a signed request with a logged-in customer gets that customer's session", async () => {
-  const res = await proxyReq({ logged_in_customer_id: "1001" });
+  const res = await proxyReq([["logged_in_customer_id", "1001"]]);
   expect(res.status).toBe(200);
   expect(cust.verifySession(storeId, (await res.json()).sessionToken)).toBe(ALICE);
 });
 
 test("proxy: no customer is 401; a bad signature or stale timestamp is 403", async () => {
-  expect((await proxyReq({ logged_in_customer_id: "" })).status).toBe(401);
-  expect((await proxyReq({ logged_in_customer_id: "1001" }, { secret: "wrong" })).status).toBe(403);
-  expect((await proxyReq({ logged_in_customer_id: "1001" }, { ts: Math.floor(Date.now() / 1000) - 3600 })).status).toBe(403);
+  expect((await proxyReq([["logged_in_customer_id", ""]])).status).toBe(401);
+  expect((await proxyReq([["logged_in_customer_id", "1001"]], { secretOk: false })).status).toBe(403);
+  expect((await proxyReq([["logged_in_customer_id", "1001"]], { ts: Math.floor(Date.now() / 1000) - 3600 })).status).toBe(403);
   const forged = new URLSearchParams({ shop, timestamp: String(Math.floor(Date.now() / 1000)), logged_in_customer_id: "1001", signature: "00" });
   expect((await proxyRoute.GET(new Request(`http://x/api/proxy/session?${forged}`))).status).toBe(403);
+});
+
+test("proxy: a repeated logged_in_customer_id, shop, timestamp or signature is refused even when the signature covers them", async () => {
+  // Shopify's own copy plus one a shopper added: validly signed over both, but must not be trusted.
+  expect((await proxyReq([["logged_in_customer_id", "1002"], ["logged_in_customer_id", "1001"]])).status).toBe(403);
+  expect((await proxyReq([["logged_in_customer_id", "1001"], ["shop", "other.myshopify.com"]])).status).toBe(403);
+  const ts = String(Math.floor(Date.now() / 1000));
+  expect((await proxyReq([["logged_in_customer_id", "1001"], ["timestamp", ts]])).status).toBe(403);
+  const pairs: [string, string][] = [["shop", shop], ["timestamp", ts], ["logged_in_customer_id", "1001"]];
+  const sig = sign(pairs);
+  const dupSig = new URLSearchParams([...pairs, ["signature", sig], ["signature", sig]]);
+  expect((await proxyRoute.GET(new Request(`http://x/api/proxy/session?${dupSig}`))).status).toBe(403);
+});
+
+test("proxy: a store over its per-minute limit gets 429", async () => {
+  for (let i = 0; i < 300; i++) await proxyReq([["logged_in_customer_id", "1001"]]);
+  const res = await proxyReq([["logged_in_customer_id", "1001"]]);
+  expect(res.status).toBe(429);
+  expect(res.headers.get("retry-after")).toBeTruthy();
 });
 
 // --- ownership ---
@@ -178,7 +232,7 @@ test("a turn with a session creates an owned conversation; a guest turn creates 
   expect(owner(guest.conversationId)).toBeNull();
 });
 
-test("customer B can't continue, read or delete A's conversation; A can; no session still works with the token", async () => {
+test("customer B can't continue, read or delete A's conversation (404); A can", async () => {
   const first = await turn.openTurn(store, { message: "secret plans", pageUrl: null, customer: ALICE });
   if (!first.ok) throw new Error("open failed");
   await admin`update conversations set busy_until = null where id = ${first.conversationId}`;
@@ -197,7 +251,6 @@ test("customer B can't continue, read or delete A's conversation; A can; no sess
   expect(del.status).toBe(404);
 
   expect((await turn.readHistory(storeId, t, ALICE)).ok).toBe(true);
-  expect((await turn.readHistory(storeId, t)).ok).toBe(true); // token alone, as today
   const again = await turn.openTurn(store, { token: t, message: "more", pageUrl: null, customer: ALICE });
   expect(again.ok).toBe(true);
 });
@@ -220,6 +273,72 @@ test("a bad or expired session header is 401 invalid_session on history; no head
   const expired = cust.mintSession(storeId, ALICE, Date.now() - 2 * cust.SESSION_TTL_MS).token;
   expect((await appGet(historyRoute, "/api/chat/history", { "x-conversation-token": t, "x-askcart-customer": expired })).status).toBe(401);
   expect((await appGet(historyRoute, "/api/chat/history", { "x-conversation-token": t })).status).toBe(200);
+});
+
+test("an owned conversation needs its owner's session on every route: no session is 401 invalid_session, another customer's is 404", async () => {
+  const first = await turn.openTurn(store, { message: "mine", pageUrl: null, customer: ALICE });
+  if (!first.ok) throw new Error("open failed");
+  await admin`update conversations set busy_until = null where id = ${first.conversationId}`;
+  const [m] = await admin`insert into messages (store_id, conversation_id, role, content) values (${storeId}, ${first.conversationId}, 'assistant', 'a') returning id`;
+  const tok = first.token;
+  const call = (path: string, method: string, body: unknown, customer?: string) =>
+    fetchRoute(path, method, body, { "x-conversation-token": tok, ...(customer ? { "x-askcart-customer": sessionOf(customer) } : {}) });
+  const cartBody = () => ({ eventId: crypto.randomUUID(), productId: "gid://shopify/Product/1", variantId: "11", quantity: 1 });
+
+  const cases: [string, string, () => unknown][] = [
+    ["history", "GET", () => undefined],
+    ["conversation", "DELETE", () => undefined],
+    ["feedback", "POST", () => ({ messageId: m.id, rating: 1 })],
+    ["cart-event", "POST", cartBody],
+    ["", "POST", () => ({ message: "hi", conversationToken: tok, requestId: crypto.randomUUID() })],
+  ];
+  for (const [path, method, body] of cases) {
+    const none = await call(path, method, body());
+    expect([path, none.status, (await none.json()).error]).toEqual([path, 401, "invalid_session"]);
+    const other = await call(path, method, body(), BOB);
+    expect([path, other.status]).toEqual([path, 404]);
+  }
+  // The owner passes the check on the small routes (the chat POST would call OpenAI; openTurn is covered above).
+  expect((await call("history", "GET", undefined, ALICE)).status).toBe(200);
+  expect((await call("feedback", "POST", { messageId: m.id, rating: 1 }, ALICE)).status).toBe(204);
+  expect((await call("cart-event", "POST", cartBody(), ALICE)).status).toBe(204);
+  expect((await admin`select count(*)::int as n from messages where id = ${m.id} and rating = 1`)[0].n).toBe(1);
+  expect((await call("conversation", "DELETE", undefined, ALICE)).status).toBe(204);
+});
+
+test("the preflights of the chat routes allow the customer header", async () => {
+  await admin`update stores set domains = ${["shop-id.example.com"]} where id = ${storeId}`;
+  const routes = [
+    await import("@/app/api/chat/route"),
+    historyRoute,
+    deleteRoute,
+    await import("@/app/api/chat/feedback/route"),
+    await import("@/app/api/chat/cart-event/route"),
+  ];
+  for (const r of routes) {
+    const res = await r.OPTIONS(new Request("http://x", { method: "OPTIONS", headers: { origin: "https://shop-id.example.com" } }));
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-headers")).toContain("X-AskCart-Customer");
+  }
+});
+
+// --- customers/redact ---
+
+test("customers/redact deletes that customer's conversations (messages and cart events cascade), is idempotent, and ignores others", async () => {
+  const { handlers } = await import("@/lib/shopify/webhooks");
+  const a = await turn.openTurn(store, { message: "alice", pageUrl: null, customer: ALICE });
+  const b = await turn.openTurn(store, { message: "bob", pageUrl: null, customer: BOB });
+  const g = await turn.openTurn(store, { message: "guest", pageUrl: null });
+  if (!a.ok || !b.ok || !g.ok) throw new Error("open failed");
+  await admin`insert into cart_events (store_id, conversation_id, product_id, variant_id, quantity, event_id) values (${storeId}, ${a.conversationId}, 'p', 'v', 1, ${crypto.randomUUID()})`;
+
+  await client.db.transaction((tx) => handlers.CUSTOMERS_REDACT(shop, tx, { customer: { id: 1001 } }));
+  await client.db.transaction((tx) => handlers.CUSTOMERS_REDACT(shop, tx, { customer: { id: 1001 } }));
+  await client.db.transaction((tx) => handlers.CUSTOMERS_REDACT("nope.myshopify.com", tx, { customer: { id: 1001 } }));
+  const left = await admin`select id from conversations where id in (${a.conversationId}, ${b.conversationId}, ${g.conversationId})`;
+  expect(left.map((r) => r.id).sort()).toEqual([b.conversationId, g.conversationId].sort());
+  expect((await admin`select count(*)::int as n from messages where conversation_id = ${a.conversationId}`)[0].n).toBe(0);
+  expect((await admin`select count(*)::int as n from cart_events where conversation_id = ${a.conversationId}`)[0].n).toBe(0);
 });
 
 // --- GET /api/chat/conversations ---

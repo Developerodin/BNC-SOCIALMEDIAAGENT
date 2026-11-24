@@ -2,7 +2,6 @@ import { beforeAll, expect, test } from "vitest";
 import { createHmac } from "node:crypto";
 import { mintToken } from "@/lib/chat/token";
 import { customerGid, customerOf, mintSession, SESSION_TTL_MS, verifySession } from "@/lib/chat/customer";
-import { proxySignature, verifyProxy } from "@/lib/shopify/app-proxy";
 
 beforeAll(() => {
   // Test-only dummy secret; never a real one.
@@ -52,37 +51,4 @@ test("customerOf: no header is a guest, a good header the customer, a bad one a 
   expect(customerOf(req(mintSession(A, ALICE).token), A)).toEqual({ ok: true, customer: ALICE });
   expect(customerOf(req("nope"), A)).toEqual({ ok: false });
   expect(customerOf(req(mintSession(B, ALICE).token), A)).toEqual({ ok: false });
-});
-
-// App Proxy signature (Shopify's documented algorithm).
-const SECRET = "hush";
-function signed(extra: Record<string, string>, ts = Math.floor(Date.now() / 1000)) {
-  const p = new URLSearchParams({ shop: "a.myshopify.com", path_prefix: "/apps/askcart", timestamp: String(ts), ...extra });
-  p.set("signature", proxySignature(p, SECRET));
-  return p;
-}
-
-test("proxy signature: matches Shopify's documented construction", () => {
-  const p = new URLSearchParams("extra=1&extra=2&shop=a.myshopify.com&timestamp=5");
-  const expected = createHmac("sha256", SECRET).update("extra=1,2shop=a.myshopify.comtimestamp=5").digest("hex");
-  expect(proxySignature(p, SECRET)).toBe(expected);
-});
-
-test("proxy signature: valid passes; tampered param, wrong secret, missing or stale timestamp fail", () => {
-  const now = Date.now();
-  expect(verifyProxy(signed({ logged_in_customer_id: "7" }), SECRET, now)).toBe(true);
-  const tampered = signed({ logged_in_customer_id: "7" });
-  tampered.set("logged_in_customer_id", "8");
-  expect(verifyProxy(tampered, SECRET, now)).toBe(false);
-  expect(verifyProxy(signed({}), "other", now)).toBe(false);
-  const unsigned = signed({});
-  unsigned.delete("signature");
-  expect(verifyProxy(unsigned, SECRET, now)).toBe(false);
-  const old = signed({}, Math.floor(now / 1000) - 600);
-  expect(verifyProxy(old, SECRET, now)).toBe(false);
-  const future = signed({}, Math.floor(now / 1000) + 600);
-  expect(verifyProxy(future, SECRET, now)).toBe(false);
-  const noTs = new URLSearchParams({ shop: "a.myshopify.com" });
-  noTs.set("signature", proxySignature(noTs, SECRET));
-  expect(verifyProxy(noTs, SECRET, now)).toBe(false);
 });

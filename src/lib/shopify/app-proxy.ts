@@ -1,34 +1,27 @@
-import { createHmac } from "node:crypto";
-import { safeEqualHex } from "@/lib/partner/secrets";
+import { shopify } from "./api";
 
 // Shopify App Proxy (https://shopify.dev/docs/apps/build/online-store/app-proxies/authenticate-app-proxies): the storefront
 // calls /apps/askcart/..., Shopify forwards it to us with the query string signed by the app secret and, when a customer is
-// logged in, `logged_in_customer_id` added by Shopify itself (a shopper can't set it: it is covered by the signature).
-// The signature is HMAC-SHA256 (hex) over every param except `signature`, as "key=value" (repeated keys joined with ","),
-// sorted, concatenated with no separator. @shopify/shopify-api has no helper for this scheme (its validateHmac is the OAuth one).
+// logged in, `logged_in_customer_id` added by Shopify itself. The signature check is the library's
+// shopify.utils.validateHmac(…, { signator: "appProxy" }): HMAC-SHA256 over the params, constant-time compare, and a 90 s
+// timestamp window.
 //
-// Replay: a signed URL is valid until MAX_AGE_MS passes; inside it, someone who captured the URL could reuse it. That needs
-// access to a TLS request, and all it yields is the session for the customer who made it, so there is no nonce store.
+// Duplicates: the signature covers repeated keys (joined with ","), but a route that reads one value with get() would read
+// the first. A shopper can append `?logged_in_customer_id=<victim>` and Shopify then adds its own copy, so the signature still
+// verifies over both. The library rejects repeats of shop / timestamp / signature; we also refuse a repeated
+// logged_in_customer_id, so the value the route reads is the one Shopify signed and nothing else.
+//
+// Replay: a signed URL is valid until the timestamp window passes; inside it, someone who captured the URL could reuse it.
+// That needs access to a TLS request, and all it yields is the session for the customer who made it, so there is no nonce store.
 
-const MAX_AGE_MS = 120_000;
-const MAX_FUTURE_MS = 30_000;
+const SINGLE_VALUE = ["shop", "timestamp", "signature", "logged_in_customer_id"];
 
-export function proxySignature(params: URLSearchParams, secret: string): string {
-  const grouped = new Map<string, string[]>();
-  for (const [k, v] of params) {
-    if (k === "signature") continue;
-    grouped.set(k, [...(grouped.get(k) ?? []), v]);
+/** True when the request is a genuine, fresh App Proxy request with no repeated identity params. */
+export async function verifyProxy(params: URLSearchParams): Promise<boolean> {
+  if (SINGLE_VALUE.some((k) => params.getAll(k).length > 1)) return false;
+  try {
+    return await shopify.utils.validateHmac(params, { signator: "appProxy" });
+  } catch {
+    return false; // missing or stale timestamp, missing signature
   }
-  const message = [...grouped].map(([k, v]) => `${k}=${v.join(",")}`).sort().join("");
-  return createHmac("sha256", secret).update(message).digest("hex");
-}
-
-/** True when `signature` matches (constant time) and `timestamp` is fresh. */
-export function verifyProxy(params: URLSearchParams, secret: string, now = Date.now()): boolean {
-  const given = params.get("signature");
-  const ts = params.get("timestamp");
-  if (!given || !ts || !/^\d{1,12}$/.test(ts)) return false;
-  if (!safeEqualHex(proxySignature(params, secret), given)) return false;
-  const age = now - Number(ts) * 1000;
-  return age <= MAX_AGE_MS && age >= -MAX_FUTURE_MS;
 }
