@@ -40,6 +40,9 @@ const en = {
   not_helpful: "Not helpful",
   feedback_thanks: "Thanks for your feedback",
   feedback_error: "Couldn't save",
+  delete_failed: "Couldn't delete the chat. Please try again.",
+  price_on_product: "See price on the product page",
+  cart_rate_limited: "Please try again in a moment.",
 };
 export type Key = keyof typeof en;
 type Dict = Record<Key, string>;
@@ -83,6 +86,9 @@ const fr: Dict = {
   not_helpful: "Pas utile",
   feedback_thanks: "Merci pour votre avis",
   feedback_error: "Échec de l'enregistrement",
+  delete_failed: "Impossible de supprimer la conversation. Veuillez réessayer.",
+  price_on_product: "Voir le prix sur la page du produit",
+  cart_rate_limited: "Veuillez réessayer dans un instant.",
 };
 
 const de: Dict = {
@@ -124,6 +130,9 @@ const de: Dict = {
   not_helpful: "Nicht hilfreich",
   feedback_thanks: "Danke für dein Feedback",
   feedback_error: "Speichern fehlgeschlagen",
+  delete_failed: "Der Chat konnte nicht gelöscht werden. Bitte versuch es noch einmal.",
+  price_on_product: "Preis auf der Produktseite ansehen",
+  cart_rate_limited: "Bitte versuch es gleich noch einmal.",
 };
 
 const es: Dict = {
@@ -165,6 +174,9 @@ const es: Dict = {
   not_helpful: "No es útil",
   feedback_thanks: "Gracias por tu opinión",
   feedback_error: "No se pudo guardar",
+  delete_failed: "No se pudo eliminar el chat. Inténtalo de nuevo.",
+  price_on_product: "Ver el precio en la página del producto",
+  cart_rate_limited: "Inténtalo de nuevo en un momento.",
 };
 
 const it: Dict = {
@@ -206,6 +218,9 @@ const it: Dict = {
   not_helpful: "Non utile",
   feedback_thanks: "Grazie per il tuo feedback",
   feedback_error: "Impossibile salvare",
+  delete_failed: "Impossibile eliminare la chat. Riprova.",
+  price_on_product: "Vedi il prezzo nella pagina del prodotto",
+  cart_rate_limited: "Riprova tra un momento.",
 };
 
 const nl: Dict = {
@@ -247,6 +262,9 @@ const nl: Dict = {
   not_helpful: "Niet nuttig",
   feedback_thanks: "Bedankt voor je feedback",
   feedback_error: "Opslaan mislukt",
+  delete_failed: "De chat kon niet worden verwijderd. Probeer het opnieuw.",
+  price_on_product: "Bekijk de prijs op de productpagina",
+  cart_rate_limited: "Probeer het zo meteen opnieuw.",
 };
 
 export const DICTS = { en: en as Dict, fr, de, es, it, nl };
