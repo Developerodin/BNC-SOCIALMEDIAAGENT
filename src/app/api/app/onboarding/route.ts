@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
-import { authenticateEmbedded } from "@/lib/shopify/session";
+import { readSmallJson, withStore } from "@/lib/admin-route";
 import { themeEditorLink } from "@/lib/website-check";
 
 // The admin home's setup guide. The merchant confirms the theme-editor step themselves (Shopify gives apps no way to
@@ -21,33 +21,22 @@ function onboardingOf(settings: unknown): Onboarding {
 
 const state = (o: Onboarding) => ({ chatConfirmed: !!o.chatConfirmedAt, dismissed: !!o.dismissedAt });
 
-export async function GET(req: Request) {
-  try {
-    const { storeId, shop } = await authenticateEmbedded(req);
+export function GET(req: Request) {
+  return withStore(req, async ({ storeId, shop }) => {
     const [s] = await db.select({ settings: stores.settings }).from(stores).where(eq(stores.id, storeId));
     return Response.json({ ...state(onboardingOf(s?.settings)), themeLink: themeEditorLink(shop) });
-  } catch (e) {
-    if (e instanceof Response) return e;
-    throw e;
-  }
+  });
 }
 
-export async function POST(req: Request) {
-  try {
-    const { storeId } = await authenticateEmbedded(req);
-    const text = await req.text();
-    if (text.length > MAX_BODY) return Response.json({ error: "too_large" }, { status: 413 });
-    let action: unknown;
-    try {
-      action = (JSON.parse(text) as { action?: unknown }).action;
-    } catch {
-      action = undefined;
-    }
+export function POST(req: Request) {
+  return withStore(req, async ({ storeId }) => {
+    const action = ((await readSmallJson(req, MAX_BODY)) as { action?: unknown } | undefined)?.action;
     if (typeof action !== "string" || !Object.hasOwn(FIELD, action)) return Response.json({ error: "invalid_action" }, { status: 400 });
     const field = FIELD[action as keyof typeof FIELD];
 
-    return await db.transaction(async (tx) => {
+    return db.transaction(async (tx) => {
       const [s] = await tx.select({ settings: stores.settings }).from(stores).where(eq(stores.id, storeId)).for("update");
+      if (!s) return Response.json({ error: "not_found" }, { status: 404 }); // the row vanished after authentication
       const current = onboardingOf(s.settings);
       // Keep the first timestamp when the same action arrives twice.
       const onboarding = { ...current, [field]: current[field] ?? new Date().toISOString() };
@@ -57,8 +46,5 @@ export async function POST(req: Request) {
         .where(eq(stores.id, storeId));
       return Response.json(state(onboarding));
     });
-  } catch (e) {
-    if (e instanceof Response) return e;
-    throw e;
-  }
+  });
 }

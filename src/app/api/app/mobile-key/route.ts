@@ -1,24 +1,14 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
+import { withStore } from "@/lib/admin-route";
 import { newMobileKey } from "@/lib/chat/mobile-key";
-import { authenticateEmbedded } from "@/lib/shopify/session";
 
 // The admin's "Mobile app key" card (docs/mobile-api.md). GET shows which key is active (prefix and date, never the
 // key), POST creates one and returns it once (replacing any old key at once), DELETE revokes it.
 
-async function withStore(req: Request, run: (storeId: string) => Promise<Response>): Promise<Response> {
-  try {
-    const { storeId } = await authenticateEmbedded(req);
-    return await run(storeId);
-  } catch (e) {
-    if (e instanceof Response) return e;
-    throw e;
-  }
-}
-
 export function GET(req: Request) {
-  return withStore(req, async (storeId) => {
+  return withStore(req, async ({ storeId }) => {
     const [s] = await db
       .select({ prefix: stores.mobileKeyPrefix, createdAt: stores.mobileKeyCreatedAt })
       .from(stores)
@@ -28,7 +18,7 @@ export function GET(req: Request) {
 }
 
 export function POST(req: Request) {
-  return withStore(req, async (storeId) => {
+  return withStore(req, async ({ storeId }) => {
     const { key, hash, prefix } = newMobileKey();
     const [s] = await db
       .update(stores)
@@ -41,7 +31,7 @@ export function POST(req: Request) {
 }
 
 export function DELETE(req: Request) {
-  return withStore(req, async (storeId) => {
+  return withStore(req, async ({ storeId }) => {
     await db
       .update(stores)
       .set({ mobileKeyHash: null, mobileKeyPrefix: null, mobileKeyCreatedAt: null })

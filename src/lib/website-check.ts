@@ -1,6 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
 import { request } from "node:https";
+import { parseHost as normalizeHost } from "@/lib/embed-domains";
 
 // "Connect your website" (admin home): tells a merchant how to add the chat to the address they typed. The server fetches
 // a URL the merchant chose, so everything here is about not becoming an SSRF proxy into our own network.
@@ -8,29 +9,8 @@ import { request } from "node:https";
 export type WebsiteKind = "shopify_store" | "shopify_other_store" | "other";
 export type WebsiteCheck = { kind: WebsiteKind; host: string; reachable: boolean };
 
-const HOST_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}$/;
-
-/**
- * "Brand.com", "https://www.brand.com/path?x" -> "www.brand.com"; null for anything that isn't a plain public hostname.
- * Needs a dot and a letter-first TLD, which rejects localhost, bare names and every IP form (URL() turns 0x7f.1 or 2130706433
- * into dotted numbers, whose last label starts with a digit). Userinfo and explicit ports are refused, not stripped.
- */
-export function normalizeHost(input: unknown): string | null {
-  if (typeof input !== "string" || input.length > 2048) return null;
-  const raw = input.trim();
-  if (!raw || /\s/.test(raw)) return null;
-  let u: URL;
-  try {
-    u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : "https://" + raw);
-  } catch {
-    return null;
-  }
-  if (u.protocol !== "https:" && u.protocol !== "http:") return null;
-  if (u.username || u.password || u.port) return null;
-  const host = u.hostname.toLowerCase().replace(/\.$/, "");
-  if (/\.(local|internal|localhost)$/.test(host)) return null;
-  return host.length <= 253 && HOST_RE.test(host) ? host : null;
-}
+// One host normaliser for the whole app lives in embed-domains.ts, so this check and the allow-list can't disagree.
+export { normalizeHost };
 
 // Addresses a public website never lives on. Mapped (::ffff:), NAT64 and 6to4 v6 forms are blocked whole because they
 // can smuggle a private v4 address past a v6 check.

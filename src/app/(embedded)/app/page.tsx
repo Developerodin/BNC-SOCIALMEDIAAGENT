@@ -134,8 +134,12 @@ function SetupGuideCard({ sync }: { sync: SyncState | null }) {
 
   useEffect(() => {
     (async () => {
-      const res = await authed("/api/app/onboarding");
-      if (res.ok) setState(await res.json());
+      try {
+        const res = await authed("/api/app/onboarding");
+        if (res.ok) setState(await res.json());
+      } catch {
+        // the card just stays hidden
+      }
     })();
   }, []);
 
@@ -151,7 +155,7 @@ function SetupGuideCard({ sync }: { sync: SyncState | null }) {
     }
   }
 
-  const synced = !!sync && sync.status === "idle" && !!sync.lastSyncAt && sync.productCount > 0;
+  const synced = !!sync?.lastSyncAt && sync.productCount > 0; // not tied to status: a resync or a failed one must not bring the guide back
   const allDone = synced && !!state?.chatConfirmed;
   if (doneAtLoad === null && state && sync) setDoneAtLoad(allDone);
   if (!state || !sync || state.dismissed || doneAtLoad) return null;
@@ -264,6 +268,7 @@ function ConnectWebsiteCard() {
     try {
       const res = await authed("/api/app/embed-domains", { method: allow ? "POST" : "DELETE", body: JSON.stringify({ host }) });
       if (res.status === 409) setAllowError("You can allow up to 10 websites. Remove one first.");
+      else if (res.status === 400) setAllowError("This address can't be allowed.");
       else if (!res.ok) throw new Error(String(res.status));
       else setAllowed((await res.json()).domains);
     } catch {

@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
 import { embedDomains, MAX_EMBED_DOMAINS, normalizeHost } from "@/lib/embed-domains";
-import { authenticateEmbedded } from "@/lib/shopify/session";
+import { readSmallJson, withStore } from "@/lib/admin-route";
 
 // The sites allowed to embed the store's chat (docs/embed.md). GET lists them, POST {host} adds one, DELETE {host}
 // removes one. Each answers with the new list. Stored in stores.settings.embedDomains; the row is locked while it is
@@ -10,26 +10,9 @@ import { authenticateEmbedded } from "@/lib/shopify/session";
 
 const MAX_BODY = 1024;
 
-async function withStore(req: Request, run: (storeId: string) => Promise<Response>): Promise<Response> {
-  try {
-    const { storeId } = await authenticateEmbedded(req);
-    return await run(storeId);
-  } catch (e) {
-    if (e instanceof Response) return e;
-    throw e;
-  }
-}
-
-/** The `host` field of a small JSON body, normalized; or an error Response. */
+/** The `host` field of a small JSON body, normalized; or an error Response (413 is thrown by readSmallJson). */
 async function hostOf(req: Request): Promise<string | Response> {
-  const text = await req.text();
-  if (text.length > MAX_BODY) return Response.json({ error: "too_large" }, { status: 413 });
-  let host: unknown;
-  try {
-    host = (JSON.parse(text) as { host?: unknown }).host;
-  } catch {
-    return Response.json({ error: "invalid_host" }, { status: 400 });
-  }
+  const host = ((await readSmallJson(req, MAX_BODY)) as { host?: unknown } | undefined)?.host;
   const norm = typeof host === "string" ? normalizeHost(host) : null;
   return norm ?? Response.json({ error: "invalid_host" }, { status: 400 });
 }
@@ -47,14 +30,14 @@ async function update(storeId: string, change: (list: string[]) => string[] | Re
 }
 
 export function GET(req: Request) {
-  return withStore(req, async (storeId) => {
+  return withStore(req, async ({ storeId }) => {
     const [s] = await db.select({ settings: stores.settings }).from(stores).where(eq(stores.id, storeId));
     return Response.json({ domains: embedDomains(s?.settings) });
   });
 }
 
 export function POST(req: Request) {
-  return withStore(req, async (storeId) => {
+  return withStore(req, async ({ storeId }) => {
     const host = await hostOf(req);
     if (host instanceof Response) return host;
     return update(storeId, (list) => {
@@ -66,7 +49,7 @@ export function POST(req: Request) {
 }
 
 export function DELETE(req: Request) {
-  return withStore(req, async (storeId) => {
+  return withStore(req, async ({ storeId }) => {
     const host = await hostOf(req);
     if (host instanceof Response) return host;
     return update(storeId, (list) => list.filter((h) => h !== host));

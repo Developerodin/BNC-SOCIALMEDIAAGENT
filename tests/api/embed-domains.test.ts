@@ -59,7 +59,7 @@ test("starts empty; add lowercases and dedupes; delete removes; other settings s
 });
 
 test.each([
-  "localhost", "127.0.0.1", "10.0.0.1", "[::1]", "a.local", "db.internal", "intranet", "example.com:8080", "user@example.com",
+  "localhost", "127.0.0.1", "10.0.0.1", "[::1]", "a.local", "db.internal", "intranet", "shop.lan", "a.corp", "a.home", "a.test", "a.invalid", "a.intranet", "a.localdomain", "a.example", "trailing.com.", "example.com:8080", "user@example.com",
   "https://example.com", "example.com/path", "*.example.com", "-a.example.com", "exa mple.com", "a..com", "", "a.b.123",
 ])("rejects %j as a host", async (host) => {
   expect((await add(host)).status).toBe(400);

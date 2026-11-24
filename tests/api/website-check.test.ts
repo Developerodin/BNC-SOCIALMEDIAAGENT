@@ -103,13 +103,14 @@ test("normalises to a lowercase hostname", () => {
   expect(lib.normalizeHost("Brand.com")).toBe("brand.com");
   expect(lib.normalizeHost("  https://WWW.Brand.com/path?x=1#y ")).toBe("www.brand.com");
   expect(lib.normalizeHost("http://brand.com/")).toBe("brand.com");
-  expect(lib.normalizeHost("https://xn--bcher-kva.example/")).toBe("xn--bcher-kva.example");
+  expect(lib.normalizeHost("https://xn--bcher-kva.com/")).toBe("xn--bcher-kva.com");
 });
 
 test.each([
   "", "localhost", "http://localhost/", "127.0.0.1", "https://10.0.0.1/", "[::1]", "https://[::1]/", "2130706433", "0x7f.1",
   "brand.com:8443", "https://brand.com:444/", "https://user:pw@brand.com/", "ftp://brand.com", "file:///etc/passwd", "javascript:alert(1)",
   "foo.local", "db.internal", "x.localhost", "brand", "a b.com", "-brand.com", "brand.123", ".com",
+  "shop.lan", "a.corp", "a.home", "a.test", "a.example", "a.invalid", "a.intranet", "a.localdomain", // the same list the allow-list refuses
 ])("rejects %j with 400", async (input) => {
   expect((await post(input)).status).toBe(400);
   expect(lookup).not.toHaveBeenCalled();
@@ -268,8 +269,10 @@ test("without SHOPIFY_API_KEY there is no theme link", async () => {
   }
 });
 
-test("a body over 4 KB is refused before parsing", async () => {
-  expect((await post("brand.com" + " ".repeat(5000))).status).toBe(400);
+test("a body over 4 KB is refused with 413 body_too_large, whether declared or streamed", async () => {
+  const big = await post("brand.com" + " ".repeat(5000));
+  expect(big.status).toBe(413);
+  expect(await big.json()).toEqual({ error: "body_too_large" });
   const res = await route.POST(
     new Request("http://x/api/app/website-check", {
       method: "POST",
@@ -277,5 +280,5 @@ test("a body over 4 KB is refused before parsing", async () => {
       headers: { authorization: "Bearer t", "content-length": "99999" },
     }),
   );
-  expect(res.status).toBe(400);
+  expect(res.status).toBe(413);
 });
