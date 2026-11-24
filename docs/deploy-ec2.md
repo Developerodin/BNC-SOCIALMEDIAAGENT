@@ -195,14 +195,99 @@ sudo ln -s /etc/nginx/sites-available/askcart /etc/nginx/sites-enabled/ && sudo 
 sudo certbot --nginx -d app.askcart.example
 ```
 
-## 5. Point Shopify at it (from your machine, not EC2)
+## 5. Shopify setup (from your machine, not EC2)
 
-1. In `shopify.app.askcart.toml`, set `application_url = "https://app.askcart.example"` and
-   `redirect_urls = ["https://app.askcart.example/api/auth"]`, **and** the `[app_proxy]` `url` (currently
-   `https://example.com/api/proxy`) to `https://app.askcart.example/api/proxy`. Without it signed-in shoppers can't
-   continue their chat on the website.
-2. `npm run build:widget`, then `shopify app deploy --config shopify.app.askcart.toml`.
-3. Dev Dashboard → **Distribution → Custom** → the merchant's `.myshopify.com` domain → send them the install link.
+Run these on your development machine, in the repo, logged in to the Shopify CLI (`shopify auth login` if needed) with
+the account that owns the **AskCart** app (org CellaVei). Replace `app.askcart.example` with your real domain.
+
+### 5.1 Point the app at your server
+
+In `shopify.app.askcart.toml` change the three placeholder URLs:
+
+```toml
+application_url = "https://app.askcart.example"
+
+[auth]
+redirect_urls = [ "https://app.askcart.example/api/auth" ]
+
+[app_proxy]
+url = "https://app.askcart.example/api/proxy"   # website customer sign-in (signed-in shoppers keep their chat history)
+subpath = "askcart"
+prefix = "apps"
+```
+
+Keep the `[access_scopes]` line as it is. What each permission is for (Shopify shows them to the merchant at install,
+and the App Store review asks about them):
+
+| Scope | Why AskCart needs it |
+|---|---|
+| `read_products`, `read_inventory`, `read_publications` | Product sync, search and live price/stock on chat cards |
+| `read_orders`, `read_all_orders` | The partner / Social Media Agent read API (`read_all_orders` needs Shopify approval for orders older than 60 days) |
+| `unauthenticated_read_customers` | Verifying a mobile-app shopper's login so their chat history follows them |
+| `write_app_proxy` | Required by Shopify for any app with an App Proxy (website customer sign-in) |
+
+Commit the toml change, so the next `shopify app deploy` doesn't revert it.
+
+### 5.2 Release the app config and the storefront widget
+
+```bash
+npm run build:widget                                 # bundles the chat widget into extensions/askcart/assets
+shopify app deploy --config shopify.app.askcart.toml # releases URLs, scopes, app proxy, webhooks + the theme extension
+```
+
+Confirm the release when asked. Re-run both commands whenever the widget (`widget/src`) or the toml changes.
+`shopify app dev` (local development) temporarily points the app at your tunnel; after using it, run
+`shopify app deploy` again so the store uses the EC2 URLs.
+
+### 5.3 Install link for the merchant (custom distribution)
+
+1. Open the [Dev Dashboard](https://dev.shopify.com) → **Apps → AskCart → Distribution**.
+2. Choose **Custom distribution** and enter the merchant's store domain (`their-store.myshopify.com`).
+   This choice is **permanent** for this app; the public App Store listing will be a separate app later.
+3. Copy the **install link** and send it to the merchant (it only works for that store).
+
+### 5.4 What the merchant does (≈2 minutes)
+
+1. Opens the link, logs in to their Shopify admin, reviews the permissions and clicks **Install**.
+2. AskCart opens in their admin (Apps → AskCart) and starts syncing products automatically ("Products synced ✓").
+3. **Setup guide → Turn on chat** → the theme editor opens with **AskCart chat** selected → **Save** → back in AskCart,
+   **I've turned it on**. (Manual path: Online Store → Themes → Customize → the **App embeds** icon in the left toolbar →
+   AskCart chat on → Save. App embeds are per theme: use the published one.)
+4. Optional: **Chat widget** card: name, accent colour, avatar (a `cdn.shopify.com` Files URL), launcher text and side,
+   welcome message, up to 4 suggested questions, teaser. **Save** updates the storefront.
+
+The chat button now shows bottom-right on their storefront.
+
+### 5.5 Optional: other websites, the hosted chat link, the mobile app
+
+- **Another website (WordPress, Wix, custom):** AskCart → **Connect your website** → enter the site → **Allow chat on
+  …** → copy the one-line `<script>` into the site's pages, or share the hosted chat link `https://app.askcart.example/chat/<store>.myshopify.com`.
+  Only allowed sites can show the chat. Details: `docs/embed.md`.
+- **Mobile app:** AskCart → **Mobile app key → Create key** → give the key (shown once) and `docs/mobile-api.md` to the
+  app's developer. Customer sign-in from the app works after the merchant approved `unauthenticated_read_customers`.
+
+### 5.6 Agent profile (Shopify MCP features)
+
+`UCP_AGENT_PROFILE_URL` in the EC2 `.env` must be `https://app.askcart.example/ucp-agent-profile.json` (served from
+`public/`). It turns on: policy answers through Shopify's `ask_business` (the old policies tool is the fallback until
+2027-01-15), the `product_details` tool, and MCP-only stores. Check it loads in a browser after deploying.
+
+### 5.7 Optional: an MCP-only store (no app install)
+
+For a Shopify store that has **not** installed AskCart (see `docs/superpowers/plans/2026-11-24-mcp-only-plan.md`):
+
+1. Send the merchant the embed line to paste into their theme (`Online Store → Themes → Edit code → layout/theme.liquid`,
+   before `</body>`; for a password-protected store also `layout/password.liquid`):
+   `<script src="https://app.askcart.example/embed.js" data-shop="their-store.myshopify.com" defer></script>`
+2. On EC2 (in the app folder), create the store record:
+   ```bash
+   npx tsx --env-file=.env --tsconfig tsconfig.json scripts/provision-mcp-store.mts their-store.myshopify.com --name "Their Store"
+   ```
+   It checks the storefront, reads the currency from Shopify, and stops if the store redirects to a custom domain:
+   check it's theirs, then re-run with `--confirm-domain www.their-domain.com`.
+3. Limits for these stores: no stock counts, guest chats only, 100 messages a day. To switch one off:
+   `UPDATE stores SET active = false WHERE shop_domain = 'their-store.myshopify.com';`
+4. If the merchant later installs the app, the same record switches to the full app automatically.
 
 ## 6. Smoke test after deploy
 

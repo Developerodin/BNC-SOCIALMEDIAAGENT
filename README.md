@@ -1,36 +1,39 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AskCart
 
-## Getting Started
+An AI shopping assistant for Shopify stores: a chat on the storefront that finds products, shows cards with live price
+and stock, adds to the cart, and answers store policy questions (through Shopify's MCP). The same assistant is available
+on other websites (one-line embed or a hosted chat link) and in the merchant's mobile app (mobile API).
 
-First, run the development server:
+Built with Next.js 16, TypeScript, Postgres 17 + pgvector, pg-boss jobs and OpenAI.
+
+## Guides
+
+| I want to… | Read |
+|---|---|
+| Deploy on EC2 and set the app up in Shopify (step by step) | [`docs/deploy-ec2.md`](docs/deploy-ec2.md) |
+| Put the chat on a non-Shopify website | [`docs/embed.md`](docs/embed.md) |
+| Connect a mobile app | [`docs/mobile-api.md`](docs/mobile-api.md) |
+| Connect a partner portal (Social Media Agent) | [`docs/partner-api.md`](docs/partner-api.md) |
+| Prepare the Shopify App Store submission | [`docs/publish-checklist.md`](docs/publish-checklist.md) |
+| Serve stores without an app install (MCP-only) | [`docs/superpowers/plans/2026-11-24-mcp-only-plan.md`](docs/superpowers/plans/2026-11-24-mcp-only-plan.md) |
+
+## Local development (Windows or macOS)
+
+Needs Node 22+, Docker Desktop and the Shopify CLI.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm ci
+cp .env.example .env          # fill in the values (see the comments in the file)
+docker compose up -d          # Postgres + pgvector on localhost:5432
+npx drizzle-kit migrate       # create the tables
+shopify app dev --config shopify.app.askcart.toml --store <your-dev-store>.myshopify.com
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Enter the storefront password when asked (Shopify admin → Online Store → Preferences → Store access). Press `p` to open
+the app, then turn on **AskCart chat** in the theme's App embeds and open the storefront (not `127.0.0.1:9293`, which is
+the CLI's separate development theme).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Tests: `npx vitest run` (the `tests/live` files call the real OpenAI API and only run when it is configured).
+Type check: `npx tsc --noEmit -p .` · Lint: `npx eslint src tests widget`.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+If Docker stops (for example after a crash), start Docker Desktop and run `docker compose up -d` again.
