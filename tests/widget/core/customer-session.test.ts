@@ -17,6 +17,20 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("customer session (logged-in storefront shopper)", () => {
+  it("keeps the chat when the session can't be fetched right now (invalid_session is transient, not a reset)", async () => {
+    fetchMock.mockImplementation(async (u) =>
+      String(u) === "/apps/askcart/session" ? jsonResponse(429, { error: "rate_limited" }) : jsonResponse(401, { error: "invalid_session" }),
+    );
+    const api = createApi(BASE, SHOP, { customer: true });
+    expect(await api.history("t")).toBeNull();
+  });
+
+  it("still resets on a dead conversation token", async () => {
+    fetchMock.mockImplementation(async (u) => (String(u) === "/apps/askcart/session" ? session(1) : jsonResponse(401, { error: "invalid_token" })));
+    const api = createApi(BASE, SHOP, { customer: true });
+    expect(await api.history("t")).toBe("reset");
+  });
+
   it("a guest never asks for a session and sends no customer header", async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { messages: [] }));
     const api = createApi(BASE, SHOP);

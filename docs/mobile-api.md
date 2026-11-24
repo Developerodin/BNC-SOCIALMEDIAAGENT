@@ -204,7 +204,7 @@ still streaming.
 
 | Status | Body | Meaning |
 |---|---|---|
-| 400 | `{ "error": "empty_message" \| "invalid_body" \| "invalid_request_id" \| "invalid_cursor" }` | Fix the request (`invalid_cursor`: the `cursor` on `/api/chat/conversations` isn't an id we returned). |
+| 400 | `{ "error": "empty_message" \| "invalid_body" \| "invalid_request_id" \| "invalid_cursor" }` | Fix the request (`invalid_cursor`: the `cursor` on `/api/chat/conversations` isn't a valid cursor; an unknown one just returns an empty page). |
 | 401 | `{ "error": "invalid_token" }` | The conversation token is missing, wrong or expired: drop it and start a new conversation. |
 | 401 | `{ "error": "invalid_session" \| "invalid_customer" }` | The customer session / customer token is bad or expired: sign in again (see Signed-in customers). |
 | 403 | no body | Wrong, replaced or revoked app key, or an `Origin` header was sent. |

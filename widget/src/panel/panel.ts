@@ -228,9 +228,17 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
       if (token) tokens.set(token);
     }
     if (token) {
-      const h = await api.history(token);
-      if (h === "reset") tokens.clear();
-      else if (h) messages.history(h);
+      let h = await api.history(token);
+      if (h === "reset") {
+        tokens.clear();
+        // A newly signed-in customer whose old local chat isn't theirs: continue their own latest one instead.
+        const own = await api.latest();
+        if (own) {
+          tokens.set(own);
+          h = await api.history(own);
+        }
+      }
+      if (h && h !== "reset") messages.history(h);
       // null: a transient failure. Keep the token; the next message continues the conversation.
     }
     const faq = await loadFaq();

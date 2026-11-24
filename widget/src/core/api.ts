@@ -97,6 +97,9 @@ export function createApi(apiBase: string, shop: string, opts: { customer?: bool
     async history(token) {
       try {
         const res = await req("/api/chat/history" + q, { token });
+        // invalid_session means the chat is the shopper's own but we couldn't get them a session right now (proxy 429,
+        // network, back-off): a transient failure, so keep the token instead of wiping their chat.
+        if (res.status === 401 && (await res.clone().json().catch(() => null))?.error === "invalid_session") return null;
         if (res.status === 401 || res.status === 404) return "reset";
         if (!res.ok) return null;
         const { messages } = (await res.json()) as { messages?: unknown };

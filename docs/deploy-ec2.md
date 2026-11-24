@@ -60,18 +60,20 @@ Without this, one bad disk or a bad migration loses every conversation and every
 restore once.
 
 ```bash
-sudo apt install -y awscli                       # or the AWS CLI v2 installer
+sudo snap install aws-cli --classic             # Ubuntu 24.04 has no awscli apt package
 aws configure                                    # or attach an instance role that can write to the bucket
 aws s3 mb s3://askcart-backups-<unique-suffix>   # then add a lifecycle rule to expire dumps after 30 days
 sudo install -d -o ubuntu -g ubuntu /var/backups/askcart
 ```
 
 `/home/ubuntu/backup-askcart.sh` (`chmod +x`; put the admin password in `~/.pgpass` as
-`localhost:5432:shopassist:shopassist:<admin-pw>`, mode 600, so the script has no secret in it):
+`localhost:5432:*:shopassist:<admin-pw>`, mode 600, so the script has no secret in it):
 
 ```bash
 #!/bin/bash
 set -euo pipefail
+# cron's PATH is only /usr/bin:/bin; aws (snap) lives in /snap/bin.
+export PATH=/usr/local/bin:/snap/bin:/usr/bin:/bin
 f=/var/backups/askcart/shopassist-$(date +%F).dump
 pg_dump -h localhost -U shopassist -Fc shopassist > "$f"
 aws s3 cp "$f" s3://askcart-backups-<unique-suffix>/ --only-show-errors
@@ -151,7 +153,7 @@ pm2 save && pm2 startup                   # restart on reboot (run the command i
 ```
 
 **Run exactly one instance.** Rate limits are in memory per process, so two instances would double them (known
-limit, noted in `src/lib/partner/rate-limit.ts`).
+limit, noted in `src/lib/rate-limit.ts`).
 
 ## 4. Nginx + TLS
 

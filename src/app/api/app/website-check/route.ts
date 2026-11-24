@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
 import { readSmallJson, withStore } from "@/lib/admin-route";
-import { rateLimit } from "@/lib/partner/rate-limit";
+import { rateLimit } from "@/lib/rate-limit";
 import { appOrigin } from "@/lib/widget-config";
 import { checkWebsite, normalizeHost, themeEditorLink } from "@/lib/website-check";
 
