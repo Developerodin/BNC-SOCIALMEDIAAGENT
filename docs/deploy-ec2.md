@@ -246,6 +246,30 @@ Confirm the release when asked. Re-run both commands whenever the widget (`widge
    This choice is **permanent** for this app; the public App Store listing will be a separate app later.
 3. Copy the **install link** and send it to the merchant (it only works for that store).
 
+Custom distribution covers **one merchant**: a single store, or several stores in the same Shopify Plus organization.
+A second, unrelated merchant needs the public app (App Store review) or an MCP-only store (5.7). Creating a separate
+custom app per merchant is against Shopify's Partner Program rules.
+
+#### Store in a different organization (e.g. Bois and Chiffon)
+
+Since **20 November 2026** Shopify requires an **IP allowlist** on any custom app installed on a store outside the
+app's organization (new installs now; existing installs from 1 January 2027). Before step 1:
+
+1. Give the EC2 instance an **Elastic IP** (EC2 → Elastic IPs → Allocate → Associate with the instance), so the app
+   always calls Shopify from the same address. Point your domain's DNS at it.
+2. Dev Dashboard → **Apps → AskCart** → the app's security / network settings → **IP allowlist** → add the Elastic IP
+   (`x.x.x.x/32`). AskCart calls Shopify only from this server.
+3. Do the same for **every other app in the organization** (CellaVei): if any app lacks an allowlist, Shopify blocks
+   installing *any* of the organization's apps on outside stores.
+4. If the Dev Dashboard or `shopify app deploy` asks for a **network access** declaration (enforced for some custom
+   apps installed outside the organization from 1 December 2026), declare it before sending the link.
+
+Then do steps 1–3 above with the outside store's domain, and the merchant installs as in 5.4 while logged in to **their**
+store's admin. If you move the app to another server, update the allowlist first, or Shopify refuses its API calls.
+
+Sources: [IP allowlists for custom apps installed outside your organization](https://shopify.dev/changelog/posts/ip-allowlists-are-now-required-for-custom-apps-installed-outside-your-organization),
+[About app distribution](https://shopify.dev/docs/apps/launch/distribution), [About app security](https://shopify.dev/docs/apps/build/security).
+
 ### 5.4 What the merchant does (≈2 minutes)
 
 1. Opens the link, logs in to their Shopify admin, reviews the permissions and clicks **Install**.
