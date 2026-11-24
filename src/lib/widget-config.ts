@@ -78,7 +78,7 @@ function isShopifyCdnUrl(v: unknown): boolean {
 }
 
 /** Our app's https origin. `shopify app dev` sets APP_URL (the tunnel), not SHOPIFY_APP_URL (as in shopify/api.ts). */
-function appOrigin(): string | null {
+export function appOrigin(): string | null {
   const raw = process.env.SHOPIFY_APP_URL || process.env.APP_URL || "";
   try {
     const u = new URL(raw);

@@ -116,8 +116,125 @@ export default function AppHome() {
       <s-button onClick={resync} disabled={running}>
         Resync
       </s-button>
+      <ConnectWebsiteCard />
       <MobileKeyCard />
     </s-page>
+  );
+}
+
+type WebsiteResult = {
+  kind: "shopify_store" | "shopify_other_store" | "other";
+  host: string;
+  reachable: boolean;
+  themeLink: string | null;
+  embedSnippet: string | null;
+  chatLink: string | null;
+};
+
+/** A read-only field with a Copy button. navigator.clipboard can be blocked inside the admin iframe, so on failure the text is selected for Ctrl+C. */
+function CopyField({ label, value }: { label: string; value: string }) {
+  const [note, setNote] = useState("");
+  async function copy(e: React.MouseEvent) {
+    const input = (e.currentTarget.parentElement as HTMLElement).querySelector("input")!;
+    try {
+      await navigator.clipboard.writeText(value);
+      setNote("Copied");
+    } catch {
+      input.select();
+      setNote("Press Ctrl+C (or Cmd+C) to copy");
+    }
+  }
+  return (
+    <div>
+      <s-text>{label}</s-text>
+      <div>
+        <input readOnly value={value} aria-label={label} onFocus={(e) => e.currentTarget.select()} style={{ width: "100%" }} />
+        <s-button onClick={copy}>Copy</s-button> {note && <s-text>{note}</s-text>}
+      </div>
+    </div>
+  );
+}
+
+/** Asks which kind of website this is (POST /api/app/website-check) and shows how to put the chat on it. */
+function ConnectWebsiteCard() {
+  const [url, setUrl] = useState("");
+  const [result, setResult] = useState<WebsiteResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Pre-fill with the store's own address, so most merchants just click Check.
+  useEffect(() => {
+    (async () => {
+      const res = await authed("/api/app/website-check");
+      if (res.ok) {
+        const { domain } = await res.json();
+        setUrl((u) => u || domain || "");
+      }
+    })();
+  }, []);
+
+  async function check() {
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await authed("/api/app/website-check", { method: "POST", body: JSON.stringify({ url }) });
+      if (res.status === 400) setError("Enter your website address, like yourbrand.com.");
+      else if (res.status === 429) setError("Too many checks. Wait a minute and try again.");
+      else if (!res.ok) throw new Error(String(res.status));
+      else setResult(await res.json());
+    } catch {
+      setError("That didn't work. Try again.");
+    }
+    setBusy(false);
+  }
+
+  const showOwn = result && (result.kind === "other" || !result.reachable);
+  return (
+    <s-section heading="Connect your website">
+      <s-text>Enter your website address and we&apos;ll show you how to add the chat to it.</s-text>
+      <input
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && !busy && check()}
+        placeholder="yourbrand.com"
+        aria-label="Website address"
+      />
+      <s-button onClick={check} disabled={busy || !url.trim()}>
+        Check
+      </s-button>
+      {error && <s-text>{error}</s-text>}
+      {result?.kind === "shopify_store" && (
+        <>
+          <s-text>{result.host} is your Shopify store. The chat is added through your theme.</s-text>
+          {/* target _top: the theme editor can't open inside the admin iframe. */}
+          <s-button onClick={() => window.open(result.themeLink!, "_top")}>Turn on chat</s-button>
+          <s-text>In the theme editor, click Save to publish it.</s-text>
+        </>
+      )}
+      {result?.kind === "shopify_other_store" && (
+        <s-text>{result.host} belongs to a different Shopify store. AskCart has to be installed on that store to add the chat there.</s-text>
+      )}
+      {showOwn && (
+        <>
+          <s-text>
+            {result.reachable ? `${result.host} isn't a Shopify store we can see.` : `We couldn't check ${result.host}, so here are both ways to connect it.`}
+          </s-text>
+          {result.embedSnippet && (
+            <>
+              <s-text>Add this line to your website&apos;s pages:</s-text>
+              <CopyField label="Embed code" value={result.embedSnippet} />
+            </>
+          )}
+          {result.chatLink && (
+            <>
+              <s-text>Or share this link to a page that is just the chat:</s-text>
+              <CopyField label="Chat link" value={result.chatLink} />
+            </>
+          )}
+        </>
+      )}
+    </s-section>
   );
 }
 
