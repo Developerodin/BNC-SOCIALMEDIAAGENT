@@ -81,6 +81,24 @@ async function ask(storeId: string, products: Seed[], message: string, storeLoca
   }
   const { input, allowed } = buildInput({ hits, live: { ok: true, products: liveMap }, history: [], message, threshold: 5, note: o.note });
 
+  // The MCP tools as runTurn passes them (search_products only without a budget or sort), the live check mocked the same way.
+  const { runTool, TOOL_DEFS } = await import("@/lib/chat/tools");
+  const live = { ok: true as const, products: liveMap };
+  const toolCtx = {
+    store: { id: storeId, shopDomain: `live-test-${storeId}.myshopify.com`, settings: {} },
+    live,
+    allowed,
+    threshold: 5,
+    includeGiftCards: rw.includeGiftCards,
+    signal,
+    check: async (ids: string[]) => ({
+      ok: true as const,
+      products: new Map(ids.filter((id) => byId.has(id)).map((id) => [id, liveProduct(byId.get(id)!.id, byId.get(id)!.title, { stock: byId.get(id)!.stock })])),
+    }),
+  };
+  const wide = !!rw.budget || !!rw.sort;
+  const usedTools: string[] = [];
+
   const shown: string[] = [];
   const tAnswer = Date.now();
   let firstToken: number | null = null;
@@ -88,6 +106,10 @@ async function ask(storeId: string, products: Seed[], message: string, storeLoca
     system: SYSTEM_PROMPT("Trail & Co"),
     largeSystem: LARGE_SYSTEM_PROMPT("Trail & Co"),
     input,
+    tools: {
+      defs: wide ? TOOL_DEFS.filter((d) => d.name !== "search_products") : TOOL_DEFS,
+      run: (name, args) => (usedTools.push(name), runTool(name, args, toolCtx)),
+    },
     allowed,
     storeId,
     signal,
@@ -103,6 +125,7 @@ async function ask(storeId: string, products: Seed[], message: string, storeLoca
     hits: hits.map((h) => h.productId),
     answer: { model: result.model, status: result.status, firstTokenMs: firstToken, totalMs: Date.now() - tAnswer, tokens: result.tokens },
     products: shown,
+    tools: usedTools,
     text: result.text,
   });
   return { rw, hits, allowed, shown, result };

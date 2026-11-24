@@ -1,4 +1,4 @@
-import type { ResponseInput } from "openai/resources/responses/responses";
+import type { FunctionTool, ResponseFunctionToolCall, ResponseInput, ResponseOutputItem } from "openai/resources/responses/responses";
 import { MAX_ANSWER_TOKENS } from "./limits";
 import { createMarkerParser } from "./markers";
 import { chatModel, chatReasoning, errorStatus, openai } from "./openai";
@@ -20,9 +20,13 @@ const FIRST_TOKEN_MS = 20_000;
 const TOTAL_MS = 60_000;
 const RETRY_DELAY_MS = 1000;
 const ESCALATE = "[[escalate]]";
+/** Rounds of tool calls per answer (tools.ts). The request after the last round is sent with tool_choice "none", so the model has to answer. */
+export const MAX_TOOL_ROUNDS = 3;
+
+export type AnswerTools = { defs: FunctionTool[]; run: (name: string, args: string) => Promise<string> };
 
 type Outcome =
-  | { kind: "done"; usage?: { input_tokens: number; output_tokens: number }; incomplete: boolean }
+  | { kind: "done"; usage?: { input_tokens: number; output_tokens: number }; incomplete: boolean; output: ResponseOutputItem[] }
   | { kind: "escalate" }
   | { kind: "user" | "first_token" | "total" }
   | { kind: "error"; err: unknown };
@@ -30,12 +34,15 @@ type Outcome =
 // Streams one answer: small model first, the large one when the small model opens with [[escalate]] (D34).
 // Text goes to onText with markers stripped; products go to onProduct, only from `allowed` (D36).
 // `largeSystem` lets the caller drop the escalation rule for the large model (Task 17, rule 7).
+// With `tools`, a response that ends in function calls runs them and streams again with their results, up to
+// MAX_TOOL_ROUNDS; the conversation so far (tool calls and results included) also goes to the large model on escalation.
 // ponytail: an escalated small call is aborted before its usage arrives, so its tokens are not counted
 // (a few tokens). Count them from the input size in M10 if the escalation rate makes it matter.
 export async function answer(opts: {
   system: string;
   largeSystem?: string;
   input: string | ResponseInput;
+  tools?: AnswerTools;
   allowed: Map<string, string>;
   storeId: string;
   signal: AbortSignal;
@@ -52,9 +59,19 @@ export async function answer(opts: {
   let text = "";
   let delivered = false; // anything (text or a product) has reached the shopper
   let model: "small" | "large" = "small";
+  // The request input; tool rounds append the model's output items and the tool results to it.
+  const input: ResponseInput = typeof opts.input === "string" ? [{ role: "user", content: opts.input }] : [...opts.input];
+  let toolRounds = 0;
+  // Set when a new round starts after tools ran, so its text doesn't run into the previous round's ("…policy.We accept").
+  let roundBreak = false;
 
   const deliver = (chunk: { text: string; products: string[] }) => {
-    const t = text ? chunk.text : chunk.text.trimStart();
+    let t = text ? chunk.text : chunk.text.trimStart();
+    if (t && roundBreak) {
+      roundBreak = false;
+      t = t.trimStart();
+      if (text && !/\s$/.test(text)) t = "\n\n" + t;
+    }
     if (t) {
       text += t;
       delivered = true;
@@ -84,16 +101,28 @@ export async function answer(opts: {
     );
     let usage: { input_tokens: number; output_tokens: number } | undefined;
     let incomplete = false;
+    let output: ResponseOutputItem[] = [];
     try {
       const events = await openai().responses.create(
         {
           model: chatModel(size),
           reasoning: chatReasoning(size),
           instructions: size === "large" ? (opts.largeSystem ?? opts.system) : opts.system,
-          input: opts.input,
+          // A plain string when there are no tools, exactly as before tools existed.
+          input: opts.tools || typeof opts.input !== "string" ? input : opts.input,
           stream: true,
           store: false,
           max_output_tokens: MAX_ANSWER_TOKENS,
+          // store: false keeps nothing at OpenAI, so reasoning items must travel back with the tool results.
+          ...(opts.tools
+            ? {
+                tools: opts.tools.defs,
+                tool_choice: toolRounds >= MAX_TOOL_ROUNDS ? ("none" as const) : ("auto" as const),
+                // One call per round: several parallel searches would each add products and a live check, unbounded.
+                parallel_tool_calls: false,
+                include: ["reasoning.encrypted_content" as const],
+              }
+            : {}),
         },
         { signal: ac.signal },
       );
@@ -108,13 +137,14 @@ export async function answer(opts: {
         } else if (ev.type === "response.completed" || ev.type === "response.incomplete") {
           usage = ev.response.usage ?? undefined;
           incomplete = ev.type === "response.incomplete";
+          output = ev.response.output ?? [];
         } else if (ev.type === "response.failed") {
           throw new Error(`response failed: ${ev.response.error?.code ?? "unknown"}`);
         }
       }
       // The SDK ends the iteration quietly when its request is aborted, so check why we stopped.
       if (reason) return { kind: reason };
-      return { kind: "done", usage, incomplete };
+      return { kind: "done", usage, incomplete, output };
     } catch (err) {
       if (reason) return { kind: reason };
       return { kind: "error", err };
@@ -139,6 +169,36 @@ export async function answer(opts: {
     return out;
   }
 
+  // The tool loop: while a finished response asks for tools, run them, append the calls and results, stream again.
+  async function streamWithTools(size: "small" | "large", onDelta: (d: string) => boolean, reset: () => void): Promise<Outcome> {
+    let out = await streamWithRetry(size, onDelta, reset);
+    while (opts.tools && out.kind === "done" && !out.incomplete) {
+      const calls = out.output.filter((i): i is ResponseFunctionToolCall => i.type === "function_call");
+      if (!calls.length) break;
+      tokens.input += out.usage?.input_tokens ?? 0;
+      tokens.output += out.usage?.output_tokens ?? 0;
+      toolRounds++;
+      // Output items (reasoning, text, function calls) are valid input items for the next request.
+      input.push(...(out.output as unknown as ResponseInput));
+      for (const c of calls) {
+        let result: string;
+        try {
+          result = await opts.tools.run(c.name, c.arguments);
+        } catch (err) {
+          console.warn("chat tool failed", { storeId: opts.storeId, tool: c.name, error: err instanceof Error ? err.name : typeof err });
+          result = "This tool failed. Answer from what you already have.";
+        }
+        input.push({ type: "function_call_output", call_id: c.call_id, output: result });
+      }
+      console.info("chat tools ran", { storeId: opts.storeId, model: size, tools: calls.map((c) => c.name), round: toolRounds });
+      if (opts.signal.aborted) return { kind: "user" };
+      if (Date.now() >= endAt) return { kind: "total" };
+      roundBreak = true;
+      out = await streamWithRetry(size, onDelta, reset);
+    }
+    return out;
+  }
+
   // Maps a failed outcome to the result: cut_off once the shopper saw something, else ChatUnavailable.
   function finish(out: Outcome): AnswerResult {
     if (out.kind === "done") {
@@ -160,7 +220,7 @@ export async function answer(opts: {
   // Small model: buffer until the trimmed text starts with [[escalate]] or can no longer become it.
   let pending = "";
   let decided = false;
-  const small = await streamWithRetry(
+  const small = await streamWithTools(
     "small",
     (d) => {
       if (decided) {
@@ -188,8 +248,10 @@ export async function answer(opts: {
 
   console.info("chat escalated", { storeId: opts.storeId });
   model = "large";
+  // The small model's encrypted reasoning from tool rounds belongs to that model; the large one may refuse it (400).
+  for (let i = input.length - 1; i >= 0; i--) if ((input[i] as { type?: string }).type === "reasoning") input.splice(i, 1);
   // A leading [[escalate]] from the large model is stripped by the marker parser like any other marker.
-  const large = await streamWithRetry(
+  const large = await streamWithTools(
     "large",
     (d) => {
       deliver(parser.push(d));

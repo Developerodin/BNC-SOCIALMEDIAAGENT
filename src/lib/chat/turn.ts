@@ -11,6 +11,7 @@ import { HISTORY_MESSAGES } from "./limits";
 import { maskPII } from "./mask";
 import { buildInput, LARGE_SYSTEM_PROMPT, SYSTEM_PROMPT, type PromptProducts } from "./prompt";
 import { rewriteQuery, type ChatTurn } from "./rewrite";
+import { runTool, TOOL_DEFS, type ToolContext } from "./tools";
 import type { SseEvent } from "./sse";
 import { mintToken, tokenHash, verifyToken } from "./token";
 
@@ -375,10 +376,23 @@ export async function runTurn(t: {
     const { input, allowed } = buildInput({ hits, live, currentProductId, history: t.history, message: t.message, threshold, note });
 
     const cards: Card[] = [];
+    // The MCP tools (tools.ts) add the products they find to `live` and `allowed`, so onProduct below finds them too.
+    const toolCtx: ToolContext = {
+      store,
+      live,
+      allowed,
+      threshold,
+      includeGiftCards: rw.includeGiftCards,
+      signal,
+      check: (ids) => checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal }),
+    };
     const result = await answer({
       system: SYSTEM_PROMPT(name),
       largeSystem: LARGE_SYSTEM_PROMPT(name),
       input,
+      // A budget or price-order question has already been filtered and sorted by applyBudget (D87); a second search would
+      // bypass that (a $200 boot under "boots under $50"), so it only gets store_policies.
+      tools: { defs: wide ? TOOL_DEFS.filter((d) => d.name !== "search_products") : TOOL_DEFS, run: (toolName, args) => runTool(toolName, args, toolCtx) },
       allowed,
       storeId,
       signal,

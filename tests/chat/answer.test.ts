@@ -7,7 +7,7 @@ vi.mock("openai", () => ({
   }),
 }));
 
-import { answer, ChatUnavailable } from "@/lib/chat/answer";
+import { answer, ChatUnavailable, MAX_TOOL_ROUNDS } from "@/lib/chat/answer";
 
 // A fake Responses stream. Like the SDK, aborting mid-iteration ends the iteration quietly,
 // and aborting before the stream starts rejects.
@@ -188,4 +188,136 @@ test("a signal already aborted makes no OpenAI call", async () => {
   ac.abort();
   expect(await answer(opts)).toMatchObject({ status: "cut_off", text: "" });
   expect(create).not.toHaveBeenCalled();
+});
+
+// Tool loop (tools.ts): a response that ends in function calls runs them and streams again with the results.
+function toolCall(name: string, args: object, callId = "call-1", usage = { input_tokens: 50, output_tokens: 5 }) {
+  return async (_body: unknown, { signal }: { signal: AbortSignal }) => {
+    signals.push(signal);
+    const output = [{ type: "function_call", call_id: callId, name, arguments: JSON.stringify(args) }];
+    return (async function* () {
+      yield { type: "response.completed", response: { usage, output } };
+    })();
+  };
+}
+/** The request bodies as sent: input is copied at call time, since answer() keeps appending to its input array. */
+function sentBodies() {
+  const bodies: Record<string, unknown>[] = [];
+  return {
+    bodies,
+    wrap: (impl: (b: unknown, o: { signal: AbortSignal }) => unknown) => (b: Record<string, unknown>, o: { signal: AbortSignal }) => {
+      bodies.push({ ...b, input: Array.isArray(b.input) ? [...b.input] : b.input });
+      return impl(b, o);
+    },
+  };
+}
+const tools = (run = vi.fn(async () => "<store_data>RESULT</store_data>")) => ({
+  defs: [{ type: "function" as const, name: "store_policies", parameters: {}, strict: true }],
+  run,
+});
+
+test("without tools, nothing about tools is sent", async () => {
+  create.mockImplementationOnce(stream(["Hi"]));
+  const { opts } = setup();
+  await answer(opts);
+  const body = create.mock.calls[0][0];
+  expect(body).not.toHaveProperty("tools");
+  expect(body).not.toHaveProperty("include");
+});
+
+test("a tool call runs the tool, sends calls and results back, and the answer streams after", async () => {
+  const sent = sentBodies();
+  create
+    .mockImplementationOnce(sent.wrap(toolCall("store_policies", { query: "returns?", policy_types: ["refund"] })))
+    .mockImplementationOnce(sent.wrap(stream(["You can return ", "within 30 days."])));
+  const run = vi.fn(async () => "<store_data>30 days</store_data>");
+  const { opts, texts } = setup({ tools: tools(run) });
+  const r = await answer(opts);
+
+  expect(run).toHaveBeenCalledWith("store_policies", JSON.stringify({ query: "returns?", policy_types: ["refund"] }));
+  expect(texts.join("")).toBe("You can return within 30 days.");
+  expect(r).toEqual({ model: "small", text: "You can return within 30 days.", status: "ok", tokens: { input: 150, output: 25 } });
+  expect(sent.bodies[0]).toMatchObject({ input: [{ role: "user", content: "INPUT" }], tool_choice: "auto", include: ["reasoning.encrypted_content"] });
+  expect(sent.bodies[0].tools).toEqual(tools().defs);
+  expect(sent.bodies[1].input).toEqual([
+    { role: "user", content: "INPUT" },
+    { type: "function_call", call_id: "call-1", name: "store_policies", arguments: JSON.stringify({ query: "returns?", policy_types: ["refund"] }) },
+    { type: "function_call_output", call_id: "call-1", output: "<store_data>30 days</store_data>" },
+  ]);
+});
+
+test("after MAX_TOOL_ROUNDS the model must answer: tool_choice none", async () => {
+  const sent = sentBodies();
+  for (let i = 0; i < MAX_TOOL_ROUNDS; i++) create.mockImplementationOnce(sent.wrap(toolCall("store_policies", { query: "q" }, `c${i}`)));
+  create.mockImplementationOnce(sent.wrap(stream(["Done"])));
+  const { opts } = setup({ tools: tools() });
+  expect((await answer(opts)).text).toBe("Done");
+  expect(sent.bodies.map((b) => b.tool_choice)).toEqual([...Array(MAX_TOOL_ROUNDS).fill("auto"), "none"]);
+});
+
+test("a throwing tool becomes a sentence for the model, not a failed answer", async () => {
+  const sent = sentBodies();
+  create.mockImplementationOnce(sent.wrap(toolCall("store_policies", { query: "q" }))).mockImplementationOnce(sent.wrap(stream(["Sorry"])));
+  const run = vi.fn(async () => {
+    throw new Error("boom");
+  });
+  const { opts } = setup({ tools: tools(run) });
+  expect((await answer(opts)).text).toBe("Sorry");
+  expect((sent.bodies[1].input as { output?: string }[]).at(-1)!.output).toMatch(/tool failed/);
+});
+
+test("tool results are kept when the small model escalates after a tool round", async () => {
+  const sent = sentBodies();
+  create
+    .mockImplementationOnce(sent.wrap(toolCall("store_policies", { query: "q" })))
+    .mockImplementationOnce(sent.wrap(stream(["[[escalate]]", { hang: true }])))
+    .mockImplementationOnce(sent.wrap(stream(["Large answer"])));
+  const { opts } = setup({ tools: tools() });
+  const r = await answer(opts);
+  expect(r).toMatchObject({ model: "large", text: "Large answer" });
+  expect(sent.bodies[2]).toMatchObject({ model: "large-model" });
+  expect((sent.bodies[2].input as { type?: string }[]).map((i) => i.type)).toEqual([undefined, "function_call", "function_call_output"]);
+});
+
+test("text from a round after tools is separated from the previous round's text, and parallel calls are off", async () => {
+  const sent = sentBodies();
+  create
+    .mockImplementationOnce(
+      sent.wrap(async (_b: unknown, { signal }: { signal: AbortSignal }) => {
+        signals.push(signal);
+        const output = [{ type: "function_call", call_id: "c1", name: "store_policies", arguments: '{"query":"q"}' }];
+        return (async function* () {
+          yield { type: "response.output_text.delta", delta: "Let me check." };
+          yield { type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 1 }, output } };
+        })();
+      }),
+    )
+    .mockImplementationOnce(sent.wrap(stream(["We accept returns."])));
+  const { opts, texts } = setup({ tools: tools() });
+  expect((await answer(opts)).text).toBe("Let me check.\n\nWe accept returns.");
+  expect(texts.join("")).toBe("Let me check.\n\nWe accept returns.");
+  expect(sent.bodies[0].parallel_tool_calls).toBe(false);
+});
+
+test("the small model's reasoning items are not sent to the large model on escalation", async () => {
+  const sent = sentBodies();
+  create
+    .mockImplementationOnce(
+      sent.wrap(async (_b: unknown, { signal }: { signal: AbortSignal }) => {
+        signals.push(signal);
+        const output = [
+          { type: "reasoning", id: "r1", summary: [], encrypted_content: "SMALL" },
+          { type: "function_call", call_id: "c1", name: "store_policies", arguments: '{"query":"q"}' },
+        ];
+        return (async function* () {
+          yield { type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 1 }, output } };
+        })();
+      }),
+    )
+    .mockImplementationOnce(sent.wrap(stream(["[[escalate]]", { hang: true }])))
+    .mockImplementationOnce(sent.wrap(stream(["Large"])));
+  const { opts } = setup({ tools: tools() });
+  await answer(opts);
+  expect((sent.bodies[1].input as { type?: string }[]).some((i) => i.type === "reasoning")).toBe(true);
+  expect((sent.bodies[2].input as { type?: string }[]).map((i) => i.type)).toEqual([undefined, "function_call", "function_call_output"]);
 });
