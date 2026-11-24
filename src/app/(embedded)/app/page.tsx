@@ -2,20 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-// App Bridge global, loaded by the embedded layout.
+// App Bridge global, loaded by the embedded layout. The s-* tags are Polaris web components (typed in (embedded)/polaris.d.ts).
 declare const shopify: { idToken(): Promise<string> };
-
-type PolarisProps = React.HTMLAttributes<HTMLElement> & { heading?: string; disabled?: boolean };
-declare module "react" {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
-  namespace JSX {
-    interface IntrinsicElements {
-      "s-page": PolarisProps;
-      "s-text": PolarisProps;
-      "s-button": PolarisProps;
-    }
-  }
-}
 
 type SyncState = {
   status: "idle" | "running" | "failed";
@@ -32,6 +20,9 @@ type SyncState = {
 async function authed(url: string, init?: RequestInit) {
   return fetch(url, { ...init, headers: { Authorization: "Bearer " + (await shopify.idToken()) } });
 }
+
+/** The text of a Polaris field (s-text-field, s-text-area, s-select): its `input` and `change` events carry no React-typed value. */
+const valueOf = (e: React.SyntheticEvent) => (e.currentTarget as unknown as { value: string }).value;
 
 function statusLine(s: SyncState): string {
   if (s.status === "running") return `Syncing your catalog… ${s.itemsRead} items read`;
@@ -106,25 +97,55 @@ export default function AppHome() {
 
   return (
     <s-page heading="Shop Assistant">
-      <s-text>Connected to {name}</s-text>
-      <SetupGuideCard sync={sync} />
-      {sync && <s-text>{statusLine(sync)}</s-text>}
-      {refused && <s-text>A sync is already queued.</s-text>}
-      {sync && sync.status === "idle" && sync.syncError && <s-text>{sync.syncError}</s-text>}
-      {sync && sync.status === "idle" && sync.productCount === 0 && sync.totalCount > 0 && (
-        <s-text>None of your {sync.totalCount} products is both active and published to the Online Store, so search has nothing to show.</s-text>
-      )}
-      <s-button onClick={resync} disabled={running}>
-        Resync
-      </s-button>
-      <ConnectWebsiteCard />
-      <MobileKeyCard />
-      <WidgetSettingsCard />
+      <s-stack direction="block" gap="base">
+        <s-paragraph>Connected to {name}</s-paragraph>
+        <SetupGuideCard sync={sync} />
+        <WidgetSettingsCard />
+        <ConnectWebsiteCard />
+        <MobileKeyCard />
+        <s-section heading="Product sync">
+          <s-stack direction="block" gap="base">
+            {sync && (
+              <s-stack direction="inline" gap="base" alignItems="center">
+                <s-badge tone={sync.status === "failed" ? "critical" : running ? "info" : sync.lastSyncAt ? "success" : "neutral"}>
+                  {sync.status === "failed" ? "Failed" : running ? "Syncing" : sync.lastSyncAt ? "Synced" : "Not synced"}
+                </s-badge>
+                <s-text>{statusLine(sync)}</s-text>
+              </s-stack>
+            )}
+            {refused && <s-banner tone="info">A sync is already queued.</s-banner>}
+            {sync && sync.status === "idle" && sync.syncError && <s-banner tone="warning">{sync.syncError}</s-banner>}
+            {sync && sync.status === "idle" && sync.productCount === 0 && sync.totalCount > 0 && (
+              <s-banner tone="warning">
+                None of your {sync.totalCount} products is both active and published to the Online Store, so search has nothing to show.
+              </s-banner>
+            )}
+            <s-stack direction="inline" gap="base">
+              <s-button variant="secondary" onClick={resync} disabled={running}>
+                Resync
+              </s-button>
+            </s-stack>
+          </s-stack>
+        </s-section>
+      </s-stack>
     </s-page>
   );
 }
 
 type Onboarding = { chatConfirmed: boolean; dismissed: boolean; themeLink: string | null };
+
+/** One checklist row: a status badge, the step, and its actions on their own line. */
+function Step({ done, title, children }: { done: boolean; title: string; children?: React.ReactNode }) {
+  return (
+    <s-stack direction="block" gap="small">
+      <s-stack direction="inline" gap="base" alignItems="center">
+        <s-badge tone={done ? "success" : "neutral"}>{done ? "✓ Done" : "To do"}</s-badge>
+        <s-text>{title}</s-text>
+      </s-stack>
+      {children}
+    </s-stack>
+  );
+}
 
 /** First-run guide (POST /api/app/onboarding keeps its state). The theme step is confirmed by the merchant, since Shopify gives apps no way to see whether an app embed is on. */
 function SetupGuideCard({ sync }: { sync: SyncState | null }) {
@@ -162,31 +183,52 @@ function SetupGuideCard({ sync }: { sync: SyncState | null }) {
   if (!state || !sync || state.dismissed || doneAtLoad) return null;
 
   return (
-    <s-section heading="Set up AskCart">
-      {allDone ? (
-        <s-text>You&apos;re all set. Shoppers can now use the chat on your store.</s-text>
-      ) : (
-        <>
-          <s-text>{synced ? "Step 1: Products synced. Done." : sync.status === "running" ? `Step 1: Syncing your products... ${sync.itemsRead} items read` : "Step 1: Sync your products. Use Resync below."}</s-text>
-          <s-text>Step 2: Turn on the chat in your theme.{state.chatConfirmed ? " Done." : ""}</s-text>
-          {state.themeLink ? (
-            <>
-              {/* target _top: the theme editor can't open inside the admin iframe. */}
-              <s-button onClick={() => window.open(state.themeLink!, "_top")}>Turn on chat</s-button>
-              <s-text>In the theme editor, click Save.</s-text>
-            </>
-          ) : (
-            <s-text>In your theme editor, open App embeds and turn on AskCart, then click Save.</s-text>
-          )}
-          {!state.chatConfirmed && <s-button onClick={() => act("confirm_chat")}>I&apos;ve turned it on</s-button>}
-          <s-text>Using another website or a mobile app? See Connect your website and Mobile app key below.</s-text>
-        </>
-      )}
-      {error && <s-text>That didn&apos;t work. Try again.</s-text>}
-      <s-button onClick={() => act("dismiss")}>Dismiss guide</s-button>
+    <s-section>
+      <s-stack direction="block" gap="base">
+        <s-stack direction="inline" gap="base" alignItems="center" justifyContent="space-between">
+          <s-heading>Set up AskCart</s-heading>
+          <s-button variant="tertiary" onClick={() => act("dismiss")}>
+            Dismiss guide
+          </s-button>
+        </s-stack>
+        {allDone ? (
+          <s-banner tone="success">You&apos;re all set. Shoppers can now use the chat on your store.</s-banner>
+        ) : (
+          <>
+            <Step done={synced} title={synced ? "Products synced" : sync.status === "running" ? `Syncing your products... ${sync.itemsRead} items read` : "Sync your products. Use Resync in Product sync below."} />
+            <s-divider />
+            <Step done={state.chatConfirmed} title="Turn on the chat in your theme">
+              {state.themeLink ? (
+                <>
+                  <s-stack direction="inline" gap="base">
+                    {/* target _top: the theme editor can't open inside the admin iframe. */}
+                    <s-button variant="primary" onClick={() => window.open(state.themeLink!, "_top")}>
+                      Turn on chat
+                    </s-button>
+                    {!state.chatConfirmed && <s-button onClick={() => act("confirm_chat")}>I&apos;ve turned it on</s-button>}
+                  </s-stack>
+                  <s-paragraph>In the theme editor, click Save.</s-paragraph>
+                </>
+              ) : (
+                <>
+                  <s-paragraph>In your theme editor, open App embeds and turn on AskCart, then click Save.</s-paragraph>
+                  {!state.chatConfirmed && (
+                    <s-stack direction="inline" gap="base">
+                      <s-button onClick={() => act("confirm_chat")}>I&apos;ve turned it on</s-button>
+                    </s-stack>
+                  )}
+                </>
+              )}
+            </Step>
+            <s-paragraph>Using another website or a mobile app? See Connect your website and Mobile app key below.</s-paragraph>
+          </>
+        )}
+        {error && <s-banner tone="critical">That didn&apos;t work. Try again.</s-banner>}
+      </s-stack>
     </s-section>
   );
 }
+
 type WebsiteResult = {
   kind: "shopify_store" | "shopify_other_store" | "other";
   host: string;
@@ -210,13 +252,15 @@ function CopyField({ label, value }: { label: string; value: string }) {
     }
   }
   return (
-    <div>
+    <s-stack direction="block" gap="small">
       <s-text>{label}</s-text>
-      <div>
-        <input readOnly value={value} aria-label={label} onFocus={(e) => e.currentTarget.select()} style={{ width: "100%" }} />
-        <s-button onClick={copy}>Copy</s-button> {note && <s-text>{note}</s-text>}
-      </div>
-    </div>
+      <s-stack direction="inline" gap="small" alignItems="center">
+        {/* Native input on purpose: monospace, and select() for the clipboard fallback. */}
+        <input readOnly value={value} aria-label={label} onFocus={(e) => e.currentTarget.select()} style={{ flex: 1, minWidth: 0, fontFamily: "monospace", padding: 6 }} />
+        <s-button onClick={copy}>Copy</s-button>
+      </s-stack>
+      {note && <s-text>{note}</s-text>}
+    </s-stack>
   );
 }
 
@@ -281,66 +325,82 @@ function ConnectWebsiteCard() {
   const isAllowed = !!result && !!allowed?.includes(result.host);
   return (
     <s-section heading="Connect your website">
-      <s-text>Enter your website address and we&apos;ll show you how to add the chat to it.</s-text>
-      <input
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && !busy && check()}
-        placeholder="yourbrand.com"
-        aria-label="Website address"
-      />
-      <s-button onClick={check} disabled={busy || !url.trim()}>
-        Check
-      </s-button>
-      {error && <s-text>{error}</s-text>}
-      {result?.kind === "shopify_store" && (
-        <>
-          <s-text>{result.host} is your Shopify store. The chat is added through your theme.</s-text>
-          {/* target _top: the theme editor can't open inside the admin iframe. */}
-          {result.themeLink ? (
-            <>
-              <s-button onClick={() => window.open(result.themeLink!, "_top")}>Turn on chat</s-button>
-              <s-text>In the theme editor, click Save to publish it.</s-text>
-            </>
-          ) : (
-            <s-text>We can&apos;t open the theme editor right now. In your theme editor, open App embeds and turn on AskCart.</s-text>
-          )}
-        </>
-      )}
-      {result?.kind === "shopify_other_store" && (
-        <s-text>{result.host} belongs to a different Shopify store. AskCart has to be installed on that store to add the chat there.</s-text>
-      )}
-      {showOwn && (
-        <>
-          <s-text>
-            {result.reachable ? `${result.host} doesn't look like a Shopify theme store (it may be a custom or headless site).` : `We couldn't check ${result.host}, so here are both ways to connect it.`}
-          </s-text>
-          {isAllowed ? (
-            <>
-              <s-text>The chat is allowed on {result.host}.</s-text>
-              <s-button onClick={() => setAllowedHost(result.host, false)}>Stop allowing {result.host}</s-button>
-            </>
-          ) : (
-            <>
-              <s-text>First allow the chat on this website. Other websites can&apos;t show your chat.</s-text>
-              <s-button onClick={() => setAllowedHost(result.host, true)}>Allow chat on {result.host}</s-button>
-            </>
-          )}
-          {allowError && <s-text>{allowError}</s-text>}
-          {result.embedSnippet && (
-            <>
-              <s-text>Add this line to your website&apos;s pages:</s-text>
-              <CopyField label="Embed code" value={result.embedSnippet} />
-            </>
-          )}
-          {result.chatLink && (
-            <>
-              <s-text>Or share this link to a page that is just the chat:</s-text>
-              <CopyField label="Chat link" value={result.chatLink} />
-            </>
-          )}
-        </>
-      )}
+      <s-stack direction="block" gap="base">
+        <s-paragraph>Enter your website address and we&apos;ll show you how to add the chat to it.</s-paragraph>
+        <s-stack direction="inline" gap="base" alignItems="end">
+          <s-text-field
+            label="Website address"
+            value={url}
+            placeholder="yourbrand.com"
+            onInput={(e) => setUrl(valueOf(e))}
+            onKeyDown={(e) => e.key === "Enter" && !busy && check()}
+          />
+          <s-button variant="primary" onClick={check} disabled={busy || !url.trim()}>
+            Check
+          </s-button>
+        </s-stack>
+        {error && <s-banner tone="critical">{error}</s-banner>}
+        {result?.kind === "shopify_store" && (
+          <s-stack direction="block" gap="small">
+            <s-paragraph>{result.host} is your Shopify store. The chat is added through your theme.</s-paragraph>
+            {/* target _top: the theme editor can't open inside the admin iframe. */}
+            {result.themeLink ? (
+              <>
+                <s-stack direction="inline" gap="base">
+                  <s-button variant="primary" onClick={() => window.open(result.themeLink!, "_top")}>
+                    Turn on chat
+                  </s-button>
+                </s-stack>
+                <s-paragraph>In the theme editor, click Save to publish it.</s-paragraph>
+              </>
+            ) : (
+              <s-paragraph>We can&apos;t open the theme editor right now. In your theme editor, open App embeds and turn on AskCart.</s-paragraph>
+            )}
+          </s-stack>
+        )}
+        {result?.kind === "shopify_other_store" && (
+          <s-banner tone="warning">{result.host} belongs to a different Shopify store. AskCart has to be installed on that store to add the chat there.</s-banner>
+        )}
+        {showOwn && (
+          <s-stack direction="block" gap="base">
+            <s-paragraph>
+              {result.reachable ? `${result.host} doesn't look like a Shopify theme store (it may be a custom or headless site).` : `We couldn't check ${result.host}, so here are both ways to connect it.`}
+            </s-paragraph>
+            <s-divider />
+            {isAllowed ? (
+              <s-stack direction="inline" gap="base" alignItems="center">
+                <s-badge tone="success">Allowed</s-badge>
+                <s-text>The chat is allowed on {result.host}.</s-text>
+                <s-button variant="tertiary" onClick={() => setAllowedHost(result.host, false)}>
+                  Stop allowing {result.host}
+                </s-button>
+              </s-stack>
+            ) : (
+              <s-stack direction="block" gap="small">
+                <s-paragraph>First allow the chat on this website. Other websites can&apos;t show your chat.</s-paragraph>
+                <s-stack direction="inline" gap="base">
+                  <s-button variant="primary" onClick={() => setAllowedHost(result.host, true)}>
+                    Allow chat on {result.host}
+                  </s-button>
+                </s-stack>
+              </s-stack>
+            )}
+            {allowError && <s-banner tone="critical">{allowError}</s-banner>}
+            {result.embedSnippet && (
+              <>
+                <s-paragraph>Add this line to your website&apos;s pages:</s-paragraph>
+                <CopyField label="Embed code" value={result.embedSnippet} />
+              </>
+            )}
+            {result.chatLink && (
+              <>
+                <s-paragraph>Or share this link to a page that is just the chat:</s-paragraph>
+                <CopyField label="Chat link" value={result.chatLink} />
+              </>
+            )}
+          </s-stack>
+        )}
+      </s-stack>
     </s-section>
   );
 }
@@ -387,36 +447,48 @@ function MobileKeyCard() {
   const has = current.prefix !== null;
   return (
     <s-section heading="Mobile app key">
-      <s-text>Your mobile app sends this key to use the same chat assistant as your store.</s-text>
-      {has && current.createdAt && (
-        <s-text>
-          Active key {current.prefix}… · created {new Date(current.createdAt).toLocaleString()}
-        </s-text>
-      )}
-      {!has && <s-text>No key yet. Your mobile app can&apos;t use the chat until you create one.</s-text>}
-      {shown && <s-text>New key (copy it now, it won&apos;t be shown again): {shown}</s-text>}
-      {error && <s-text>That didn&apos;t work. Try again.</s-text>}
-      {confirming && (
-        <s-text>
-          {confirming === "replace"
-            ? "The old key stops working right away, so your app needs the new one. Click again to replace it."
-            : "Your app stops working with the chat right away. Click again to revoke the key."}
-        </s-text>
-      )}
-      {!has ? (
-        <s-button onClick={() => act("POST")} disabled={busy}>
-          Create key
-        </s-button>
-      ) : (
-        <>
-          <s-button onClick={() => (confirming === "replace" ? act("POST") : setConfirming("replace"))} disabled={busy}>
-            {confirming === "replace" ? "Yes, replace key" : "Replace key"}
-          </s-button>
-          <s-button onClick={() => (confirming === "revoke" ? act("DELETE") : setConfirming("revoke"))} disabled={busy}>
-            {confirming === "revoke" ? "Yes, revoke key" : "Revoke key"}
-          </s-button>
-        </>
-      )}
+      <s-stack direction="block" gap="base">
+        <s-stack direction="inline" gap="base" alignItems="center">
+          <s-badge tone={has ? "success" : "neutral"}>{has ? "Active key" : "No key"}</s-badge>
+          {has && current.createdAt && (
+            <s-text>
+              {current.prefix}… · created {new Date(current.createdAt).toLocaleString()}
+            </s-text>
+          )}
+        </s-stack>
+        <s-paragraph>Your mobile app sends this key to use the same chat assistant as your store.</s-paragraph>
+        {!has && <s-paragraph>No key yet. Your mobile app can&apos;t use the chat until you create one.</s-paragraph>}
+        {shown && (
+          <s-stack direction="block" gap="small">
+            <s-banner tone="warning">Copy this key now. It won&apos;t be shown again.</s-banner>
+            <CopyField label="New key" value={shown} />
+          </s-stack>
+        )}
+        {error && <s-banner tone="critical">That didn&apos;t work. Try again.</s-banner>}
+        {confirming && (
+          <s-banner tone="warning">
+            {confirming === "replace"
+              ? "The old key stops working right away, so your app needs the new one. Click again to replace it."
+              : "Your app stops working with the chat right away. Click again to revoke the key."}
+          </s-banner>
+        )}
+        <s-stack direction="inline" gap="base">
+          {!has ? (
+            <s-button variant="primary" onClick={() => act("POST")} disabled={busy}>
+              Create key
+            </s-button>
+          ) : (
+            <>
+              <s-button onClick={() => (confirming === "replace" ? act("POST") : setConfirming("replace"))} disabled={busy}>
+                {confirming === "replace" ? "Yes, replace key" : "Replace key"}
+              </s-button>
+              <s-button tone="critical" onClick={() => (confirming === "revoke" ? act("DELETE") : setConfirming("revoke"))} disabled={busy}>
+                {confirming === "revoke" ? "Yes, revoke key" : "Revoke key"}
+              </s-button>
+            </>
+          )}
+        </s-stack>
+      </s-stack>
     </s-section>
   );
 }
@@ -481,7 +553,7 @@ function textOn(hex: string): string {
 function WidgetSettingsCard() {
   const [form, setForm] = useState<WidgetForm | null>(null);
   const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<{ tone: "success" | "critical"; text: string } | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
 
   useEffect(() => {
@@ -503,15 +575,16 @@ function WidgetSettingsCard() {
       const res = await authed("/api/app/widget-settings", { method: "PUT", body: JSON.stringify(body) });
       if (res.status === 400) {
         const { errors: e } = await res.json();
-        setErrors(Object.keys(e ?? {}));
-        setNote("Some fields need a fix.");
+        const fields = Object.keys(e ?? {});
+        setErrors(fields);
+        setNote({ tone: "critical", text: fields.length ? `Check: ${fields.map((f) => FIELD_LABELS[f] ?? f).join(", ")}.` : "That didn't work. Try again." });
       } else if (!res.ok) throw new Error(String(res.status));
       else {
         setForm(toForm(await res.json()));
-        setNote("reset" in body ? "Reset to defaults." : "Saved.");
+        setNote({ tone: "success", text: "reset" in body ? "Reset to defaults." : "Saved." });
       }
     } catch {
-      setNote("That didn't work. Try again.");
+      setNote({ tone: "critical", text: "That didn't work. Try again." });
     }
     setBusy(false);
   }
@@ -519,6 +592,8 @@ function WidgetSettingsCard() {
   if (!form) return null;
   const set = <K extends keyof WidgetForm>(k: K, v: WidgetForm[K]) => setForm((f) => f && { ...f, [k]: v });
   const validAccent = /^#[0-9a-fA-F]{6}$/.test(form.accent);
+  const accent = validAccent ? form.accent : "#0A0A0A";
+  const err = (f: string) => (errors.includes(f) ? "Not valid" : undefined);
 
   function submit() {
     if (!form) return;
@@ -535,91 +610,77 @@ function WidgetSettingsCard() {
 
   return (
     <s-section heading="Chat widget">
-      <s-text>Change how the chat looks on your store. Anything you leave unchanged uses our defaults.</s-text>
-      <div>
-        <label>
-          <s-text>Name</s-text>
-          <input value={form.name} maxLength={40} onChange={(e) => set("name", e.target.value)} style={{ width: "100%" }} />
-        </label>
-        <label>
-          <s-text>Accent color</s-text>
-          <div>
-            <input type="color" value={validAccent ? form.accent : "#000000"} onChange={(e) => set("accent", e.target.value)} aria-label="Accent color picker" />{" "}
-            <input value={form.accent} maxLength={7} onChange={(e) => set("accent", e.target.value)} aria-label="Accent color hex" />
-          </div>
-        </label>
-        <label>
-          <s-text>Avatar URL (upload the image in Content, then Files, and paste its cdn.shopify.com link)</s-text>
-          <input value={form.avatarUrl} onChange={(e) => set("avatarUrl", e.target.value)} placeholder="https://cdn.shopify.com/..." style={{ width: "100%" }} />
-        </label>
-        <label>
-          <s-text>Button style</s-text>
-          <select value={form.style} onChange={(e) => set("style", e.target.value as WidgetForm["style"])}>
-            <option value="pill">Pill with label</option>
-            <option value="icon">Icon only</option>
-          </select>
-        </label>{" "}
-        <label>
-          <s-text>Button side</s-text>
-          <select value={form.side} onChange={(e) => set("side", e.target.value as WidgetForm["side"])}>
-            <option value="right">Right</option>
-            <option value="left">Left</option>
-          </select>
-        </label>
-        <label>
-          <s-text>Button label (empty uses the theme&apos;s default)</s-text>
-          <input value={form.label} maxLength={40} onChange={(e) => set("label", e.target.value)} style={{ width: "100%" }} />
-        </label>
-        <label>
-          <s-text>Welcome message</s-text>
-          <textarea value={form.welcome} maxLength={300} rows={3} onChange={(e) => set("welcome", e.target.value)} style={{ width: "100%" }} />
-        </label>
-        <s-text>Suggested questions (up to 4)</s-text>
+      <s-stack direction="block" gap="base">
+        <s-paragraph>Change how the chat looks on your store. Anything you leave unchanged uses our defaults.</s-paragraph>
+        <s-text-field label="Name" value={form.name} maxLength={40} error={err("name")} onInput={(e) => set("name", valueOf(e))} />
+        <s-stack direction="inline" gap="base" alignItems="end">
+          <s-text-field label="Accent color" value={form.accent} maxLength={7} error={err("accent") ?? (validAccent ? undefined : "Use a color like #0A0A0A")} onInput={(e) => set("accent", valueOf(e))} />
+          <input type="color" value={accent} onChange={(e) => set("accent", e.target.value)} aria-label="Accent color picker" />
+          {/* Not the real widget: only the accent and the text color the widget will pick on it. */}
+          <span style={{ display: "inline-block", padding: "6px 16px", borderRadius: 999, background: accent, color: textOn(accent) }}>
+            {form.style === "icon" ? "Chat" : form.label || "Ask us anything"}
+          </span>
+        </s-stack>
+        <s-text-field
+          label="Avatar URL"
+          value={form.avatarUrl}
+          placeholder="https://cdn.shopify.com/..."
+          details="Upload the image in Content, then Files, and paste its cdn.shopify.com link."
+          error={err("avatarUrl")}
+          onInput={(e) => set("avatarUrl", valueOf(e))}
+        />
+        <s-stack direction="inline" gap="base">
+          <s-select label="Button style" value={form.style} onChange={(e) => set("style", valueOf(e) as WidgetForm["style"])}>
+            <s-option value="pill">Pill with label</s-option>
+            <s-option value="icon">Icon only</s-option>
+          </s-select>
+          <s-select label="Button side" value={form.side} onChange={(e) => set("side", valueOf(e) as WidgetForm["side"])}>
+            <s-option value="right">Right</s-option>
+            <s-option value="left">Left</s-option>
+          </s-select>
+        </s-stack>
+        <s-text-field label="Button label" value={form.label} maxLength={40} details="Empty uses the theme's default." error={err("launcher.label")} onInput={(e) => set("label", valueOf(e))} />
+        <s-text-area label="Welcome message" value={form.welcome} maxLength={300} rows={3} error={err("welcome")} onInput={(e) => set("welcome", valueOf(e))} />
+        <s-divider />
+        <s-heading>Suggested questions (up to 4)</s-heading>
         {form.suggested.map((q, i) => (
-          <div key={i}>
-            <input
+          <s-stack key={i} direction="inline" gap="base" alignItems="end">
+            <s-text-field
+              label={`Question ${i + 1}`}
               value={q}
               maxLength={120}
-              aria-label={`Suggested question ${i + 1}`}
-              onChange={(e) => set("suggested", form.suggested.map((x, j) => (j === i ? e.target.value : x)))}
-              style={{ width: "80%" }}
-            />{" "}
-            <s-button onClick={() => set("suggested", form.suggested.filter((_, j) => j !== i))}>Remove</s-button>
-          </div>
+              onInput={(e) => set("suggested", form.suggested.map((x, j) => (j === i ? valueOf(e) : x)))}
+            />
+            <s-button variant="tertiary" tone="critical" onClick={() => set("suggested", form.suggested.filter((_, j) => j !== i))}>
+              Remove
+            </s-button>
+          </s-stack>
         ))}
-        {form.suggested.length < 4 && <s-button onClick={() => set("suggested", [...form.suggested, ""])}>Add question</s-button>}
-        <div>
-          <label>
-            <input type="checkbox" checked={form.teaserOn} onChange={(e) => set("teaserOn", e.target.checked)} /> <s-text>Show a teaser bubble</s-text>
-          </label>
-        </div>
-        {form.teaserOn && (
-          <>
-            <label>
-              <s-text>Teaser text</s-text>
-              <input value={form.teaserText} maxLength={120} onChange={(e) => set("teaserText", e.target.value)} style={{ width: "100%" }} />
-            </label>
-            <label>
-              <s-text>Show after (seconds, 0 to 120)</s-text>
-              <input type="number" min={0} max={120} value={form.teaserDelay} onChange={(e) => set("teaserDelay", e.target.value)} />
-            </label>
-          </>
+        {form.suggested.length < 4 && (
+          <s-stack direction="inline" gap="base">
+            <s-button variant="secondary" onClick={() => set("suggested", [...form.suggested, ""])}>
+              Add question
+            </s-button>
+          </s-stack>
         )}
-      </div>
-      {/* Not the real widget: only the accent and the text color the widget will pick on it. */}
-      <div aria-label="Button preview">
-        <span style={{ display: "inline-block", padding: "8px 16px", borderRadius: 999, background: validAccent ? form.accent : "#0A0A0A", color: textOn(validAccent ? form.accent : "#0A0A0A") }}>
-          {form.style === "icon" ? "Chat" : form.label || "Ask us anything"}
-        </span>
-      </div>
-      {errors.length > 0 && <s-text>Check: {errors.map((f) => FIELD_LABELS[f] ?? f).join(", ")}.</s-text>}
-      {note && <s-text>{note}</s-text>}
-      <s-button onClick={submit} disabled={busy || !validAccent}>
-        Save
-      </s-button>
-      <s-button onClick={() => save({ reset: true })} disabled={busy}>
-        Reset to defaults
-      </s-button>
+        <s-divider />
+        <s-checkbox label="Show a teaser bubble" checked={form.teaserOn} onChange={(e) => set("teaserOn", (e.currentTarget as unknown as { checked: boolean }).checked)} />
+        {form.teaserOn && (
+          <s-stack direction="inline" gap="base">
+            <s-text-field label="Teaser text" value={form.teaserText} maxLength={120} error={err("teaser.text")} onInput={(e) => set("teaserText", valueOf(e))} />
+            <s-text-field label="Show after (seconds, 0 to 120)" type="number" value={form.teaserDelay} error={err("teaser.delaySec")} onInput={(e) => set("teaserDelay", valueOf(e))} />
+          </s-stack>
+        )}
+        {note && <s-banner tone={note.tone}>{note.text}</s-banner>}
+        <s-stack direction="inline" gap="base">
+          <s-button variant="primary" onClick={submit} disabled={busy || !validAccent}>
+            Save
+          </s-button>
+          <s-button variant="secondary" onClick={() => save({ reset: true })} disabled={busy}>
+            Reset to defaults
+          </s-button>
+        </s-stack>
+      </s-stack>
     </s-section>
   );
 }

@@ -8,21 +8,7 @@ import { useEffect, useState } from "react";
 // App Bridge global, loaded by the embedded layout.
 declare const shopify: { idToken(): Promise<string> };
 
-// s-page, s-text and s-button are declared by app/page.tsx; these add the rest this page uses.
-type PolarisProps = React.HTMLAttributes<HTMLElement> & React.Attributes & { heading?: string; tone?: string };
-declare module "react" {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
-  namespace JSX {
-    interface IntrinsicElements {
-      "s-section": PolarisProps;
-      "s-banner": PolarisProps;
-      "s-paragraph": PolarisProps;
-      "s-unordered-list": PolarisProps;
-      "s-list-item": PolarisProps;
-      "s-stack": PolarisProps & { direction?: string; gap?: string };
-    }
-  }
-}
+// The s-* tags are typed in (embedded)/polaris.d.ts.
 
 type Consent = { clientName: string; shop: { domain: string; name: string | null }; scopes: string[]; expiresAt: string };
 
