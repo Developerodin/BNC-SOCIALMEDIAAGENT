@@ -142,6 +142,11 @@ describe("stock", () => {
   test("untracked + 0 + available → in_stock", async () => {
     expect(await stockOf({ tracked: false, inventoryQuantity: 0, availableForSale: true })).toEqual({ kind: "in_stock" });
   });
+  test("tracked + DENY + available with quantity 0, negative or null → in_stock, never only 0 left", async () => {
+    for (const inventoryQuantity of [0, -2, null]) {
+      expect(await stockOf({ tracked: true, inventoryPolicy: "DENY", availableForSale: true, inventoryQuantity })).toEqual({ kind: "in_stock" });
+    }
+  });
   test("availableForSale false → sold_out", async () => {
     expect(await stockOf({ availableForSale: false, inventoryQuantity: 0 })).toEqual({ kind: "sold_out" });
   });

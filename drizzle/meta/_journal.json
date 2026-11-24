@@ -71,6 +71,13 @@
       "when": 1795504217504,
       "tag": "0009_chat_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795506345418,
+      "tag": "0010_messages_conversation_store_fk",
+      "breakpoints": true
     }
   ]
 }

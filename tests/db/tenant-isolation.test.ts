@@ -68,3 +68,11 @@ test("conversations and messages are covered by the RLS check", async () => {
     select relname from pg_class where relname in ('conversations', 'messages') and relrowsecurity and relforcerowsecurity`;
   expect(rows.map((r) => r.relname).sort()).toEqual(["conversations", "messages"]);
 });
+
+test("a message's store_id must match its conversation's store_id", async () => {
+  const [c] = await admin`insert into conversations (store_id, token_hash) values (${A}, 'hash-fk') returning id`;
+  // Admin connection: RLS can't hide the FK error.
+  await expect(
+    admin`insert into messages (store_id, conversation_id, role, content) values (${B}, ${c.id}, 'user', 'cross-store')`,
+  ).rejects.toThrow(/messages_store_id_conversation_id_conversations_store_id_id_fk/);
+});

@@ -125,7 +125,8 @@ function readRows(storeId: string, ids: string[]): Promise<Row[]> {
 
 function stockOf(v: VariantNode): Stock {
   if (!v.availableForSale) return { kind: "sold_out" };
-  if (v.inventoryItem.tracked && v.inventoryPolicy === "DENY") return { kind: "count", n: v.inventoryQuantity ?? 0 };
+  // Still for sale at 0 or below (or unknown) means Shopify sells anyway; never show "only 0 left".
+  if (v.inventoryItem.tracked && v.inventoryPolicy === "DENY" && (v.inventoryQuantity ?? 0) > 0) return { kind: "count", n: v.inventoryQuantity! };
   return { kind: "in_stock" };
 }
 

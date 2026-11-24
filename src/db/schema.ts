@@ -90,13 +90,18 @@ export const chunks = pgTable(
   ],
 );
 
-export const conversations = pgTable("conversations", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  storeId: uuid("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
-  tokenHash: text("token_hash").notNull().unique(),
-  pageUrl: text("page_url"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    storeId: uuid("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    pageUrl: text("page_url"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  // Target of messages' (store_id, conversation_id) FK, so a message can't point at another store's conversation.
+  (t) => [unique("conversations_store_id_id_uq").on(t.storeId, t.id)],
+);
 
 // store_id is not in §7.13's Message; RLS needs it (D42).
 export const messages = pgTable(
@@ -104,7 +109,7 @@ export const messages = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     storeId: uuid("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
-    conversationId: uuid("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id").notNull(),
     role: text("role").$type<"user" | "assistant">().notNull(),
     // Already masked (D41).
     content: text("content").notNull(),
@@ -119,6 +124,7 @@ export const messages = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    foreignKey({ columns: [t.storeId, t.conversationId], foreignColumns: [conversations.storeId, conversations.id] }).onDelete("cascade"),
     index("messages_conversation_created_idx").on(t.conversationId, t.createdAt),
     check("messages_role_chk", sql`${t.role} in ('user', 'assistant')`),
     check("messages_model_chk", sql`${t.model} in ('small', 'large')`),
