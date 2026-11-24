@@ -4,7 +4,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 // Binding storeId into the MAC means a token minted for store B never verifies under store A.
 // Rotating CHAT_TOKEN_SECRET invalidates every open conversation (shoppers start a new chat).
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function secret(): Buffer {
   const k = Buffer.from(process.env.CHAT_TOKEN_SECRET ?? "", "base64");

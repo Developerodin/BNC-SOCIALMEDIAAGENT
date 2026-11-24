@@ -64,7 +64,7 @@ async function loadStore(id = storeId) {
 async function start(message = "hello", store?: Awaited<ReturnType<typeof loadStore>>) {
   const st = store ?? (await loadStore());
   const opened = await turn.openTurn(st, { message, pageUrl: null });
-  if (!opened.ok) throw new Error("openTurn failed");
+  if (!opened.ok || opened.replay) throw new Error("openTurn failed");
   return { st, ...opened };
 }
 
@@ -133,9 +133,10 @@ test("openTurn without a token creates one conversation with the masked user mes
 test("openTurn with a valid token continues that conversation and returns the earlier messages as history", async () => {
   const st = await loadStore();
   const first = await start("first", st);
+  await admin`update conversations set busy_until = null where id = ${first.conversationId}`; // the first turn ended (D81)
   const again = await turn.openTurn(st, { token: first.token, message: "second", pageUrl: null });
   expect(again).toMatchObject({ ok: true, conversationId: first.conversationId, token: first.token });
-  if (!again.ok) return;
+  if (!again.ok || again.replay) return;
   expect(again.history).toEqual([{ role: "user", content: "first" }]);
   const n = await admin`select count(*)::int as n from conversations where id = ${first.conversationId}`;
   expect(n[0].n).toBe(1);
@@ -367,4 +368,191 @@ test("aborting before anything was shown saves no assistant row", async () => {
   const r = await run({ signal: ac.signal });
   expect(r.events).toEqual([]);
   expect(await assistantRows(r.conversationId)).toEqual([]);
+});
+
+// --- D81: one turn at a time per conversation, and retries not answered twice ---
+
+const busy = async (conversationId: string) =>
+  (await admin`select coalesce(busy_until > now(), false) as b from conversations where id = ${conversationId}`)[0].b as boolean;
+const userRows = (conversationId: string) =>
+  admin`select content, request_id from messages where conversation_id = ${conversationId} and role = 'user' order by created_at`;
+
+type Opened = Extract<Awaited<ReturnType<typeof turn.openTurn>>, { ok: true }>;
+const opened = (r: Awaited<ReturnType<typeof turn.openTurn>>): Opened => {
+  if (!r.ok) throw new Error(`openTurn ${r.status}`);
+  return r;
+};
+/** Runs runTurn for an opened (non-replay) turn; records the events and whether the conversation was still busy when done/error was sent. */
+async function runOpened(st: Awaited<ReturnType<typeof loadStore>>, o: Opened, signal = new AbortController().signal) {
+  if (o.replay) throw new Error("replay");
+  const events: string[] = [];
+  const busyAtEnd: Promise<boolean>[] = [];
+  await turn.runTurn({
+    store: st,
+    conversationId: o.conversationId,
+    token: o.token,
+    history: o.history,
+    message: o.message,
+    signal,
+    send: (event) => {
+      events.push(event);
+      if (event === "done" || event === "error") busyAtEnd.push(busy(o.conversationId));
+    },
+  });
+  return { events, busyAtEnd: await Promise.all(busyAtEnd) };
+}
+
+test("openTurn claims a new conversation; a second openTurn while its turn runs gets 409 and saves nothing", async () => {
+  const st = await loadStore();
+  const first = await start("one", st);
+  expect(await busy(first.conversationId)).toBe(true);
+  expect(await turn.openTurn(st, { token: first.token, message: "two", pageUrl: null })).toEqual({ ok: false, status: 409 });
+  expect((await userRows(first.conversationId)).map((r) => r.content)).toEqual(["one"]);
+});
+
+test("an expired lock (a crashed turn) can be claimed again", async () => {
+  const st = await loadStore();
+  const first = await start("one", st);
+  await admin`update conversations set busy_until = now() - interval '1 second' where id = ${first.conversationId}`;
+  const again = opened(await turn.openTurn(st, { token: first.token, message: "two", pageUrl: null }));
+  expect(again.conversationId).toBe(first.conversationId);
+  expect(await busy(first.conversationId)).toBe(true);
+});
+
+test("the lock is held for about 90 seconds", async () => {
+  const first = await start("one");
+  const [r] = await admin`select extract(epoch from busy_until - now())::int as s from conversations where id = ${first.conversationId}`;
+  expect(r.s).toBeGreaterThanOrEqual(85);
+  expect(r.s).toBeLessThanOrEqual(90);
+});
+
+test("runTurn releases the lock before sending done, so the next message is accepted", async () => {
+  search.mockResolvedValue([]);
+  liveCheck.mockResolvedValue(liveMap());
+  create.mockImplementation(fakeStream(["Hi"]));
+  const st = await loadStore();
+  const first = opened(await turn.openTurn(st, { message: "one", pageUrl: null }));
+  const r = await runOpened(st, first);
+  expect(r.events.at(-1)).toBe("done");
+  expect(r.busyAtEnd).toEqual([false]);
+  expect((await turn.openTurn(st, { token: first.token, message: "two", pageUrl: null })).ok).toBe(true);
+});
+
+test("runTurn releases the lock before sending an error", async () => {
+  search.mockResolvedValue([]);
+  liveCheck.mockResolvedValue(liveMap());
+  create.mockImplementation(fakeStream([{ error: apiError(400) }]));
+  const st = await loadStore();
+  const r = await runOpened(st, opened(await turn.openTurn(st, { message: "one", pageUrl: null })));
+  expect(r.events).toEqual(["error"]);
+  expect(r.busyAtEnd).toEqual([false]);
+});
+
+test("runTurn releases the lock when the shopper leaves, mid-answer (cut_off) or before anything was shown", async () => {
+  search.mockResolvedValue([]);
+  liveCheck.mockResolvedValue(liveMap());
+  const st = await loadStore();
+
+  const ac = new AbortController();
+  create.mockImplementationOnce(fakeStream(["Partial ", { hang: true }]));
+  const mid = opened(await turn.openTurn(st, { message: "one", pageUrl: null }));
+  if (mid.replay) throw new Error("replay");
+  await turn.runTurn({
+    store: st,
+    conversationId: mid.conversationId,
+    token: mid.token,
+    history: mid.history,
+    message: mid.message,
+    signal: ac.signal,
+    send: (event) => {
+      if (event === "text") ac.abort();
+    },
+  });
+  expect(await assistantRows(mid.conversationId)).toMatchObject([{ status: "cut_off" }]);
+  expect(await busy(mid.conversationId)).toBe(false);
+
+  const gone = new AbortController();
+  gone.abort();
+  const early = opened(await turn.openTurn(st, { message: "one", pageUrl: null }));
+  const r = await runOpened(st, early, gone.signal);
+  expect(r.events).toEqual([]);
+  expect(await busy(early.conversationId)).toBe(false);
+});
+
+test("a repeated requestId after the answer was saved is replayed: same text and cards, no new rows, nothing called", async () => {
+  search.mockResolvedValue([hit("1")]);
+  liveCheck.mockResolvedValue(liveMap(live("1")));
+  create.mockImplementationOnce(fakeStream(["Try ", "[[product:1]]"]));
+  const st = await loadStore();
+  const rid = crypto.randomUUID();
+  const first = opened(await turn.openTurn(st, { message: "tee?", pageUrl: null, requestId: rid }));
+  await runOpened(st, first);
+  const [saved] = await assistantRows(first.conversationId);
+  expect(saved.cards).toHaveLength(1);
+  create.mockClear();
+  rewriteQuery.mockClear();
+
+  const again = await turn.openTurn(st, { token: first.token, message: "tee?", pageUrl: null, requestId: rid });
+  expect(again).toEqual({
+    ok: true,
+    replay: { content: "Try ", cards: saved.cards },
+    conversationId: first.conversationId,
+    token: first.token,
+  });
+  expect(await userRows(first.conversationId)).toEqual([{ content: "tee?", request_id: rid }]);
+  expect(await assistantRows(first.conversationId)).toHaveLength(1);
+  expect(await busy(first.conversationId)).toBe(false);
+  expect(create).not.toHaveBeenCalled();
+  expect(rewriteQuery).not.toHaveBeenCalled();
+});
+
+test("a repeated requestId while its turn still runs gets 409", async () => {
+  const st = await loadStore();
+  const rid = crypto.randomUUID();
+  const first = opened(await turn.openTurn(st, { message: "one", pageUrl: null, requestId: rid }));
+  expect(await turn.openTurn(st, { token: first.token, message: "one", pageUrl: null, requestId: rid })).toEqual({ ok: false, status: 409 });
+  expect(await userRows(first.conversationId)).toHaveLength(1);
+});
+
+test("a repeated requestId after an error is a new attempt that reuses the same user row", async () => {
+  search.mockResolvedValue([]);
+  liveCheck.mockResolvedValue(liveMap());
+  const st = await loadStore();
+  const base = opened(await turn.openTurn(st, { message: "earlier", pageUrl: null }));
+  create.mockImplementationOnce(fakeStream(["Earlier answer"]));
+  await runOpened(st, base);
+
+  const rid = crypto.randomUUID();
+  create.mockImplementationOnce(fakeStream([{ error: apiError(400) }]));
+  const failed = opened(await turn.openTurn(st, { token: base.token, message: "mail a@b.com", pageUrl: null, requestId: rid }));
+  expect((await runOpened(st, failed)).events).toEqual(["error"]);
+
+  create.mockImplementationOnce(fakeStream(["Now it works"]));
+  const retry = opened(await turn.openTurn(st, { token: base.token, message: "mail a@b.com", pageUrl: null, requestId: rid }));
+  if (retry.replay) throw new Error("replayed");
+  expect(retry.message).toBe("mail [email]");
+  // The history is what came before the reused row, not the row itself.
+  expect(retry.history).toEqual([
+    { role: "user", content: "earlier" },
+    { role: "assistant", content: "Earlier answer" },
+  ]);
+  expect((await runOpened(st, retry)).events.at(-1)).toBe("done");
+  expect(await userRows(base.conversationId)).toEqual([
+    { content: "earlier", request_id: null },
+    { content: "mail [email]", request_id: rid },
+  ]);
+  expect((await assistantRows(base.conversationId)).map((r) => r.content).sort()).toEqual(["Earlier answer", "Now it works"]);
+});
+
+test("the same requestId in another conversation is a separate message", async () => {
+  search.mockResolvedValue([]);
+  liveCheck.mockResolvedValue(liveMap());
+  create.mockImplementation(fakeStream(["Hi"]));
+  const st = await loadStore();
+  const rid = crypto.randomUUID();
+  const a = opened(await turn.openTurn(st, { message: "one", pageUrl: null, requestId: rid }));
+  await runOpened(st, a);
+  const b = opened(await turn.openTurn(st, { message: "one", pageUrl: null, requestId: rid }));
+  expect(b.replay).toBeUndefined();
+  expect(b.conversationId).not.toBe(a.conversationId);
 });

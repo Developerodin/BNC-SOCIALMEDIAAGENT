@@ -1,6 +1,7 @@
 import { preflight, storeFor } from "@/lib/chat/cors";
 import { MAX_INPUT_CHARS } from "@/lib/chat/limits";
 import { PING, PING_MS, SSE_HEADERS, sseEvent } from "@/lib/chat/sse";
+import { UUID } from "@/lib/chat/token";
 import { openTurn, runTurn } from "@/lib/chat/turn";
 
 // POST /api/chat: one chat turn, streamed as SSE (§7.6, Task 19). No `runtime` export: cacheComponents
@@ -8,6 +9,7 @@ import { openTurn, runTurn } from "@/lib/chat/turn";
 // Abuse limits (rate limits, the monthly cap, Turnstile) come in M10 (D40): don't expose this on a live store before then.
 
 const MAX_PAGE_URL = 2048;
+const OPEN_ERRORS = { 401: "invalid_token", 404: "conversation_not_found", 409: "turn_in_progress" } as const;
 
 export function OPTIONS(req: Request) {
   return preflight(req);
@@ -25,10 +27,23 @@ export async function POST(req: Request) {
   if (typeof message !== "string" || !message.trim()) return fail("empty_message", 400);
   if (message.length > MAX_INPUT_CHARS) return fail("message_too_long", 413); // D35
   if (conversationToken != null && typeof conversationToken !== "string") return fail("invalid_token", 401);
+  // D81: the client's id for this message (a lowercase UUID, as crypto.randomUUID() gives), so a retry isn't answered twice.
+  const { requestId } = body;
+  if (requestId != null && (typeof requestId !== "string" || !UUID.test(requestId))) return fail("invalid_request_id", 400);
   const pageUrl = typeof body.pageUrl === "string" ? body.pageUrl.slice(0, MAX_PAGE_URL) : null;
 
-  const opened = await openTurn(store, { token: conversationToken ?? undefined, message, pageUrl });
-  if (!opened.ok) return fail(opened.status === 401 ? "invalid_token" : "conversation_not_found", opened.status);
+  const opened = await openTurn(store, { token: conversationToken ?? undefined, message, pageUrl, requestId: typeof requestId === "string" ? requestId : undefined });
+  if (!opened.ok) return fail(OPEN_ERRORS[opened.status], opened.status);
+  if (opened.replay) {
+    // A retry of a message already answered: the saved answer again, as the same events, with no OpenAI or Shopify call.
+    const { content, cards } = opened.replay;
+    const events = [
+      ...(content ? [sseEvent("text", { delta: content })] : []),
+      ...cards.map((c) => sseEvent("product", c)),
+      sseEvent("done", { conversationToken: opened.token }),
+    ];
+    return new Response(events.join(""), { headers: { ...SSE_HEADERS, ...cors } });
+  }
 
   // The shopper leaving aborts the turn (and its OpenAI request). On `next dev` both req.signal and the stream's
   // cancel() fire on a client abort (req.signal first; neither on a normal end); both are kept since abort() is idempotent.

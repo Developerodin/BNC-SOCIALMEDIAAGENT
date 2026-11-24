@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { forStore, type Conn } from "@/db/client";
 import { conversations, messages } from "@/db/schema";
 import { search } from "@/lib/retrieval";
@@ -46,6 +46,12 @@ const DEFAULT_STOCK_THRESHOLD = 5; // UD10
 const UNAVAILABLE = "Assistant unavailable right now"; // §8, C13
 const COUNTRY = /^[A-Z]{2}$/;
 
+// D81: one turn at a time per conversation. openTurn claims the conversation by setting busy_until; runTurn clears it
+// before its last event, on every path. A crashed process leaves the claim to expire.
+// `// ponytail:` 90 s = the answer's 60 s total budget + the 5 s rewrite + search and the live check, with margin. A turn
+// that outlives it can overlap the next one, and its release then frees that one early; raise this with the timeouts.
+const TURN_LOCK = sql`now() + interval '90 seconds'`;
+
 /** UD10: the merchant's "Only N left" threshold, settings.stockThreshold, default 5. */
 export function stockThreshold(settings: unknown): number {
   const n = (settings as { stockThreshold?: unknown } | null)?.stockThreshold;
@@ -59,15 +65,27 @@ function productGid(raw: string | undefined): string | undefined {
   return /^gid:\/\/shopify\/Product\/\d+$/.test(raw) ? raw : undefined;
 }
 
+export type OpenedTurn =
+  | { ok: true; replay?: undefined; conversationId: string; token: string; history: ChatTurn[]; message: string }
+  | { ok: true; replay: { content: string; cards: Card[] }; conversationId: string; token: string }
+  | { ok: false; status: 401 | 404 | 409 };
+
 /**
- * Verifies or mints the conversation token, masks the message (D41), reads the history (the last 20 messages before this
- * one, oldest first) and saves the user message, in one transaction. A bad or other-store token → 401 (Review Focus 2);
- * a valid token whose conversation is gone (retention, shop/redact) → 404, and the widget starts a new chat.
+ * Verifies or mints the conversation token, masks the message (D41), claims the conversation (D81), reads the history (the
+ * last 20 messages before this one, oldest first) and saves the user message, in one transaction. A bad or other-store
+ * token → 401 (Review Focus 2); a valid token whose conversation is gone (retention, shop/redact) → 404, and the widget
+ * starts a new chat; a conversation whose turn is still running → 409.
+ *
+ * `requestId` (D81) is the client's id for this message. If the conversation already has a user row with it: when the
+ * next message after that row is an assistant row, it is returned as `replay` (nothing is claimed or saved); otherwise
+ * the earlier attempt failed or is still running, so the turn is claimed (409 if running) and that row is reused.
+ * `// ponytail:` "the next message" assumes one turn at a time. If the shopper sent another message after a failed one
+ * and then retries the failed one, its new answer lands after the later messages.
  */
 export async function openTurn(
   store: TurnStore,
-  opts: { token?: string; message: string; pageUrl: string | null },
-): Promise<{ ok: true; conversationId: string; token: string; history: ChatTurn[]; message: string } | { ok: false; status: 401 | 404 }> {
+  opts: { token?: string; message: string; pageUrl: string | null; requestId?: string },
+): Promise<OpenedTurn> {
   const message = maskPII(opts.message);
   let conversationId: string;
   let token: string;
@@ -81,21 +99,82 @@ export async function openTurn(
   }
   const isNew = opts.token === undefined;
 
-  return forStore(store.id, async (tx) => {
+  return forStore(store.id, async (tx): Promise<OpenedTurn> => {
+    const inConversation = and(eq(messages.storeId, store.id), eq(messages.conversationId, conversationId));
+    let earlier: { id: string; content: string } | undefined;
     if (isNew) {
-      await tx.insert(conversations).values({ id: conversationId, storeId: store.id, tokenHash: tokenHash(token), pageUrl: opts.pageUrl });
+      await tx
+        .insert(conversations)
+        .values({ id: conversationId, storeId: store.id, tokenHash: tokenHash(token), pageUrl: opts.pageUrl, busyUntil: TURN_LOCK });
     } else {
-      if (!(await conversationExists(tx, store.id, conversationId))) return { ok: false as const, status: 404 as const };
+      if (opts.requestId) {
+        [earlier] = await tx
+          .select({ id: messages.id, content: messages.content })
+          .from(messages)
+          .where(and(inConversation, eq(messages.role, "user"), eq(messages.requestId, opts.requestId)));
+        if (earlier) {
+          const [next] = await tx
+            .select({ role: messages.role, content: messages.content, cards: messages.cards })
+            .from(messages)
+            .where(and(inConversation, gt(messages.createdAt, createdAtOf(earlier.id))))
+            .orderBy(asc(messages.createdAt))
+            .limit(1);
+          if (next?.role === "assistant") {
+            return { ok: true, replay: { content: next.content, cards: (next.cards as Card[] | null) ?? [] }, conversationId, token };
+          }
+        }
+      }
+      if (!(await claim(tx, store.id, conversationId))) {
+        return { ok: false, status: (await conversationExists(tx, store.id, conversationId)) ? 409 : 404 };
+      }
     }
     const rows = await tx
       .select({ role: messages.role, content: messages.content })
       .from(messages)
-      .where(and(eq(messages.storeId, store.id), eq(messages.conversationId, conversationId)))
+      .where(earlier ? and(inConversation, lt(messages.createdAt, createdAtOf(earlier.id))) : inConversation)
       .orderBy(desc(messages.createdAt))
       .limit(HISTORY_MESSAGES);
-    await tx.insert(messages).values({ storeId: store.id, conversationId, role: "user", content: message });
-    return { ok: true as const, conversationId, token, history: rows.reverse(), message };
+    if (earlier) return { ok: true, conversationId, token, history: rows.reverse(), message: earlier.content };
+    await tx.insert(messages).values({ storeId: store.id, conversationId, role: "user", content: message, requestId: opts.requestId });
+    return { ok: true, conversationId, token, history: rows.reverse(), message };
   });
+}
+
+/** A message's created_at, compared in SQL: a JS Date would drop Postgres' microseconds. */
+function createdAtOf(messageId: string): SQL {
+  return sql`(select m.created_at from messages m where m.id = ${messageId})`;
+}
+
+/** D81: claims the conversation unless another turn holds it. The row lock makes a concurrent claim wait, then see it taken. */
+async function claim(tx: Conn, storeId: string, conversationId: string): Promise<boolean> {
+  const claimed = await tx
+    .update(conversations)
+    .set({ busyUntil: TURN_LOCK })
+    .where(
+      and(
+        eq(conversations.storeId, storeId),
+        eq(conversations.id, conversationId),
+        or(isNull(conversations.busyUntil), lt(conversations.busyUntil, sql`now()`)),
+      ),
+    )
+    .returning({ id: conversations.id });
+  return claimed.length > 0;
+}
+
+function releaseIn(tx: Conn, storeId: string, conversationId: string) {
+  return tx
+    .update(conversations)
+    .set({ busyUntil: null })
+    .where(and(eq(conversations.storeId, storeId), eq(conversations.id, conversationId)));
+}
+
+/** Never throws: if the release fails, the claim expires on its own (TURN_LOCK). */
+async function release(storeId: string, conversationId: string): Promise<void> {
+  try {
+    await forStore(storeId, (tx) => releaseIn(tx, storeId, conversationId));
+  } catch (err) {
+    console.error("chat turn release failed", { storeId, error: err instanceof Error ? err.name : typeof err });
+  }
 }
 
 async function conversationExists(tx: Conn, storeId: string, conversationId: string): Promise<boolean> {
@@ -191,7 +270,8 @@ async function checkProducts(
  * Runs the turn after openTurn and sends its events: `text`, `product`, then `done`, or `error` on failure. Never throws.
  * `message` and `history` must already be masked (openTurn). `country` is used only when it matches ^[A-Z]{2}$; otherwise
  * the D77 check is skipped (C16 a). When `signal` aborts (the shopper left), the OpenAI request is aborted and what was
- * shown is saved as cut_off (C19); nothing more is sent.
+ * shown is saved as cut_off (C19); nothing more is sent. On every path the conversation is released (D81) before the last
+ * event, so the shopper's next message isn't refused.
  */
 export async function runTurn(t: {
   store: TurnStore;
@@ -210,6 +290,7 @@ export async function runTurn(t: {
   const currentProductId = productGid(t.productId);
   const country = t.country && COUNTRY.test(t.country) ? t.country : undefined;
   const name = store.name ?? store.shopDomain;
+  let released = false;
 
   try {
     const rw = await rewriteQuery({ message: t.message, history: t.history, storeLocale: store.primaryLocale, signal });
@@ -238,8 +319,8 @@ export async function runTurn(t: {
     if (signal.aborted) console.info("chat answer aborted: client left", { storeId });
     // C19: a cut-off answer is saved as shown; if nothing was shown there is nothing to save.
     if (result.status === "cut_off" && !result.text && cards.length === 0) return;
-    await forStore(storeId, (tx) =>
-      tx.insert(messages).values({
+    await forStore(storeId, async (tx) => {
+      await tx.insert(messages).values({
         storeId,
         conversationId: t.conversationId,
         role: "assistant",
@@ -250,13 +331,19 @@ export async function runTurn(t: {
         status: result.status,
         inputTokens: rw.tokens.input + result.tokens.input,
         outputTokens: rw.tokens.output + result.tokens.output,
-      }),
-    );
+      });
+      await releaseIn(tx, storeId, t.conversationId);
+    });
+    released = true;
     if (!signal.aborted) t.send("done", { conversationToken: t.token });
   } catch (err) {
     if (signal.aborted) return;
     // ChatUnavailable is already logged by answer(). Never log message text or the token (§7.10).
     if (!(err instanceof ChatUnavailable)) console.error("chat turn failed", { storeId, error: err instanceof Error ? err.name : typeof err });
+    await release(storeId, t.conversationId);
+    released = true;
     t.send("error", { message: UNAVAILABLE, conversationToken: t.token });
+  } finally {
+    if (!released) await release(storeId, t.conversationId);
   }
 }

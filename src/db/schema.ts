@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, foreignKey, halfvec, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, foreignKey, halfvec, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { EMBEDDING_DIMS } from "../lib/embedding-config";
 
 export const accounts = pgTable("accounts", {
@@ -97,6 +97,8 @@ export const conversations = pgTable(
     storeId: uuid("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
     tokenHash: text("token_hash").notNull().unique(),
     pageUrl: text("page_url"),
+    // D81: set while a turn runs (one turn at a time); null when free. A crashed turn frees itself when it expires.
+    busyUntil: timestamp("busy_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   // Target of messages' (store_id, conversation_id) FK, so a message can't point at another store's conversation.
@@ -121,11 +123,14 @@ export const messages = pgTable(
     status: text("status").$type<"ok" | "cut_off">().notNull().default("ok"),
     inputTokens: integer("input_tokens").notNull().default(0),
     outputTokens: integer("output_tokens").notNull().default(0),
+    // D81: the client's id for a user message, so a retry of the same message isn't answered twice. Null on assistant rows.
+    requestId: uuid("request_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     foreignKey({ columns: [t.storeId, t.conversationId], foreignColumns: [conversations.storeId, conversations.id] }).onDelete("cascade"),
     index("messages_conversation_created_idx").on(t.conversationId, t.createdAt),
+    uniqueIndex("messages_conversation_request_uq").on(t.conversationId, t.requestId).where(sql`${t.requestId} is not null`),
     check("messages_role_chk", sql`${t.role} in ('user', 'assistant')`),
     check("messages_model_chk", sql`${t.model} in ('small', 'large')`),
     check("messages_status_chk", sql`${t.status} in ('ok', 'cut_off')`),

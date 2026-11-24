@@ -294,9 +294,135 @@ test("cancelling the response body mid-stream aborts the OpenAI request, saves t
     });
     await new Promise((r) => setTimeout(r, 20));
     expect(unhandled).not.toHaveBeenCalled();
+    // D81: the shopper leaving frees the conversation for the next message.
+    await vi.waitFor(async () => {
+      const [conv] = await admin`select c.busy_until from conversations c
+        join messages u on u.conversation_id = c.id and u.role = 'user' and u.content = 'cancel me'`;
+      expect(conv.busy_until).toBeNull();
+    });
   } finally {
     process.off("unhandledRejection", unhandled);
   }
+});
+
+// --- D81: one turn at a time, and retries not answered twice ---
+
+/** Holds the next turn in its rewrite step until open() is called. */
+function gateNextTurn() {
+  let open!: () => void;
+  const gate = new Promise<void>((r) => (open = r));
+  rewriteQuery.mockImplementationOnce(async (o: { message: string }) => {
+    await gate;
+    return { query: o.message, includeGiftCards: false, tokens: { input: 1, output: 1 } };
+  });
+  return open;
+}
+const clearMocks = () => [create, search, rewriteQuery, liveCheck].forEach((m) => m.mockClear());
+async function newConversation() {
+  const events = await readAll(await post({ shop: shopA, message: "start" }));
+  return events.at(-1)!.data.conversationToken as string;
+}
+
+test("a second POST while the conversation's turn runs → 409 turn_in_progress with CORS headers and no calls; the first finishes", async () => {
+  const tok = await newConversation();
+  const open = gateNextTurn();
+  const first = await post({ shop: shopA, message: "slow one", conversationToken: tok });
+  expect(first.status).toBe(200);
+  await vi.waitFor(() => expect(rewriteQuery).toHaveBeenCalledTimes(2));
+  clearMocks();
+
+  const second = await post({ shop: shopA, message: "impatient", conversationToken: tok });
+  expect(second.status).toBe(409);
+  expect(second.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+  expect(await second.json()).toEqual({ error: "turn_in_progress" });
+  noCalls();
+  const saved = await admin`select count(*)::int as n from messages where content = 'impatient'`;
+  expect(saved[0].n).toBe(0);
+
+  open();
+  expect((await readAll(first)).at(-1)).toEqual({ event: "done", data: { conversationToken: tok } });
+  // Released after done: the next message goes through.
+  const third = await post({ shop: shopA, message: "next", conversationToken: tok });
+  expect(third.status).toBe(200);
+  expect((await readAll(third)).at(-1)!.event).toBe("done");
+});
+
+test("the lock is released after an error, so the shopper can send again", async () => {
+  const tok = await newConversation();
+  create.mockImplementationOnce(fakeStream([{ error: Object.assign(new Error("HTTP 400"), { status: 400 }) }]));
+  expect((await readAll(await post({ shop: shopA, message: "fails", conversationToken: tok }))).map((e) => e.event)).toEqual(["error"]);
+  const res = await post({ shop: shopA, message: "again", conversationToken: tok });
+  expect(res.status).toBe(200);
+  await res.text();
+});
+
+test("an invalid requestId → 400 invalid_request_id with CORS headers, and nothing is called", async () => {
+  for (const requestId of ["not-a-uuid", 42, "", "123e4567-e89b-12d3-a456-42661417400"]) {
+    const res = await post({ shop: shopA, message: "hi", requestId });
+    expect(res.status).toBe(400);
+    expect(res.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+    expect(await res.json()).toEqual({ error: "invalid_request_id" });
+  }
+  noCalls();
+});
+
+test("a repeated requestId after done replays the saved answer as SSE (text, products, done) without calling OpenAI", async () => {
+  const tok = await newConversation();
+  const requestId = crypto.randomUUID();
+  search.mockResolvedValueOnce([{ chunkId: "c", source: "product", productId: gid("1"), content: "x", score: 1 }]);
+  liveCheck.mockResolvedValueOnce({ ok: true, products: new Map([[gid("1"), live("1")]]) });
+  create.mockImplementation(fakeStream(["Here ", "you go: ", "[[product:1]]"]));
+  const firstEvents = await readAll(await post({ shop: shopA, message: "tee?", conversationToken: tok, requestId }));
+  expect(firstEvents.map((e) => e.event)).toEqual(["text", "text", "product", "done"]);
+  clearMocks();
+
+  const res = await post({ shop: shopA, message: "tee?", conversationToken: tok, requestId });
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toBe("text/event-stream; charset=utf-8");
+  expect(res.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+  const events = await readAll(res);
+  expect(events).toEqual([
+    { event: "text", data: { delta: "Here you go: " } },
+    { event: "product", data: firstEvents[2].data },
+    { event: "done", data: { conversationToken: tok } },
+  ]);
+  noCalls();
+  const rows = await admin`select role from messages where request_id = ${requestId} or (role = 'assistant' and content = 'Here you go: ')`;
+  expect(rows.map((r) => r.role).sort()).toEqual(["assistant", "user"]);
+});
+
+test("a repeated requestId while its turn runs → 409 turn_in_progress", async () => {
+  const tok = await newConversation();
+  const requestId = crypto.randomUUID();
+  const open = gateNextTurn();
+  const first = await post({ shop: shopA, message: "slow", conversationToken: tok, requestId });
+  await vi.waitFor(() => expect(rewriteQuery).toHaveBeenCalledTimes(2));
+  const again = await post({ shop: shopA, message: "slow", conversationToken: tok, requestId });
+  expect(again.status).toBe(409);
+  expect(await again.json()).toEqual({ error: "turn_in_progress" });
+  open();
+  expect((await readAll(first)).at(-1)!.event).toBe("done");
+  const users = await admin`select count(*)::int as n from messages where request_id = ${requestId}`;
+  expect(users[0].n).toBe(1);
+});
+
+test("a repeated requestId after an error is answered again, without a second user row", async () => {
+  const tok = await newConversation();
+  const requestId = crypto.randomUUID();
+  create.mockImplementationOnce(fakeStream([{ error: Object.assign(new Error("HTTP 400"), { status: 400 }) }]));
+  const failed = await readAll(await post({ shop: shopA, message: "retry me", conversationToken: tok, requestId }));
+  expect(failed.map((e) => e.event)).toEqual(["error"]);
+
+  const retried = await readAll(await post({ shop: shopA, message: "retry me", conversationToken: tok, requestId }));
+  expect(retried.map((e) => e.event)).toEqual(["text", "text", "done"]);
+  const conversationId = token.verifyToken(storeA, tok);
+  const msgs = await admin`select role, content from messages where conversation_id = ${conversationId} order by created_at`;
+  expect(msgs).toEqual([
+    { role: "user", content: "start" },
+    { role: "assistant", content: "Hello there" },
+    { role: "user", content: "retry me" },
+    { role: "assistant", content: "Hello there" },
+  ]);
 });
 
 test("a product marker streams a product event between the text and done, as valid SSE", async () => {
