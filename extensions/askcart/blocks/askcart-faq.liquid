@@ -1,0 +1,31 @@
+{%- comment -%}
+  Product FAQ (Task 28, D32, D7). The merchant places it on the product template. It renders hidden and empty:
+  askcart-faq.js loads this product's FAQ from our server (`apiBase` from the app's public widget metafield), fills
+  the list with textContent, injects the FAQPage JSON-LD and only then shows the block. With no FAQ, no config or
+  our server down, it stays hidden. Every value leaves Liquid through `escape` (Review Focus 2).
+{%- endcomment -%}
+{%- assign cfg = app.metafields.askcart.widget.value -%}
+{%- if product and cfg.apiBase != blank -%}
+  <div
+    class="askcart-faq"
+    data-askcart-faq
+    data-shop="{{ shop.permanent_domain | escape }}"
+    data-product="{{ product.id | escape }}"
+    data-api="{{ cfg.apiBase | escape }}"
+    {{ block.shopify_attributes }}
+    hidden
+  >
+    <h2 class="askcart-faq__heading">{{ 'faq.heading' | t }}</h2>
+    <div data-askcart-faq-list></div>
+  </div>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Product FAQ",
+  "target": "section",
+  "javascript": "askcart-faq.js",
+  "enabled_on": { "templates": ["product"] },
+  "settings": []
+}
+{% endschema %}
