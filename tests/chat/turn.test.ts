@@ -111,7 +111,13 @@ beforeEach(() => {
   search.mockReset();
   rewriteQuery.mockReset();
   liveCheck.mockReset();
-  rewriteQuery.mockImplementation(async (o: { message: string }) => ({ query: o.message, includeGiftCards: false, tokens: { input: 7, output: 3 } }));
+  rewriteQuery.mockImplementation(async (o: { message: string }) => ({
+    query: o.message,
+    includeGiftCards: false,
+    budget: null,
+    sort: null,
+    tokens: { input: 7, output: 3 },
+  }));
   vi.spyOn(console, "info").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -302,6 +308,65 @@ test("a store with no currency code gets C11 (b) cards and never a price", async
   } finally {
     await admin`update stores set currency_code = 'EUR' where id = ${storeId}`;
   }
+});
+
+// --- D87: budget and price order, by the live price ---
+
+const priced = (id: string, price: string) => live(id, { variants: [variant(`${id}1`, { price })] });
+const rewritten = (o: { budget?: { min?: number; max?: number } | null; sort?: "cheapest" | "priciest" | null }) =>
+  rewriteQuery.mockResolvedValueOnce({ query: "tee", includeGiftCards: false, budget: o.budget ?? null, sort: o.sort ?? null, tokens: { input: 1, output: 1 } });
+const promptOf = () => (create.mock.calls[0][0].input as { content: string }[])[0].content;
+
+test("the rewrite gets the store currency; products over the budget are dropped and the rest keep their numbers in hit order", async () => {
+  rewritten({ budget: { max: 40 } });
+  search.mockResolvedValue([hit("1"), hit("2"), hit("3")]);
+  liveCheck.mockResolvedValue(liveMap(priced("1", "10.00"), priced("2", "50.00"), priced("3", "40.00")));
+  create.mockImplementationOnce(fakeStream(["[[product:2]]"]));
+  const r = await run();
+  expect(rewriteQuery.mock.calls[0][0]).toMatchObject({ storeLocale: "en", storeCurrency: "EUR" });
+  const prompt = promptOf();
+  expect(prompt).toContain("#1 Tee 1");
+  expect(prompt).toContain("#2 Tee 3"); // 40.00 is inside "at most 40"
+  expect(prompt).not.toContain("Tee 2");
+  expect(r.products.map((p) => p.id)).toEqual([gid("3")]);
+});
+
+test("a cheapest question numbers the products by live price, cheapest first", async () => {
+  rewritten({ sort: "cheapest" });
+  search.mockResolvedValue([hit("1"), hit("2"), hit("3")]);
+  liveCheck.mockResolvedValue(liveMap(priced("1", "50.00"), priced("2", "10.00"), priced("3", "30.00")));
+  create.mockImplementationOnce(fakeStream(["[[product:1]]"]));
+  const r = await run();
+  const prompt = promptOf();
+  expect(prompt.indexOf("#1 Tee 2")).toBeGreaterThan(-1);
+  expect(prompt.indexOf("#2 Tee 3")).toBeGreaterThan(prompt.indexOf("#1 Tee 2"));
+  expect(prompt.indexOf("#3 Tee 1")).toBeGreaterThan(prompt.indexOf("#2 Tee 3"));
+  expect(prompt).toMatch(/cheapest to the most expensive/);
+  expect(r.products.map((p) => p.id)).toEqual([gid("2")]);
+});
+
+test("a budget that leaves no product tells the model so, and no card can be shown", async () => {
+  rewritten({ budget: { min: 1, max: 5 } });
+  search.mockResolvedValue([hit("1"), hit("2")]);
+  liveCheck.mockResolvedValue(liveMap(priced("1", "10.00"), priced("2", "20.00")));
+  create.mockImplementationOnce(fakeStream(["Nothing in that range. [[product:1]]"]));
+  const r = await run();
+  expect(promptOf()).toContain("No products are within the shopper's budget of €1–€5.");
+  expect(r.products).toEqual([]);
+  expect(r.events.at(-1)!.event).toBe("done");
+});
+
+test("when the live check fails (C11), the budget is not applied and the model is told prices couldn't be checked", async () => {
+  await admin`insert into products (store_id, shopify_id, handle, title, url, status, published, content, content_hash, shopify_updated_at)
+              values (${storeId}, ${gid("7")}, 'h7', 'Scarf 7', 'https://shop.example.com/products/h7', 'ACTIVE', true, 'c', 'h', now())`;
+  rewritten({ budget: { max: 1 }, sort: "cheapest" });
+  search.mockResolvedValue([hit("7")]);
+  liveCheck.mockResolvedValue({ ok: false, reason: "throttled" });
+  create.mockImplementationOnce(fakeStream(["[[product:1]]"]));
+  const r = await run();
+  expect(promptOf()).toContain("#1 Scarf 7");
+  expect(promptOf()).toMatch(/Prices could not be checked/);
+  expect(r.products).toMatchObject([{ id: gid("7"), price: null }]);
 });
 
 test("answer throwing ChatUnavailable gives an error event with the token; the user message stays and no assistant row is saved", async () => {

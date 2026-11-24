@@ -39,7 +39,7 @@ test("request uses the small model, store: false, a strict schema and the store 
     schema: {
       type: "object",
       additionalProperties: false,
-      required: ["query", "includeGiftCards"],
+      required: ["query", "includeGiftCards", "budget", "sort"],
       properties: { query: { type: "string" }, includeGiftCards: { type: "boolean" } },
     },
   });
@@ -62,7 +62,7 @@ test("only the last 6 history messages are sent", async () => {
 test("returns the parsed result with its token usage", async () => {
   create.mockResolvedValueOnce(ok({ query: "gift card", includeGiftCards: true }, { input_tokens: 51, output_tokens: 12 }));
   const r = await rewriteQuery({ message: "a voucher please", history: [], storeLocale: "en", signal: new AbortController().signal });
-  expect(r).toEqual({ query: "gift card", includeGiftCards: true, tokens: { input: 51, output: 12 } });
+  expect(r).toEqual({ query: "gift card", includeGiftCards: true, budget: null, sort: null, tokens: { input: 51, output: 12 } });
 });
 
 test("a timeout returns the message unchanged without gift cards", async () => {
@@ -74,7 +74,7 @@ test("a timeout returns the message unchanged without gift cards", async () => {
     );
     const p = rewriteQuery({ message: "[email] wants wax", history: [], storeLocale: "en", signal: new AbortController().signal });
     await vi.advanceTimersByTimeAsync(5000);
-    expect(await p).toEqual({ query: "[email] wants wax", includeGiftCards: false, tokens: { input: 0, output: 0 } });
+    expect(await p).toEqual({ query: "[email] wants wax", includeGiftCards: false, budget: null, sort: null, tokens: { input: 0, output: 0 } });
   } finally {
     vi.useRealTimers();
   }
@@ -83,13 +83,13 @@ test("a timeout returns the message unchanged without gift cards", async () => {
 test("a 429 returns the message unchanged without gift cards", async () => {
   create.mockRejectedValueOnce(Object.assign(new Error("rate limited"), { status: 429 }));
   const r = await rewriteQuery({ message: "wax", history: [], storeLocale: "en", signal: new AbortController().signal });
-  expect(r).toEqual({ query: "wax", includeGiftCards: false, tokens: { input: 0, output: 0 } });
+  expect(r).toEqual({ query: "wax", includeGiftCards: false, budget: null, sort: null, tokens: { input: 0, output: 0 } });
 });
 
 test("invalid JSON returns the message unchanged without gift cards (tokens still counted)", async () => {
   create.mockResolvedValueOnce({ output_text: "{not json", usage: { input_tokens: 30, output_tokens: 4 } });
   const r = await rewriteQuery({ message: "wax", history: [], storeLocale: "en", signal: new AbortController().signal });
-  expect(r).toEqual({ query: "wax", includeGiftCards: false, tokens: { input: 30, output: 4 } });
+  expect(r).toEqual({ query: "wax", includeGiftCards: false, budget: null, sort: null, tokens: { input: 30, output: 4 } });
 });
 
 test("JSON of the wrong shape (empty query) falls back too", async () => {
@@ -128,4 +128,58 @@ test("the rewrite asks the small model for no reasoning, overridable by OPENAI_R
   await rewriteQuery({ message: "m", history: [], storeLocale: null, signal: new AbortController().signal });
   expect(create.mock.calls[1][0]).toMatchObject({ reasoning: { effort: "low" } });
   delete process.env.OPENAI_REASONING_SMALL;
+});
+
+// --- D87: budget and price order ---
+
+test("the schema has a nullable budget {min, max} and a nullable sort, all required (strict mode)", async () => {
+  create.mockResolvedValueOnce(ok({ query: "q", includeGiftCards: false, budget: null, sort: null }));
+  await rewriteQuery({ message: "m", history: [], storeLocale: null, storeCurrency: "INR", signal: new AbortController().signal });
+  const schema = create.mock.calls[0][0].text.format.schema;
+  expect(schema.properties.budget).toEqual({
+    anyOf: [
+      { type: "null" },
+      {
+        type: "object",
+        properties: { min: { type: ["number", "null"] }, max: { type: ["number", "null"] } },
+        required: ["min", "max"],
+        additionalProperties: false,
+      },
+    ],
+  });
+  expect(schema.properties.sort).toEqual({ anyOf: [{ type: "null" }, { type: "string", enum: ["cheapest", "priciest"] }] });
+});
+
+test("the instructions name the store currency, forbid guessing a budget and forbid converting currencies", async () => {
+  create.mockResolvedValueOnce(ok({ query: "q", includeGiftCards: false, budget: null, sort: null }));
+  await rewriteQuery({ message: "m", history: [], storeLocale: "en", storeCurrency: "INR", signal: new AbortController().signal });
+  const instructions: string = create.mock.calls[0][0].instructions;
+  expect(instructions).toContain("The store's prices are in INR.");
+  expect(instructions).toMatch(/Never guess one/);
+  expect(instructions).toMatch(/do not convert/);
+  expect(instructions).toMatch(/cheapest/);
+
+  create.mockResolvedValueOnce(ok({ query: "q", includeGiftCards: false, budget: null, sort: null }));
+  await rewriteQuery({ message: "m", history: [], storeLocale: "en", signal: new AbortController().signal });
+  expect(create.mock.calls[1][0].instructions).not.toMatch(/prices are in/);
+});
+
+test("a budget and sort are returned; null bounds are dropped and swapped bounds put in order", async () => {
+  const signal = new AbortController().signal;
+  create.mockResolvedValueOnce(ok({ query: "gift", includeGiftCards: false, budget: { min: null, max: 1000 }, sort: null }));
+  expect(await rewriteQuery({ message: "a gift under 1000 rupees", history: [], storeLocale: "en", storeCurrency: "INR", signal })).toMatchObject({
+    query: "gift",
+    budget: { max: 1000 },
+    sort: null,
+  });
+  create.mockResolvedValueOnce(ok({ query: "board", includeGiftCards: false, budget: { min: 900, max: 500 }, sort: "cheapest" }));
+  expect(await rewriteQuery({ message: "m", history: [], storeLocale: "en", signal })).toMatchObject({ budget: { min: 500, max: 900 }, sort: "cheapest" });
+  create.mockResolvedValueOnce(ok({ query: "board", includeGiftCards: false, budget: { min: null, max: null }, sort: "bogus" }));
+  expect(await rewriteQuery({ message: "m", history: [], storeLocale: "en", signal })).toMatchObject({ budget: null, sort: null });
+});
+
+test("output without budget or sort (an older shape) still parses, with both null", async () => {
+  create.mockResolvedValueOnce(ok({ query: "wax", includeGiftCards: false }));
+  const r = await rewriteQuery({ message: "wax", history: [], storeLocale: "en", signal: new AbortController().signal });
+  expect(r).toMatchObject({ query: "wax", budget: null, sort: null });
 });

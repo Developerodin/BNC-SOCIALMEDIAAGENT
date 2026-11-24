@@ -4,6 +4,7 @@ import { conversations, messages } from "@/db/schema";
 import { search } from "@/lib/retrieval";
 import { fallbackCards, liveCheck, type FallbackCard, type LiveProduct, type LiveVariant, type Stock } from "@/lib/shopify/live-products";
 import { answer, ChatUnavailable } from "./answer";
+import { applyBudget } from "./budget";
 import { HISTORY_MESSAGES } from "./limits";
 import { maskPII } from "./mask";
 import { buildInput, LARGE_SYSTEM_PROMPT, SYSTEM_PROMPT, type PromptProducts } from "./prompt";
@@ -293,11 +294,19 @@ export async function runTurn(t: {
   let released = false;
 
   try {
-    const rw = await rewriteQuery({ message: t.message, history: t.history, storeLocale: store.primaryLocale, signal });
-    const hits = await search(storeId, rw.query, SEARCH_K, { productId: currentProductId, includeGiftCards: rw.includeGiftCards });
-    const ids = [...new Set([...hits.map((h) => h.productId), ...(currentProductId ? [currentProductId] : [])])];
-    const live = await checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal });
-    const { input, allowed } = buildInput({ hits, live, currentProductId, history: t.history, message: t.message, threshold });
+    const rw = await rewriteQuery({
+      message: t.message,
+      history: t.history,
+      storeLocale: store.primaryLocale,
+      storeCurrency: store.currencyCode,
+      signal,
+    });
+    const found = await search(storeId, rw.query, SEARCH_K, { productId: currentProductId, includeGiftCards: rw.includeGiftCards });
+    const ids = [...new Set([...found.map((h) => h.productId), ...(currentProductId ? [currentProductId] : [])])];
+    const checked = await checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal });
+    // D87: drop products outside the budget and order by price, by the live price (never the index's).
+    const { hits, live, note } = applyBudget({ hits: found, live: checked, budget: rw.budget, sort: rw.sort, currency: store.currencyCode });
+    const { input, allowed } = buildInput({ hits, live, currentProductId, history: t.history, message: t.message, threshold, note });
 
     const cards: Card[] = [];
     const result = await answer({
