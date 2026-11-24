@@ -14,6 +14,8 @@ export type ShopifyProduct = {
   options: { name: string; values: string[] }[];
   status: string;
   onlineStoreUrl: string | null;
+  /** Set when published to the Online Store. Unlike onlineStoreUrl, it is not null on password-protected stores. */
+  publishedAt: string | null;
   imageUrl: string | null;
   updatedAt: string;
   metafields: { namespace: string; key: string; type: string; value: string }[];
@@ -21,7 +23,7 @@ export type ShopifyProduct = {
 
 /** GraphQL selection for one product (Admin API 2026-10), without metafields. */
 export const PRODUCT_FIELDS = `
-  id handle title description productType vendor tags status onlineStoreUrl updatedAt
+  id handle title description productType vendor tags status onlineStoreUrl publishedAt updatedAt
   options { name values }
   featuredMedia { preview { image { url } } }
 `;
@@ -40,6 +42,7 @@ export function toShopifyProduct(node: any, metafields: ShopifyProduct["metafiel
     options: node.options,
     status: node.status,
     onlineStoreUrl: node.onlineStoreUrl ?? null,
+    publishedAt: node.publishedAt ?? null,
     imageUrl: node.featuredMedia?.preview?.image?.url ?? null,
     updatedAt: node.updatedAt,
     metafields,
@@ -91,7 +94,8 @@ export async function upsertProducts(storeId: string, ps: ShopifyProduct[], conn
       url: p.onlineStoreUrl,
       imageUrl: p.imageUrl,
       status: p.status,
-      published: p.onlineStoreUrl != null,
+      // onlineStoreUrl is null on password-protected stores (every dev store, and live stores before launch).
+      published: p.publishedAt != null,
       content,
       contentHash: createHash("sha256").update(content).digest("hex"),
       shopifyUpdatedAt: new Date(p.updatedAt),

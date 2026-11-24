@@ -504,5 +504,6 @@ The design above was rewritten to match these. If anything conflicts, these win.
   - exact search only in phase 1, with HNSW added above 20k chunks per store,
   - embedding spend tracking waits for M10.
 - **D69 Order scopes for the Social Media Agent (2026-11-24)**: the user chose to add `read_orders` and `read_all_orders` to this app's scopes, so the separate Social Media Agent project can read B&C's orders through it. Overrides D29's "read-only products + inventory" phase 1 list. `read_all_orders` needs Shopify's approval (protected-data request form). Still open: that project needs a token that never expires, but this app uses expiring offline tokens (`src/lib/shopify/session.ts`).
+- **D70 How the Social Media Agent gets order data (2026-11-24)**: Shopify requires expiring offline tokens (new public apps since 2026-04-01; custom apps created on or after 2026-12-01), so a permanent token is impossible. The user chose option A: AskCart keeps and refreshes the token itself, and the Social Media Agent fetches order data through a small protected AskCart endpoint. That way only one party ever refreshes. Not built yet. It comes after the dev-store live check; the endpoint's auth and data shape are still to be decided.
 
 **P1–P56 and P26b are decided. The production domain (P57) is deferred to before M10. P58–P61 were decided as D61–D64.**

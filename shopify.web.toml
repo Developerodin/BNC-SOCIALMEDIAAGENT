@@ -2,4 +2,5 @@ name = "web"
 webhooks_path = "/api/webhooks/shopify"
 
 [commands]
-dev = "npm run dev -- --port $PORT"
+# next dev reads the PORT env var itself; "$PORT" in the command is not expanded on Windows.
+dev = "npm run dev"

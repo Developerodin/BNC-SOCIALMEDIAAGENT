@@ -54,6 +54,7 @@ const node = (id: string, title = "Tee") => ({
   options: [],
   status: "ACTIVE",
   onlineStoreUrl: null,
+  publishedAt: null,
   updatedAt: "2026-01-02T00:00:00Z",
   featuredMedia: null,
 });

@@ -6,7 +6,8 @@ export const shopify = shopifyApi({
   apiKey: process.env.SHOPIFY_API_KEY!,
   apiSecretKey: process.env.SHOPIFY_API_SECRET!,
   scopes: ["read_products", "read_inventory", "read_orders", "read_all_orders"],
-  hostName: (process.env.SHOPIFY_APP_URL ?? "").replace(/^https?:\/\//, ""),
+  // `shopify app dev` sets APP_URL (the tunnel), not SHOPIFY_APP_URL; `||` so an empty .env entry falls through.
+  hostName: (process.env.SHOPIFY_APP_URL || process.env.APP_URL || "").replace(/^https?:\/\//, ""),
   apiVersion: ApiVersion.October26,
   isEmbeddedApp: true,
 });

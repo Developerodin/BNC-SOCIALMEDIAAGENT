@@ -93,7 +93,7 @@ test("archived or unpublished products lose their chunks on the next run", async
   await indexing.embedStore({ storeId });
 
   const later = "2026-01-03T00:00:00Z";
-  await upsert(storeId, node("1", { status: "ARCHIVED", updatedAt: later }), node("2", { onlineStoreUrl: null, updatedAt: later }));
+  await upsert(storeId, node("1", { status: "ARCHIVED", updatedAt: later }), node("2", { onlineStoreUrl: null, publishedAt: null, updatedAt: later }));
   expect(await indexing.embedStore({ storeId })).toMatchObject({ embedded: 0, removed: 2 });
 
   expect(await embeddedIds(storeId)).toEqual([gid("3")]);

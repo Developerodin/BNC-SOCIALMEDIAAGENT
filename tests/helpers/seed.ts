@@ -13,7 +13,7 @@ export const gid = (id: string) => `gid://shopify/Product/${id}`;
 /** A Shopify Admin API product node, active and published unless told otherwise. */
 export const node = (
   id: string,
-  o: { title?: string; description?: string; status?: string; onlineStoreUrl?: string | null; updatedAt?: string } = {},
+  o: { title?: string; description?: string; status?: string; onlineStoreUrl?: string | null; publishedAt?: string | null; updatedAt?: string } = {},
 ) => ({
   id: gid(id),
   handle: `h${id}`,
@@ -25,6 +25,7 @@ export const node = (
   options: [],
   status: o.status ?? "ACTIVE",
   onlineStoreUrl: o.onlineStoreUrl === undefined ? `https://shop.example.com/products/h${id}` : o.onlineStoreUrl,
+  publishedAt: o.publishedAt === undefined ? "2026-01-01T00:00:00Z" : o.publishedAt,
   updatedAt: o.updatedAt ?? "2026-01-02T00:00:00Z",
   featuredMedia: null,
 });

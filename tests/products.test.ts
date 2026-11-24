@@ -37,6 +37,7 @@ function product(over: Partial<import("@/lib/products").ShopifyProduct> = {}): i
     options: [{ name: "Size", values: ["S", "M"] }],
     status: "ACTIVE",
     onlineStoreUrl: "https://shop.example.com/products/tee",
+    publishedAt: "2026-01-01T00:00:00Z",
     imageUrl: null,
     updatedAt: "2026-01-02T00:00:00Z",
     metafields: [],
@@ -85,10 +86,17 @@ test("upsertProducts stores one row with published flag and a 64-char hash", asy
   expect(rows[0].published).toBe(true);
   expect(rows[0].contentHash).toHaveLength(64);
 
-  await products.upsertProducts(storeId, [product({ onlineStoreUrl: null })]);
+  await products.upsertProducts(storeId, [product({ onlineStoreUrl: null, publishedAt: null, updatedAt: "2026-01-03T00:00:00Z" })]);
   const again = await client.forStore(storeId, (tx) => tx.select().from(schema.products));
   expect(again).toHaveLength(1);
   expect(again[0].published).toBe(false);
+});
+
+test("a password-protected store's product (no onlineStoreUrl, but a publishedAt) counts as published", async () => {
+  const storeId = await newStore("pw.myshopify.com");
+  await products.upsertProducts(storeId, [product({ onlineStoreUrl: null })]);
+  const [row] = await client.forStore(storeId, (tx) => tx.select().from(schema.products));
+  expect(row.published).toBe(true);
 });
 
 test("an older updatedAt does not overwrite, a newer one does", async () => {
@@ -136,6 +144,7 @@ test("toShopifyProduct maps a PRODUCT_FIELDS node, null-safe on the image", () =
     options: [{ name: "Size", values: ["S"] }],
     status: "ACTIVE",
     onlineStoreUrl: null,
+    publishedAt: null,
     updatedAt: "2026-01-02T00:00:00Z",
     featuredMedia: { preview: { image: { url: "https://cdn/x.png" } } },
   };
@@ -143,6 +152,8 @@ test("toShopifyProduct maps a PRODUCT_FIELDS node, null-safe on the image", () =
   const p = products.toShopifyProduct(node, m);
   expect(p.imageUrl).toBe("https://cdn/x.png");
   expect(p.onlineStoreUrl).toBeNull();
+  expect(p.publishedAt).toBeNull();
+  expect(products.PRODUCT_FIELDS).toContain("publishedAt");
   expect(p.metafields).toBe(m);
   expect(products.toShopifyProduct({ ...node, featuredMedia: null }, []).imageUrl).toBeNull();
   expect(products.toShopifyProduct({ ...node, featuredMedia: { preview: null } }, []).imageUrl).toBeNull();
