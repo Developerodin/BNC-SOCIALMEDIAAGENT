@@ -189,7 +189,30 @@ function ConnectWebsiteCard() {
     setBusy(false);
   }
 
+  // The embed allow-list (docs/embed.md): the snippet and link only work on sites the merchant allowed here.
+  const [allowed, setAllowed] = useState<string[] | null>(null);
+  const [allowError, setAllowError] = useState<string | null>(null);
+  useEffect(() => {
+    (async () => {
+      const res = await authed("/api/app/embed-domains");
+      if (res.ok) setAllowed((await res.json()).domains);
+    })();
+  }, []);
+
+  async function setAllowedHost(host: string, allow: boolean) {
+    setAllowError(null);
+    try {
+      const res = await authed("/api/app/embed-domains", { method: allow ? "POST" : "DELETE", body: JSON.stringify({ host }) });
+      if (res.status === 409) setAllowError("You can allow up to 10 websites. Remove one first.");
+      else if (!res.ok) throw new Error(String(res.status));
+      else setAllowed((await res.json()).domains);
+    } catch {
+      setAllowError("That didn't work. Try again.");
+    }
+  }
+
   const showOwn = result && (result.kind === "other" || !result.reachable);
+  const isAllowed = !!result && !!allowed?.includes(result.host);
   return (
     <s-section heading="Connect your website">
       <s-text>Enter your website address and we&apos;ll show you how to add the chat to it.</s-text>
@@ -226,6 +249,18 @@ function ConnectWebsiteCard() {
           <s-text>
             {result.reachable ? `${result.host} doesn't look like a Shopify theme store (it may be a custom or headless site).` : `We couldn't check ${result.host}, so here are both ways to connect it.`}
           </s-text>
+          {isAllowed ? (
+            <>
+              <s-text>The chat is allowed on {result.host}.</s-text>
+              <s-button onClick={() => setAllowedHost(result.host, false)}>Stop allowing {result.host}</s-button>
+            </>
+          ) : (
+            <>
+              <s-text>First allow the chat on this website. Other websites can&apos;t show your chat.</s-text>
+              <s-button onClick={() => setAllowedHost(result.host, true)}>Allow chat on {result.host}</s-button>
+            </>
+          )}
+          {allowError && <s-text>{allowError}</s-text>}
           {result.embedSnippet && (
             <>
               <s-text>Add this line to your website&apos;s pages:</s-text>
