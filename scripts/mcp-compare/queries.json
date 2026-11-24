@@ -1,0 +1,23 @@
+[
+  { "id": "exact-complete", "kind": "exact name", "query": "the complete snowboard", "expect": ["The Complete Snowboard"] },
+  { "id": "exact-videographer", "kind": "exact name", "query": "do you have the videographer snowboard?", "expect": ["The Videographer Snowboard"] },
+  { "id": "partial-hydrogen", "kind": "partial name", "query": "hydrogen snowboard", "expect": ["Hydrogen"] },
+  { "id": "partial-oxygen", "kind": "partial name", "query": "oxygen", "expect": ["Oxygen"] },
+  { "id": "partial-liquid", "kind": "partial name", "query": "the liquid board", "expect": ["Liquid"] },
+  { "id": "vague-beginner", "kind": "vague intent", "query": "something for a beginner", "expect": [] },
+  { "id": "vague-gift-budget", "kind": "vague intent + price", "query": "a gift under 1000 rupees", "expect": ["Gift Card", "Ski Wax"] },
+  { "id": "vague-cheapest", "kind": "vague intent + price", "query": "what's your cheapest snowboard?", "expect": [] },
+  { "id": "vague-premium", "kind": "vague intent", "query": "a premium board, money is no object", "expect": ["Complete", "Multi-location", "Multi-managed"] },
+  { "id": "attr-159", "kind": "attribute", "query": "a 159 cm board", "expect": ["The Complete Snowboard", "The Multi-managed Snowboard"] },
+  { "id": "attr-weight", "kind": "attribute", "query": "a snowboard that weighs 7 pounds", "expect": ["The Complete Snowboard"] },
+  { "id": "attr-color", "kind": "attribute", "query": "a board in the Sunset colour", "expect": ["The Complete Snowboard"] },
+  { "id": "attr-sale", "kind": "attribute", "query": "any snowboards on sale or discounted?", "expect": ["Compare at Price"] },
+  { "id": "accessory-wax", "kind": "accessory", "query": "ski wax", "expect": ["Ski Wax"] },
+  { "id": "accessory-subscription", "kind": "accessory", "query": "can I subscribe to get wax delivered regularly?", "expect": ["Ski Wax"] },
+  { "id": "lang-fr", "kind": "French", "query": "Je cherche une planche à neige haut de gamme", "expect": ["Complete", "Multi-location", "Multi-managed"] },
+  { "id": "lang-hi", "kind": "Hindi", "query": "मुझे एक स्नोबोर्ड चाहिए", "expect": ["Snowboard"] },
+  { "id": "sold-out", "kind": "sold-out product", "query": "the out of stock snowboard", "expect": ["The Out of Stock Snowboard"] },
+  { "id": "gift-card", "kind": "gift card", "query": "can I buy a gift card?", "includeGiftCards": true, "expect": ["Gift Card"] },
+  { "id": "off-catalogue", "kind": "not sold here", "query": "a kitchen blender", "expectNone": true },
+  { "id": "nonsense", "kind": "nonsense", "query": "qwzx blorft 9000 zzkv", "expectNone": true }
+]
