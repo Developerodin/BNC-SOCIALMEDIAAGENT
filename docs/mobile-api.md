@@ -71,6 +71,9 @@ belongs to that customer. Rules:
   not make it the customer's (guest chats are not adopted when the customer signs in).
 - `401 invalid_session` (on any of those endpoints): the session expired or is invalid. Call `POST /api/chat/session` again
   and retry. A stream already running when the session expires finishes normally.
+- A session can't be recalled once issued. If a customer is redacted (deleted) in Shopify, their conversations are
+  removed, but a session already issued for them still verifies until it expires (at most 1 hour); it can only create new
+  conversations, since the old ones are gone.
 - Omit the header for a guest. Never send a customer id yourself: only the session counts.
 
 **`GET /api/chat/conversations?shop=…&limit=20&cursor=…`**: needs the session header. Answers
@@ -201,7 +204,7 @@ still streaming.
 
 | Status | Body | Meaning |
 |---|---|---|
-| 400 | `{ "error": "empty_message" \| "invalid_body" \| "invalid_request_id" }` | Fix the request. |
+| 400 | `{ "error": "empty_message" \| "invalid_body" \| "invalid_request_id" \| "invalid_cursor" }` | Fix the request (`invalid_cursor`: the `cursor` on `/api/chat/conversations` isn't an id we returned). |
 | 401 | `{ "error": "invalid_token" }` | The conversation token is missing, wrong or expired: drop it and start a new conversation. |
 | 401 | `{ "error": "invalid_session" \| "invalid_customer" }` | The customer session / customer token is bad or expired: sign in again (see Signed-in customers). |
 | 403 | no body | Wrong, replaced or revoked app key, or an `Origin` header was sent. |
@@ -218,6 +221,10 @@ still streaming.
 
 A normal chat message costs one request, plus one for history when the chat screen opens. Contact us if a busy store
 needs more.
+
+Be realistic about what these are: the app key ships inside the app, so the limits stop honest apps from misbehaving, not
+a determined abuser (who can rotate IPs, and counters are per server process). The protection against someone running up
+the store's AI bill is separate and server-side: per-IP and per-store spend limits on the chat itself.
 
 ## Quick test
 

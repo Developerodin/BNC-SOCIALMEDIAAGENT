@@ -7,10 +7,13 @@ settings.
 ## Allow your website first
 
 Embedding is **off** until you allow the site: only listed sites can show your chat, so nobody else can use it (and
-your AI usage) from their page. Add each site's hostname (for example `www.my-blog.com`, no `https://`, no port) with
-`POST /api/app/embed-domains` (`{"host": "www.my-blog.com"}`; `DELETE` removes one, `GET` lists them; up to 10). A
-settings screen for this is coming. Your store's own domains are always allowed, so the link form below works for
-anyone as soon as one site is listed. Until then, `/chat/<store>` shows "not found".
+your AI usage) from their page. In the AskCart admin, open **Connect your website**, type the address, and press
+**Allow chat on <your site>**. (Up to 10 sites; the same list is available at `/api/app/embed-domains` for the admin
+app.) Your store's own domains are always allowed.
+
+On a site that isn't allowed, the visitor's browser shows its own "refused to connect" message inside the chat frame.
+That is the browser enforcing the allow-list, not an AskCart error page. The plain link `/chat/<store>` still shows
+"not found" until at least one site is allowed.
 
 ## Add it to any website
 

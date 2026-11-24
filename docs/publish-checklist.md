@@ -85,8 +85,12 @@ Legend: ✅ done · 🔄 being built · ❌ to do · ⚠️ needs a decision · 
 
 ## 7. AskCart-specific risks a reviewer may hit
 
-- [ ] ❌ **Abuse limits on the public chat** (M10: rate limits, monthly cap, bot check). Without them a reviewer or
-      anyone can run up the OpenAI bill.
+- [ ] 🔄 **Abuse limits on the public chat** (M10). Partly done: per-IP and per-store rate and spend limits on the
+      chat, per-customer limits on the proxy session route. Still missing: a monthly cap per store and a bot check.
+      The limits are in memory (one instance) and stop honest clients, not a determined abuser.
+- [ ] 🔄 **Chat retention job** (30/90/365 days, D41): being added. Verify old conversations are actually deleted.
+- [ ] 🔄 **`customers/data_request`**: the webhook is acknowledged but exports nothing. For now a manual export with
+      `scripts/export-customer-chats.mjs` (being added) answers a request within Shopify's deadline.
 - [ ] 🔍 The chat must never show wrong prices or promise stock. Prices and stock come only from live Shopify data
       (prompt rules D37 and D79); keep that true in every new tool.
 - [ ] 🔍 The AI notice is shown to shoppers (built). Keep it.

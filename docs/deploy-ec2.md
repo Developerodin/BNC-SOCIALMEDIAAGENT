@@ -14,12 +14,17 @@
 
 The widget is built once (`npm run build:widget`) into `extensions/askcart/assets/`. Shopify serves those files after
 `shopify app deploy`, so run the widget build **before** `shopify app deploy`. The hosted chat page and `embed.js`
-(once merged) are served by EC2 from `public/`, so the EC2 build must also run the widget build.
+are served by EC2 from `public/`; `npm run build` already runs the widget build first, so the EC2 build needs nothing extra.
 
 ## 1. Instance
 
 - Ubuntu 24.04 LTS, at least **t3.small (2 GB RAM)**. `next build` needs memory, so add 2 GB of swap on small
-  instances.
+  instances:
+
+  ```bash
+  sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+  echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+  ```
 - Security group: inbound **443** and **80** (for the TLS certificate) from anywhere, and **22** from your IP only.
   **Never open 5432.**
 - A **domain name** pointing at the instance's Elastic IP, e.g. `app.askcart.example`. Shopify refuses IP addresses
@@ -49,15 +54,63 @@ CREATE EXTENSION IF NOT EXISTS vector;   -- needs superuser; migration 0004 then
 SQL
 ```
 
-Backups: a nightly `pg_dump` to S3 (cron), or EBS snapshots of the volume. Set this up before real merchant data
-arrives.
+### Backups (required before the merchant installs)
+
+Without this, one bad disk or a bad migration loses every conversation and every store token. Do it now, and test the
+restore once.
+
+```bash
+sudo apt install -y awscli                       # or the AWS CLI v2 installer
+aws configure                                    # or attach an instance role that can write to the bucket
+aws s3 mb s3://askcart-backups-<unique-suffix>   # then add a lifecycle rule to expire dumps after 30 days
+sudo install -d -o ubuntu -g ubuntu /var/backups/askcart
+```
+
+`/home/ubuntu/backup-askcart.sh` (`chmod +x`; put the admin password in `~/.pgpass` as
+`localhost:5432:shopassist:shopassist:<admin-pw>`, mode 600, so the script has no secret in it):
+
+```bash
+#!/bin/bash
+set -euo pipefail
+f=/var/backups/askcart/shopassist-$(date +%F).dump
+pg_dump -h localhost -U shopassist -Fc shopassist > "$f"
+aws s3 cp "$f" s3://askcart-backups-<unique-suffix>/ --only-show-errors
+find /var/backups/askcart -name '*.dump' -mtime +3 -delete
+```
+
+`crontab -e`: `15 3 * * * /home/ubuntu/backup-askcart.sh >> /var/log/askcart-backup.log 2>&1`
+(`sudo touch /var/log/askcart-backup.log && sudo chown ubuntu /var/log/askcart-backup.log`). Check the next morning that
+a file appeared in S3. `TOKEN_KEY` and `CHAT_TOKEN_SECRET` are **not** in the database: store them in a password
+manager, or a restored database can't decrypt its store tokens.
+
+**Test a restore** (once now, then every few months) into a scratch database, never over the live one:
+
+```bash
+aws s3 cp s3://askcart-backups-<unique-suffix>/shopassist-<date>.dump /tmp/r.dump
+sudo -u postgres createdb -O shopassist restore_test
+sudo -u postgres psql restore_test -c 'CREATE EXTENSION IF NOT EXISTS vector'
+pg_restore -h localhost -U shopassist -d restore_test --no-owner /tmp/r.dump
+sudo -u postgres psql restore_test -c 'select count(*) from stores; select count(*) from conversations'
+sudo -u postgres dropdb restore_test && rm /tmp/r.dump
+```
+
+The counts should match the live database. (EBS snapshots of the volume are a good extra, not a replacement.)
 
 ## 3. Node and the app
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs   # Node 22+ (package.json engines)
 sudo npm i -g pm2
-git clone https://github.com/Developerodin/BNC-SOCIALMEDIAAGENT.git askcart && cd askcart && git checkout m1-foundation
+pm2 install pm2-logrotate         # as the user that runs pm2; without it pm2's logs grow until the disk is full
+```
+
+The repository is private, so the instance needs a **read-only deploy key**:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/askcart_deploy -N ""      # on the instance
+cat ~/.ssh/askcart_deploy.pub                              # paste into GitHub → the repo → Settings → Deploy keys (leave "Allow write access" off)
+printf 'Host github.com\n  IdentityFile ~/.ssh/askcart_deploy\n  IdentitiesOnly yes\n' >> ~/.ssh/config
+git clone git@github.com:Developerodin/BNC-SOCIALMEDIAAGENT.git askcart && cd askcart && git checkout m1-foundation
 npm ci
 ```
 
@@ -75,6 +128,10 @@ CHAT_TOKEN_SECRET=<32 random bytes, base64>  # signs chat and customer sessions.
 OPENAI_API_KEY=<key>
 OPENAI_MODEL_SMALL=<model>
 OPENAI_MODEL_LARGE=<model>
+# Reasoning effort per model. The small model defaults to "none", and some models reject that. If the smoke test below
+# shows "Assistant unavailable", set the one that fails to "low" (and restart: pm2 restart askcart --update-env).
+# OPENAI_REASONING_SMALL=low
+# OPENAI_REASONING_LARGE=low
 UCP_AGENT_PROFILE_URL=https://app.askcart.example/ucp-agent-profile.json   # turns on Shopify Catalog MCP tools
 # Legacy partner access only, if the Social Media Agent still uses it:
 # PARTNER_STORE_DOMAIN=...  PARTNER_API_SECRET=...
@@ -86,10 +143,11 @@ To generate a secret: `node -e "console.log(require('crypto').randomBytes(32).to
 Build, migrate, start:
 
 ```bash
-npm run build:widget && npm run build     # widget files first, then Next.js
+npm run build                             # builds the widget files, then Next.js
 npx drizzle-kit migrate                   # runs as DATABASE_ADMIN_URL; grants app_user its rights
-pm2 start npm --name askcart -- start     # next start on port 3000
-pm2 save && pm2 startup                   # restart on reboot
+# --kill-timeout: on restart pm2 waits up to 10 s for running answers to finish before killing the process
+pm2 start npm --name askcart --kill-timeout 10000 -- start   # next start on port 3000
+pm2 save && pm2 startup                   # restart on reboot (run the command it prints)
 ```
 
 **Run exactly one instance.** Rate limits are in memory per process, so two instances would double them (known
@@ -107,6 +165,15 @@ sudo apt install -y nginx certbot python3-certbot-nginx
 server {
   server_name app.askcart.example;
   client_max_body_size 1m;
+  # Shopify webhooks (product syncs, redactions) can be larger than the 1 MB default allows.
+  location /api/webhooks {
+    client_max_body_size 5m;
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
+  }
   location / {
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
@@ -129,8 +196,9 @@ sudo certbot --nginx -d app.askcart.example
 ## 5. Point Shopify at it (from your machine, not EC2)
 
 1. In `shopify.app.askcart.toml`, set `application_url = "https://app.askcart.example"` and
-   `redirect_urls = ["https://app.askcart.example/api/auth"]`, plus the App Proxy `url` if the customer-login work is
-   merged.
+   `redirect_urls = ["https://app.askcart.example/api/auth"]`, **and** the `[app_proxy]` `url` (currently
+   `https://example.com/api/proxy`) to `https://app.askcart.example/api/proxy`. Without it signed-in shoppers can't
+   continue their chat on the website.
 2. `npm run build:widget`, then `shopify app deploy --config shopify.app.askcart.toml`.
 3. Dev Dashboard → **Distribution → Custom** → the merchant's `.myshopify.com` domain → send them the install link.
 
@@ -139,13 +207,18 @@ sudo certbot --nginx -d app.askcart.example
 - `https://app.askcart.example/ucp-agent-profile.json` loads.
 - The merchant installs the app → the AskCart page loads in their admin → the product sync finishes.
 - Connect your website → Turn on chat → Save → the chat answers on the storefront with product cards.
-- Ask "What is your return policy?" → the answer comes from Shopify's MCP.
+- Ask "What is your return policy?" → the answer comes from Shopify's MCP. If every answer says "Assistant
+  unavailable", the model rejected its reasoning setting: set `OPENAI_REASONING_SMALL=low` (see `.env` above).
+- Logged in on the storefront, open the chat: it continues the latest conversation (including one from the app).
 - `pm2 logs askcart` shows no errors.
 
 ## Updating
 
 ```bash
-cd askcart && git pull && npm ci && npm run build:widget && npm run build && npx drizzle-kit migrate && pm2 restart askcart
+cd askcart && git pull && npm ci && npm run build && npx drizzle-kit migrate && pm2 restart askcart
 ```
 
-If the widget changed, also run `shopify app deploy` from your machine.
+If the widget changed, also run `npm run build:widget` and `shopify app deploy` from your machine.
+
+**Deploy off-peak.** A restart in the middle of an answer cuts it off and locks that conversation for about 90 seconds
+(the shopper sees "busy" until the lock expires). `--kill-timeout 10000` lets short answers finish first, not long ones.
