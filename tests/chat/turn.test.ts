@@ -14,6 +14,8 @@ vi.mock("openai", () => ({
 }));
 const search = vi.fn();
 vi.mock("@/lib/retrieval", () => ({ search: (...a: unknown[]) => search(...a) }));
+const mcpSearch = vi.fn();
+vi.mock("@/lib/shopify/catalog-mcp", () => ({ mcpSearch: (...a: unknown[]) => mcpSearch(...a) }));
 const rewriteQuery = vi.fn();
 vi.mock("@/lib/chat/rewrite", () => ({ rewriteQuery: (...a: unknown[]) => rewriteQuery(...a) }));
 const liveCheck = vi.fn();
@@ -109,6 +111,7 @@ afterAll(async () => {
 beforeEach(() => {
   create.mockReset();
   search.mockReset();
+  mcpSearch.mockReset();
   rewriteQuery.mockReset();
   liveCheck.mockReset();
   rewriteQuery.mockImplementation(async (o: { message: string }) => ({
@@ -211,6 +214,26 @@ test("search gets the rewritten query, 8 hits, the current product as a GID and 
   expect(liveCheck.mock.calls[0][0]).toBe(storeId);
   expect(liveCheck.mock.calls[0][2]).toEqual([gid("1"), gid("2"), gid("9")]);
   expect(liveCheck.mock.calls[0][3]).toMatchObject({ country: "FR", includeGiftCards: true, currency: "EUR" });
+});
+
+test("D89: a store set to the MCP search provider gets its hits from mcpSearch, which reach the live check and the prompt", async () => {
+  vi.stubEnv("UCP_AGENT_PROFILE_URL", "https://example.com/profile.json");
+  await admin`update stores set settings = ${admin.json({ searchProvider: "mcp" })} where id = ${storeId}`;
+  try {
+    mcpSearch.mockResolvedValue([hit("5", "From the catalog MCP")]);
+    liveCheck.mockResolvedValue(liveMap(live("5")));
+    create.mockImplementationOnce(fakeStream(["ok"]));
+    const r = await run({ message: "boards" });
+    const [shop] = await admin`select shop_domain from stores where id = ${storeId}`;
+    expect(mcpSearch).toHaveBeenCalledWith(shop.shop_domain, "boards", 8, expect.objectContaining({ storeId, includeGiftCards: false }));
+    expect(search).not.toHaveBeenCalled();
+    expect(liveCheck.mock.calls[0][2]).toEqual([gid("5")]);
+    expect(JSON.stringify(create.mock.calls[0][0].input)).toContain("From the catalog MCP");
+    expect(r.events.at(-1)?.event).toBe("done");
+  } finally {
+    await admin`update stores set settings = '{}'::jsonb where id = ${storeId}`;
+    vi.unstubAllEnvs();
+  }
 });
 
 test("a marker for a product the live check dropped, or outside the hits, gives no product event (Review Focus 1)", async () => {

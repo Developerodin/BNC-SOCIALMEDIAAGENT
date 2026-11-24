@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { forStore, type Conn } from "@/db/client";
 import { conversations, messages } from "@/db/schema";
-import { search } from "@/lib/retrieval";
+import { searchProducts } from "@/lib/search-provider";
 import { fallbackCards, liveCheck, type FallbackCard, type LiveProduct, type LiveVariant, type Stock } from "@/lib/shopify/live-products";
 import { answer, ChatUnavailable } from "./answer";
 import { applyBudget } from "./budget";
@@ -328,7 +328,8 @@ export async function runTurn(t: {
       storeCurrency: store.currencyCode,
       signal,
     });
-    const found = await search(storeId, rw.query, SEARCH_K, { productId: currentProductId, includeGiftCards: rw.includeGiftCards });
+    // D89: the store's search provider (ours by default, or Shopify's Catalog MCP).
+    const found = await searchProducts(store, rw.query, SEARCH_K, { productId: currentProductId, includeGiftCards: rw.includeGiftCards, signal });
     const ids = [...new Set([...found.map((h) => h.productId), ...(currentProductId ? [currentProductId] : [])])];
     const checked = await checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal });
     // D87: drop products outside the budget and order by price, by the live price (never the index's).

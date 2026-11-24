@@ -161,3 +161,10 @@ test("D86: opts.minScore overrides the threshold", async () => {
   expect(new Set(loose.map((h) => h.productId))).toEqual(new Set([gid("1"), gid("2")]));
   expect(await retrieval.search(a, "waterproof leather hiking boots", 10, { minScore: 0.999 })).toEqual([]);
 });
+
+test("k = 0 with opts.productId returns only that product's chunks (the MCP provider's current-product extras, D89)", async () => {
+  const a = await seeded(dress("1"), boots("2"), bottle("3"));
+  const hits = await retrieval.search(a, "hiking boots", 0, { productId: "3" });
+  expect(hits.length).toBeGreaterThan(0);
+  expect(hits.every((h) => h.productId === gid("3"))).toBe(true);
+});
