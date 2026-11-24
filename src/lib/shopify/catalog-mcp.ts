@@ -93,18 +93,37 @@ async function callSearchCatalog(
   profile: string,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const body = {
-    jsonrpc: "2.0",
-    method: "tools/call",
-    id: 1,
-    params: {
-      name: "search_catalog",
-      arguments: {
-        meta: { "ucp-agent": { profile } },
-        catalog: { query, filters: { available }, pagination: { limit: k } },
-      },
-    },
-  };
+  const args = { meta: { "ucp-agent": { profile } }, catalog: { query, filters: { available }, pagination: { limit: k } } };
+  const { r, sc } = await callUcpTool(shopDomain, "search_catalog", args, signal);
+  if (r?.isError || !Array.isArray(sc?.products)) throw new Error(`tool error: ${JSON.stringify(r).slice(0, 300)}`);
+  const ids = (sc.products as McpProduct[])
+    .map((p) => p.id)
+    .filter((id): id is string => typeof id === "string" && /^gid:\/\/shopify\/Product\/\d+$/.test(id));
+  return [...new Set(ids)];
+}
+
+/**
+ * get_product for one product GID: Shopify's full product detail (the `product` of the reply), or null on any failure
+ * (HTTP, JSON-RPC or tool error, no product in the reply, a timeout of ~3 s, or opts.signal), which is logged. Needs
+ * UCP_AGENT_PROFILE_URL. Never throws. The GID is ours (the chat tool maps a number to it), never shopper text.
+ */
+export async function getProduct(shopDomain: string, productGid: string, opts: { storeId: string; signal?: AbortSignal }): Promise<Record<string, unknown> | null> {
+  try {
+    const profile = process.env.UCP_AGENT_PROFILE_URL;
+    if (!profile) throw new Error("UCP_AGENT_PROFILE_URL is not set");
+    const args = { meta: { "ucp-agent": { profile } }, catalog: { id: productGid } };
+    const { r, sc } = await callUcpTool(shopDomain, "get_product", args, opts.signal);
+    if (r?.isError || !sc?.product || typeof sc.product !== "object") throw new Error(`tool error: ${JSON.stringify(r).slice(0, 300)}`);
+    return sc.product as Record<string, unknown>;
+  } catch (err) {
+    console.warn("catalog mcp get_product failed", { storeId: opts.storeId, error: errorText(err) });
+    return null;
+  }
+}
+
+/** One tools/call on the store's UCP MCP: the raw `result` and its structured payload. Throws on an HTTP, JSON-RPC or network error, or a timeout of ~3 s. */
+async function callUcpTool(shopDomain: string, name: string, args: unknown, signal?: AbortSignal) {
+  const body = { jsonrpc: "2.0", method: "tools/call", id: 1, params: { name, arguments: args } };
   const timeout = AbortSignal.timeout(TIMEOUT_MS);
   const res = await fetch(`https://${shopDomain}/api/ucp/mcp`, {
     method: "POST",
@@ -122,9 +141,5 @@ async function callSearchCatalog(
   if (json.error) throw new Error(`JSON-RPC error: ${JSON.stringify(json.error).slice(0, 300)}`);
   const r = json.result;
   const sc = r?.structuredContent ?? (r?.content?.[0]?.text ? JSON.parse(r.content[0].text) : undefined);
-  if (r?.isError || !Array.isArray(sc?.products)) throw new Error(`tool error: ${JSON.stringify(r).slice(0, 300)}`);
-  const ids = (sc.products as McpProduct[])
-    .map((p) => p.id)
-    .filter((id): id is string => typeof id === "string" && /^gid:\/\/shopify\/Product\/\d+$/.test(id));
-  return [...new Set(ids)];
+  return { r, sc };
 }

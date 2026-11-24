@@ -11,7 +11,7 @@ import { HISTORY_MESSAGES } from "./limits";
 import { maskPII } from "./mask";
 import { buildInput, LARGE_SYSTEM_PROMPT, SYSTEM_PROMPT, type PromptProducts } from "./prompt";
 import { rewriteQuery, type ChatTurn } from "./rewrite";
-import { runTool, TOOL_DEFS, type ToolContext } from "./tools";
+import { runTool, toolDefs, type ToolContext } from "./tools";
 import type { SseEvent } from "./sse";
 import { mintToken, tokenHash, verifyToken } from "./token";
 
@@ -392,7 +392,7 @@ export async function runTurn(t: {
       input,
       // A budget or price-order question has already been filtered and sorted by applyBudget (D87); a second search would
       // bypass that (a $200 boot under "boots under $50"), so it only gets store_policies.
-      tools: { defs: wide ? TOOL_DEFS.filter((d) => d.name !== "search_products") : TOOL_DEFS, run: (toolName, args) => runTool(toolName, args, toolCtx) },
+      tools: { defs: wide ? toolDefs().filter((d) => d.name !== "search_products") : toolDefs(), run: (toolName, args) => runTool(toolName, args, toolCtx) },
       allowed,
       storeId,
       signal,

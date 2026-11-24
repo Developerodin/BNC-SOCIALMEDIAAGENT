@@ -1,6 +1,7 @@
 import type { FunctionTool } from "openai/resources/responses/responses";
 import type { SearchHit } from "@/lib/retrieval";
 import { searchProducts } from "@/lib/search-provider";
+import { getProduct } from "@/lib/shopify/catalog-mcp";
 import { askPolicies, POLICY_TYPES, type PolicyType } from "@/lib/shopify/storefront-mcp";
 import { productBlock, sanitizeData, type PromptProducts } from "./prompt";
 
@@ -51,6 +52,26 @@ export const TOOL_DEFS: FunctionTool[] = [
   },
 ];
 
+// product_details: Shopify's UCP get_product for one product of this turn. Only offered with UCP_AGENT_PROFILE_URL (the
+// request needs the agent profile). When to call it is only in this description: a fuller rule in the system prompt made
+// the live sold-out test worse (see TOOLS_RULE in prompt.ts).
+const PRODUCT_DETAILS_DEF: FunctionTool = {
+  type: "function",
+  name: "product_details",
+  description:
+    "Get the full details of ONE product from <store_data>: its description and specifications, and all its options and variants (sizes, colours, materials). Call it when the shopper asks about a specific product's details that <store_data> doesn't cover, such as whether a size or colour exists or what it is made of. Not for price or stock: those are only in the LIVE lines.",
+  strict: true,
+  parameters: {
+    type: "object",
+    properties: { product: { type: "string", description: "The product's number from <store_data>, for example '2' for #2." } },
+    required: ["product"],
+    additionalProperties: false,
+  },
+};
+
+/** The tools to offer: TOOL_DEFS, plus product_details when the UCP agent profile is configured. */
+export const toolDefs = (): FunctionTool[] => (process.env.UCP_AGENT_PROFILE_URL ? [...TOOL_DEFS, PRODUCT_DETAILS_DEF] : TOOL_DEFS);
+
 export type ToolContext = {
   store: { id: string; shopDomain: string; settings: unknown };
   /** This turn's live-check outcome; new products are added to it. */
@@ -74,6 +95,7 @@ export async function runTool(name: string, rawArgs: string, ctx: ToolContext): 
   } catch {
     return "Invalid arguments.";
   }
+  if (name === "product_details") return data(await productDetails(args.product, ctx));
   const query = typeof args.query === "string" ? args.query.slice(0, 500) : "";
   if (!query.trim()) return "Invalid arguments: query is empty.";
 
@@ -89,6 +111,51 @@ export async function runTool(name: string, rawArgs: string, ctx: ToolContext): 
   if (name === "search_products") return data(await searchMore(query, ctx));
 
   return `Unknown tool: ${name}.`;
+}
+
+/** The product_details text is cut to this many characters (descriptions can be long). */
+const MAX_DETAILS_CHARS = 4000;
+const MAX_DESCRIPTION_CHARS = 2000;
+const MAX_VARIANTS = 40;
+
+const text = (v: unknown): string => (typeof v === "string" ? v.replace(/\s+/g, " ").trim() : "");
+const htmlToText = (html: unknown) =>
+  text(typeof html === "string" ? html.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&") : "");
+const list = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => !!x && typeof x === "object") : []);
+
+/**
+ * product_details: get_product for the product with this number in `allowed` (the model never passes a GID, so it can't
+ * fetch a product outside this turn's <store_data>).
+ * Prices, stock and availability from get_product are deliberately left out: the prompt says prices are never written
+ * and stock comes only from the LIVE lines, and a second source of availability here (real-time, but per variant and
+ * possibly out of step with the turn's live check) would invite the model to quote it. The model gets what the LIVE line
+ * doesn't have: description, options and variant names. Links, images and selling-plan prices are left out too.
+ */
+async function productDetails(arg: unknown, ctx: ToolContext): Promise<string> {
+  const n = typeof arg === "number" ? String(arg) : typeof arg === "string" ? arg.trim().replace(/^#/, "") : "";
+  const id = ctx.allowed.get(n);
+  if (!id) return "Unknown product number: use a number from <store_data>.";
+  const p = await getProduct(ctx.store.shopDomain, id, { storeId: ctx.store.id, signal: ctx.signal });
+  if (!p) return "Product details are unavailable right now. Answer from <store_data> only.";
+
+  const lines = [`#${n} ${text(p.title)}`];
+  const description = htmlToText((p.description as { html?: unknown } | undefined)?.html).slice(0, MAX_DESCRIPTION_CHARS);
+  if (description) lines.push(`Description: ${description}`);
+  for (const o of list(p.options)) {
+    const values = list(o.values).map((v) => text(v.label)).filter(Boolean);
+    if (values.length) lines.push(`Option ${text(o.name)}: ${values.join(", ")}`);
+  }
+  const variants = list(p.variants);
+  for (const v of variants.slice(0, MAX_VARIANTS)) {
+    const opts = list(v.options).map((o) => `${text(o.name)}: ${text(o.label)}`).join(", ");
+    lines.push(`Variant: ${text(v.title)}${opts ? ` (${opts})` : ""}`);
+  }
+  if (variants.length > MAX_VARIANTS) lines.push(`(${variants.length - MAX_VARIANTS} more variants not listed)`);
+  const tags = (Array.isArray(p.tags) ? p.tags : []).map(text).filter(Boolean);
+  if (tags.length) lines.push(`Tags: ${tags.join(", ")}`);
+  lines.push("Price and stock are not given here: they come only from the LIVE lines.");
+  // Sanitize first (it only removes text), then cut.
+  return sanitizeData(lines.join("\n")).slice(0, MAX_DETAILS_CHARS);
 }
 
 /**
