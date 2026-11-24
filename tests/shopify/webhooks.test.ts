@@ -52,12 +52,14 @@ test("a bad HMAC gives 401", async () => {
   expect(res.status).toBe(401);
 });
 
-test("app/uninstalled deactivates the store and leaves no token row", async () => {
+test("app/uninstalled deactivates the store, clears the widget config hash and leaves no token row", async () => {
   const id = await installedStore("u.myshopify.com");
+  await admin`update stores set widget_config_hash = 'h' where id = ${id}`;
   const res = await webhooks.handleWebhook(webhook("app/uninstalled", "u.myshopify.com"));
   expect(res.status).toBe(200);
-  const [s] = await admin`select active from stores where id = ${id}`;
+  const [s] = await admin`select active, widget_config_hash from stores where id = ${id}`;
   expect(s.active).toBe(false);
+  expect(s.widget_config_hash).toBeNull();
   expect(await admin`select store_id from store_tokens where store_id = ${id}`).toHaveLength(0);
 });
 

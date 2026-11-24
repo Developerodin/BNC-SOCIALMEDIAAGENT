@@ -1,7 +1,8 @@
 // Task 21 dev-store check: reads the /api/chat SSE stream from the running app (plain Node, no dependencies).
 //   node scripts/chat-smoke.mjs <baseUrl> <shop> "<question>" [country] [--token <t>]
 //   node scripts/chat-smoke.mjs <baseUrl> <shop> --history --token <t>
-// Prints text as it arrives, one line per product event, then `done` with the token to pass as --token next time.
+// Prints `meta` with the token first, then text as it arrives, one line per product event, then `done` with the token to
+// pass as --token next time.
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -74,7 +75,9 @@ function handle(block) {
   }
   if (!data.length) return;
   const payload = JSON.parse(data.join("\n"));
-  if (event === "text") {
+  if (event === "meta") {
+    console.log(`meta token=${payload.conversationToken}`);
+  } else if (event === "text") {
     firstText ??= Date.now() - started;
     process.stdout.write(payload.delta);
   } else if (event === "product") {

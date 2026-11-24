@@ -96,13 +96,13 @@ export async function rateMessage(storeId: string, token: string, f: Feedback): 
 /**
  * Logs an add-to-cart against the token's conversation. A retried eventId is a no-op (ON CONFLICT DO NOTHING), still ok.
  * A messageId that isn't an assistant message of this conversation is stored as null. The insert is guarded by the
- * conversation existing, in the same statement, so a deleted conversation is a 404 rather than an FK error. A bad or
- * other-store token → 401.
+ * conversation existing, in the same statement, so a deleted conversation is a 404 rather than an FK error; a delete that
+ * commits between that check and the FK check (SQLSTATE 23503) is a 404 too. A bad or other-store token → 401.
  */
 export async function logCartEvent(storeId: string, token: string, e: CartEvent): Promise<{ ok: true } | { ok: false; status: 401 | 404 }> {
   const conversationId = verifyToken(storeId, token);
   if (!conversationId) return { ok: false, status: 401 };
-  return forStore(storeId, async (tx) => {
+  const logged = forStore(storeId, async (tx) => {
     const messageId = e.messageId
       ? sql`(select ${messages.id} from ${messages} where ${messages.id} = ${e.messageId} and ${messages.storeId} = ${storeId}
               and ${messages.conversationId} = ${conversationId} and ${messages.role} = 'assistant')`
@@ -121,4 +121,15 @@ export async function logCartEvent(storeId: string, token: string, e: CartEvent)
       .where(and(eq(conversations.storeId, storeId), eq(conversations.id, conversationId)));
     return conv ? { ok: true as const } : { ok: false as const, status: 404 as const };
   });
+  return logged.catch((err) => {
+    if (pgCode(err) === "23503") return { ok: false as const, status: 404 as const };
+    throw err;
+  });
+}
+
+/** The SQLSTATE of a Postgres error, also when drizzle wraps it (DrizzleQueryError.cause). */
+function pgCode(err: unknown): string | undefined {
+  const e = err as { code?: unknown; cause?: { code?: unknown } } | null;
+  const code = e?.code ?? e?.cause?.code;
+  return typeof code === "string" ? code : undefined;
 }

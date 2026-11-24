@@ -21,8 +21,9 @@ type McpProduct = { id?: unknown };
  * content = the first chunk of our products.content (chunkText), so the prompt gets the same text, at most one chunk's size.
  * score = 1 - i/k, where i is the hit's position in the returned list: a rank, not a similarity, so D86's MIN_SCORE does
  * not apply to it. chunkId = "mcp:" + GID (there is no chunk).
- * Needs UCP_AGENT_PROFILE_URL (a public agent profile URL). On a missing URL, an HTTP, JSON-RPC or tool error, or a
- * timeout (~3 s, or opts.signal), returns [] and logs the error; it never throws.
+ * Needs UCP_AGENT_PROFILE_URL (a public agent profile URL). When one of the two calls fails (an HTTP, JSON-RPC or tool
+ * error, or a timeout of ~3 s, or opts.signal), the other's results are used and the failure is logged; when both fail,
+ * or the URL is missing, returns [] and logs the error. It never throws.
  * The query must already be masked (D41); this sends it to Shopify as is.
  * `// ponytail:` a sold-out product shows only when fewer than k sale-ready products match (after our filter), so an exact
  * name query for a sold-out product can lose it to k in-stock ones. MCP's ranking is keyword-like (D89). Upgrade path:
@@ -40,17 +41,21 @@ export async function mcpSearch(
     console.warn("catalog mcp unavailable", { storeId: opts.storeId, error: "UCP_AGENT_PROFILE_URL is not set" });
     return [];
   }
-  let ids: string[];
-  try {
-    const [ready, soldOut] = await Promise.all([
-      callSearchCatalog(shopDomain, query, k, true, profile, opts.signal),
-      callSearchCatalog(shopDomain, query, k, false, profile, opts.signal),
-    ]);
-    ids = [...new Set([...ready, ...soldOut])];
-  } catch (err) {
-    console.warn("catalog mcp search failed", { storeId: opts.storeId, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) });
+  // One failed call keeps the other's results (sale-ready only, or sold-out only); only both failing gives [].
+  const [ready, soldOut] = await Promise.allSettled([
+    callSearchCatalog(shopDomain, query, k, true, profile, opts.signal),
+    callSearchCatalog(shopDomain, query, k, false, profile, opts.signal),
+  ]);
+  const failed = [ready, soldOut].filter((r) => r.status === "rejected").map((r) => errorText(r.reason));
+  if (failed.length === 2) {
+    console.warn("catalog mcp search failed", { storeId: opts.storeId, error: failed.join("; ") });
     return [];
   }
+  if (failed.length) {
+    const available = ready.status === "rejected";
+    console.warn("catalog mcp search partly failed", { storeId: opts.storeId, available, error: failed[0] });
+  }
+  const ids = [...new Set([...(ready.status === "fulfilled" ? ready.value : []), ...(soldOut.status === "fulfilled" ? soldOut.value : [])])];
   if (!ids.length) return [];
 
   const rows = await forStore(opts.storeId, (tx) =>
@@ -76,6 +81,8 @@ export async function mcpSearch(
       return { chunkId: `mcp:${id}`, source: "product" as const, productId: id, content: chunkText(r.title, r.content)[0], score: 1 - i / k };
     });
 }
+
+const errorText = (err: unknown) => (err instanceof Error ? `${err.name}: ${err.message}` : String(err));
 
 /** The product GIDs search_catalog returns, in its order, de-duplicated. Throws on any failure. */
 async function callSearchCatalog(

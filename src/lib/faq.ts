@@ -6,13 +6,6 @@ import { faqs } from "@/db/schema";
 
 export const FAQ_LIMIT = 20;
 
-/** A numeric product id or a Product GID becomes a GID; anything else is null. (Same rule as chat/turn.ts's private helper.) */
-export function faqProductGid(raw: string | null): string | null {
-  if (!raw) return null;
-  if (/^\d+$/.test(raw)) return `gid://shopify/Product/${raw}`;
-  return /^gid:\/\/shopify\/Product\/\d+$/.test(raw) ? raw : null;
-}
-
 /** The product's FAQ in `position` order, at most 20 (served by faqs_store_product_position_idx). */
 export function productFaqs(storeId: string, productGid: string): Promise<{ question: string; answer: string }[]> {
   return forStore(storeId, (tx) =>

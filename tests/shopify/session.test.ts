@@ -4,6 +4,12 @@ import { createHmac } from "node:crypto";
 
 // The widget config write has its own tests (tests/widget-config.test.ts); here it only must be called.
 vi.mock("@/lib/widget-config", () => ({ syncWidgetConfig: vi.fn(async () => {}) }));
+// /api/app/me runs the sync in after(): collect the callbacks so a test can run them once the response is back.
+const afterCallbacks = vi.hoisted((): (() => unknown)[] => []);
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/server")>()),
+  after: (cb: () => unknown) => void afterCallbacks.push(cb),
+}));
 
 let admin: ReturnType<typeof postgres>;
 let session: typeof import("@/lib/shopify/session");
@@ -57,6 +63,7 @@ const mockShopName = (impl: () => Promise<unknown>) =>
 
 beforeEach(async () => {
   vi.restoreAllMocks();
+  afterCallbacks.length = 0;
   await admin`truncate accounts, stores, store_tokens cascade`;
 });
 
@@ -109,9 +116,12 @@ test("/api/app/me fetches a missing shop name, and retries on a later load after
   await GET(req(auth));
   expect(fetchName).toHaveBeenCalledTimes(1);
 
-  // Every load syncs the widget config (Task 24), even the one whose name fetch failed.
+  // Every load syncs the widget config (Task 24), even the one whose name fetch failed, but only after the response.
   const { syncWidgetConfig } = await import("@/lib/widget-config");
   const [s] = await admin`select id from stores`;
+  expect(syncWidgetConfig).not.toHaveBeenCalled();
+  expect(afterCallbacks).toHaveLength(3);
+  await Promise.all(afterCallbacks.splice(0).map((cb) => cb()));
   expect(syncWidgetConfig).toHaveBeenCalledTimes(3);
   expect(syncWidgetConfig).toHaveBeenLastCalledWith(s.id, "a.myshopify.com");
 });

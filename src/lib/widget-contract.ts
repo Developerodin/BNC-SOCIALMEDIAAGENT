@@ -33,6 +33,12 @@ export type PageContext = {
 /** The SSE `product` payload. */
 export type Card = import("./chat/turn").Card;
 
+/**
+ * The SSE `meta` payload: the first event of every POST /api/chat stream (new, continued or replayed turn), sent before
+ * any text, so the widget has the token even when the stream ends without `done` or `error` (an abort, a dropped connection).
+ */
+export type MetaEvent = { conversationToken: string };
+
 export type DoneEvent = { conversationToken: string; messageId: string | null }; // messageId added in Task 22
 
 export type HistoryItem = {

@@ -1,5 +1,6 @@
 import { preflight, storeFor } from "@/lib/chat/cors";
-import { faqProductGid, productFaqs } from "@/lib/faq";
+import { productFaqs } from "@/lib/faq";
+import { productGid } from "@/lib/ids";
 
 // GET /api/faq?shop=…&product=<numeric id or GID> (Task 28, D32, D7): public, CORS like chat, one product's FAQ.
 // Caching: with cacheComponents a GET handler is prerendered only when it touches no request data; this one reads
@@ -16,7 +17,7 @@ export async function GET(req: Request) {
   const found = await storeFor(req, params.get("shop"));
   if (found instanceof Response) return found;
 
-  const product = faqProductGid(params.get("product"));
+  const product = productGid(params.get("product"));
   if (!product) return Response.json({ error: "invalid_product" }, { status: 400, headers: { ...found.cors, "Cache-Control": "no-store" } });
 
   const items = await productFaqs(found.store.id, product);

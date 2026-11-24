@@ -27,10 +27,12 @@ test("two simultaneous first loads create one store and one account", async () =
 
 test("reinstall reactivates the store and keeps its ids", async () => {
   const first = await stores.upsertStore("b.myshopify.com");
-  await admin`update stores set active = false where id = ${first.storeId}`;
+  await admin`update stores set active = false, widget_config_hash = 'stale' where id = ${first.storeId}`;
   const again = await stores.upsertStore("b.myshopify.com");
   expect(again).toEqual({ storeId: first.storeId, accountId: first.accountId, created: false });
-  const [row] = await admin`select active from stores where id = ${first.storeId}`;
+  const [row] = await admin`select active, widget_config_hash from stores where id = ${first.storeId}`;
   expect(row.active).toBe(true);
+  // The uninstall deleted the metafield, so the next syncWidgetConfig must write it again.
+  expect(row.widget_config_hash).toBeNull();
   expect(await admin`select id from accounts`).toHaveLength(2);
 });

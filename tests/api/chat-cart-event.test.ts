@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import postgres from "postgres";
 import { randomUUID } from "node:crypto";
 import { newStore } from "../helpers/seed";
@@ -133,6 +133,24 @@ test("a deleted conversation → 404, not 500", async () => {
   await admin`delete from conversations where id = ${c.id}`;
   const e = event();
   expect((await post(shopA, c.token, e)).status).toBe(404);
+  expect((await rows(e.eventId)).length).toBe(0);
+});
+
+test("a conversation deleted while the event is logged (the FK check fails, 23503) → 404, not 500", async () => {
+  const c = await conversation(storeA);
+  const e = event();
+  let res: Response | undefined;
+  // The delete is not committed yet, so the insert's `where exists` still sees the conversation; its FK check then
+  // waits for the delete and fails once it commits.
+  await admin.begin(async (tx) => {
+    await tx`delete from conversations where id = ${c.id}`;
+    const pending = post(shopA, c.token, e).then((r) => (res = r));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(res).toBeUndefined(); // blocked on the delete's row lock
+    void pending;
+  });
+  await vi.waitFor(() => expect(res).toBeDefined());
+  expect(res!.status).toBe(404);
   expect((await rows(e.eventId)).length).toBe(0);
 });
 

@@ -1,4 +1,5 @@
 import { search, type SearchHit } from "@/lib/retrieval";
+import { productGid } from "@/lib/ids";
 import { mcpSearch } from "@/lib/shopify/catalog-mcp";
 
 // D89: the per-store product search provider, stores.settings.searchProvider.
@@ -49,9 +50,4 @@ export async function searchProducts(
   // in parallel with MCP (one embedding call). They are skipped when MCP already returned that product.
   const [fromMcp, extra] = await Promise.all([mcp(), opts.productId ? search(store.id, query, 0, ourOpts) : Promise.resolve([])]);
   return [...fromMcp, ...extra.filter((h) => !fromMcp.some((m) => m.productId === h.productId))];
-}
-
-/** A numeric id or a Product GID becomes a GID, as search() reads opts.productId. */
-function productGid(raw: string | undefined): string | undefined {
-  return raw && /^\d+$/.test(raw) ? `gid://shopify/Product/${raw}` : raw;
 }

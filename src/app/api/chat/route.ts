@@ -34,11 +34,14 @@ export async function POST(req: Request) {
 
   const opened = await openTurn(store, { token: conversationToken ?? undefined, message, pageUrl, requestId: typeof requestId === "string" ? requestId : undefined });
   if (!opened.ok) return fail(OPEN_ERRORS[opened.status], opened.status);
+  // Every stream starts with `meta` (MetaEvent): the token is known before any text, for new, continued and replayed turns.
+  const meta = sseEvent("meta", { conversationToken: opened.token });
   if (opened.replay) {
     // A retry of a message already answered: the saved answer again, as the same events, with no OpenAI or Shopify call.
     // `done` names the original answer row (Task 22), so thumbs given before the retry still apply.
     const { id, content, cards } = opened.replay;
     const events = [
+      meta,
       ...(content ? [sseEvent("text", { delta: content })] : []),
       ...cards.map((c) => sseEvent("product", c)),
       sseEvent("done", { conversationToken: opened.token, messageId: id }),
@@ -65,6 +68,7 @@ export async function POST(req: Request) {
           closed = true;
         }
       };
+      write(meta);
       const ping = setInterval(() => write(PING), PING_MS);
       // Not awaited: start() must return so the response can begin streaming.
       void runTurn({

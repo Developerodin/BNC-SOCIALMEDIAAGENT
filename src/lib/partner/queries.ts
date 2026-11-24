@@ -22,6 +22,11 @@ const PRODUCTS_PER_CALL = 10;
 const VARIANTS_PER_CALL = 50;
 const MORE_VARIANTS_PER_CALL = 250;
 const SIXTY_DAYS_MS = 60 * 86_400_000;
+// A backfill counts as reaching past the window only when createdFrom is more than 61 days back: createdFrom is a date in
+// the shop's time zone (up to UTC±14h) read here as UTC midnight, so "60 days ago" must not be refused.
+// ponytail: a createdFrom 60–61 days back can lose up to a day of its oldest orders silently. Upgrade path: compare
+// against the shop's ianaTimezone.
+const BACKFILL_MARGIN_MS = 61 * 86_400_000;
 
 export type Money = { amount: string; currencyCode: string };
 export type Page<T> = { items: T[]; nextCursor: string | null; complete: boolean; rateLimited?: boolean };
@@ -147,7 +152,7 @@ export async function fetchOrders(
     filter.mode === "incremental"
       ? [`updated_at:>='${filter.updatedSince}'`, "UPDATED_AT"]
       : [`created_at:>='${filter.createdFrom}' created_at:<'${nextDay(filter.createdTo)}'`, "CREATED_AT"];
-  const reachesPastWindow = filter.mode === "backfill" && Date.parse(`${filter.createdFrom}T00:00:00Z`) < now - SIXTY_DAYS_MS;
+  const reachesPastWindow = filter.mode === "backfill" && Date.parse(`${filter.createdFrom}T00:00:00Z`) < now - BACKFILL_MARGIN_MS;
   let allOrders: boolean | undefined;
 
   const page = await walk(cursor, async (after) => {

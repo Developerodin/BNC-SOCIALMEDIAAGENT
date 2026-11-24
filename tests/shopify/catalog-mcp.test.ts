@@ -108,16 +108,33 @@ test("another store's products are never returned", async () => {
   expect(await mcp.mcpSearch("shop.myshopify.com", "board", 8, { storeId: other })).toEqual([]);
 });
 
-test("an HTTP error, a JSON-RPC error, a tool error or a network error (on either call) gives [] and logs the exact error", async () => {
-  const cases: [() => Promise<Response> | Response, string][] = [
-    [() => new Response("nope", { status: 500 }), "HTTP 500: nope"],
-    [() => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32602, message: "bad args" } })), "bad args"],
-    [() => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [] } })), "tool error"],
-    [() => Promise.reject(new TypeError("fetch failed")), "TypeError: fetch failed"],
-  ];
-  for (const [res, msg] of cases) {
+const failures: [() => Promise<Response> | Response, string][] = [
+  [() => new Response("nope", { status: 500 }), "HTTP 500: nope"],
+  [() => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32602, message: "bad args" } })), "bad args"],
+  [() => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [] } })), "tool error"],
+  [() => Promise.reject(new TypeError("fetch failed")), "TypeError: fetch failed"],
+];
+
+test("an HTTP error, a JSON-RPC error, a tool error or a network error on one call keeps the other call's results and logs the exact error", async () => {
+  for (const [res, msg] of failures) {
+    for (const readyFails of [false, true]) {
+      fetchMock.mockReset();
+      // The available: true call is made first.
+      if (readyFails) fetchMock.mockImplementationOnce(res).mockImplementationOnce(async () => reply(gid("1")));
+      else fetchMock.mockImplementationOnce(async () => reply(gid("5"))).mockImplementationOnce(res);
+      const warn = vi.mocked(console.warn);
+      warn.mockClear();
+      const hits = await mcp.mcpSearch("shop.myshopify.com", "board", 8, { storeId });
+      expect(hits.map((h) => h.productId)).toEqual([readyFails ? gid("1") : gid("5")]);
+      expect(warn).toHaveBeenCalledWith("catalog mcp search partly failed", { storeId, available: readyFails, error: expect.stringContaining(msg) });
+    }
+  }
+});
+
+test("both calls failing gives [] and logs the exact errors", async () => {
+  for (const [res, msg] of failures) {
     fetchMock.mockReset();
-    fetchMock.mockImplementationOnce(async () => reply(gid("1"))).mockImplementationOnce(res);
+    fetchMock.mockImplementation(res);
     const warn = vi.mocked(console.warn);
     warn.mockClear();
     expect(await mcp.mcpSearch("shop.myshopify.com", "board", 8, { storeId })).toEqual([]);

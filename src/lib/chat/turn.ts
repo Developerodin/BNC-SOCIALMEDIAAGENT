@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gt, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { forStore, type Conn } from "@/db/client";
 import { conversations, messages } from "@/db/schema";
+import { productGid } from "@/lib/ids";
 import { searchProducts } from "@/lib/search-provider";
 import { fallbackCards, liveCheck, type FallbackCard, type LiveProduct, type LiveVariant, type Stock } from "@/lib/shopify/live-products";
 import { answer, ChatUnavailable } from "./answer";
@@ -57,13 +58,6 @@ const TURN_LOCK = sql`now() + interval '90 seconds'`;
 export function stockThreshold(settings: unknown): number {
   const n = (settings as { stockThreshold?: unknown } | null)?.stockThreshold;
   return typeof n === "number" && Number.isInteger(n) && n > 0 ? n : DEFAULT_STOCK_THRESHOLD;
-}
-
-/** A numeric id or a Product GID becomes a GID; anything else is ignored. */
-function productGid(raw: string | undefined): string | undefined {
-  if (!raw) return undefined;
-  if (/^\d+$/.test(raw)) return `gid://shopify/Product/${raw}`;
-  return /^gid:\/\/shopify\/Product\/\d+$/.test(raw) ? raw : undefined;
 }
 
 export type OpenedTurn =

@@ -205,7 +205,7 @@ test("a tampered or non-string token → 401", async () => {
 
 // --- conversations ---
 
-test("the first message creates one conversation; done carries a token verifyToken accepts; a second request continues it", async () => {
+test("the first message creates one conversation; meta (first) and done carry a token verifyToken accepts; a second request continues it", async () => {
   const before = await admin`select count(*)::int as n from conversations where store_id = ${storeA}`;
   const res = await post({ shop: shopA, message: "first", pageUrl: "https://shop-a.example.com/products/x" });
   expect(res.status).toBe(200);
@@ -214,8 +214,10 @@ test("the first message creates one conversation; done carries a token verifyTok
   expect(res.headers.get("x-accel-buffering")).toBe("no");
   expect(res.headers.get("access-control-allow-origin")).toBe(ORIGIN);
   const events = await readAll(res);
-  expect(events.map((e) => e.event)).toEqual(["text", "text", "done"]);
+  expect(events.map((e) => e.event)).toEqual(["meta", "text", "text", "done"]);
   const tok = events.at(-1)!.data.conversationToken as string;
+  // MetaEvent: the token comes first, before any text.
+  expect(events[0]).toEqual({ event: "meta", data: { conversationToken: tok } });
   const conversationId = token.verifyToken(storeA, tok);
   expect(conversationId).not.toBeNull();
   const after = await admin`select count(*)::int as n from conversations where store_id = ${storeA}`;
@@ -225,6 +227,7 @@ test("the first message creates one conversation; done carries a token verifyTok
 
   const res2 = await post({ shop: shopA, message: "second", conversationToken: tok });
   const events2 = await readAll(res2);
+  expect(events2[0]).toEqual({ event: "meta", data: { conversationToken: tok } });
   expect(events2.at(-1)).toEqual({ event: "done", data: { conversationToken: tok, messageId: await lastAssistantId(conversationId) } });
   expect(events.at(-1)!.data.messageId).toEqual(expect.any(String));
   expect(events.at(-1)!.data.messageId).not.toBe(events2.at(-1)!.data.messageId);
@@ -330,6 +333,20 @@ async function newConversation() {
   return events.at(-1)!.data.conversationToken as string;
 }
 
+test("meta reaches the client while the turn is still running, before any text, so an aborted stream still has the token", async () => {
+  const open = gateNextTurn();
+  const res = await post({ shop: shopA, message: "new conversation" });
+  const reader = res.body!.getReader();
+  const { value } = await reader.read();
+  const [first] = parseSse(new TextDecoder().decode(value));
+  expect(first.event).toBe("meta");
+  expect(token.verifyToken(storeA, first.data.conversationToken as string)).not.toBeNull();
+  open();
+  let rest = "";
+  for (let r = await reader.read(); !r.done; r = await reader.read()) rest += new TextDecoder().decode(r.value);
+  expect(parseSse(rest).at(-1)!.data.conversationToken).toBe(first.data.conversationToken);
+});
+
 test("a second POST while the conversation's turn runs → 409 turn_in_progress with CORS headers and no calls; the first finishes", async () => {
   const tok = await newConversation();
   const open = gateNextTurn();
@@ -360,7 +377,7 @@ test("a second POST while the conversation's turn runs → 409 turn_in_progress 
 test("the lock is released after an error, so the shopper can send again", async () => {
   const tok = await newConversation();
   create.mockImplementationOnce(fakeStream([{ error: Object.assign(new Error("HTTP 400"), { status: 400 }) }]));
-  expect((await readAll(await post({ shop: shopA, message: "fails", conversationToken: tok }))).map((e) => e.event)).toEqual(["error"]);
+  expect((await readAll(await post({ shop: shopA, message: "fails", conversationToken: tok }))).map((e) => e.event)).toEqual(["meta", "error"]);
   const res = await post({ shop: shopA, message: "again", conversationToken: tok });
   expect(res.status).toBe(200);
   await res.text();
@@ -376,14 +393,14 @@ test("an invalid requestId → 400 invalid_request_id with CORS headers, and not
   noCalls();
 });
 
-test("a repeated requestId after done replays the saved answer as SSE (text, products, done) without calling OpenAI", async () => {
+test("a repeated requestId after done replays the saved answer as SSE (meta, text, products, done) without calling OpenAI", async () => {
   const tok = await newConversation();
   const requestId = crypto.randomUUID();
   search.mockResolvedValueOnce([{ chunkId: "c", source: "product", productId: gid("1"), content: "x", score: 1 }]);
   liveCheck.mockResolvedValueOnce({ ok: true, products: new Map([[gid("1"), live("1")]]) });
   create.mockImplementation(fakeStream(["Here ", "you go: ", "[[product:1]]"]));
   const firstEvents = await readAll(await post({ shop: shopA, message: "tee?", conversationToken: tok, requestId }));
-  expect(firstEvents.map((e) => e.event)).toEqual(["text", "text", "product", "done"]);
+  expect(firstEvents.map((e) => e.event)).toEqual(["meta", "text", "text", "product", "done"]);
   clearMocks();
 
   const res = await post({ shop: shopA, message: "tee?", conversationToken: tok, requestId });
@@ -392,12 +409,13 @@ test("a repeated requestId after done replays the saved answer as SSE (text, pro
   expect(res.headers.get("access-control-allow-origin")).toBe(ORIGIN);
   const events = await readAll(res);
   expect(events).toEqual([
+    { event: "meta", data: { conversationToken: tok } },
     { event: "text", data: { delta: "Here you go: " } },
-    { event: "product", data: firstEvents[2].data },
-    { event: "done", data: { conversationToken: tok, messageId: firstEvents[3].data.messageId } },
+    { event: "product", data: firstEvents[3].data },
+    { event: "done", data: { conversationToken: tok, messageId: firstEvents[4].data.messageId } },
   ]);
   // The replay names the original answer row, so thumbs given to the first stream apply to the replayed one too.
-  expect(firstEvents[3].data.messageId).toBe(await lastAssistantId(token.verifyToken(storeA, tok)));
+  expect(firstEvents[4].data.messageId).toBe(await lastAssistantId(token.verifyToken(storeA, tok)));
   noCalls();
   const rows = await admin`select role from messages where request_id = ${requestId} or (role = 'assistant' and content = 'Here you go: ')`;
   expect(rows.map((r) => r.role).sort()).toEqual(["assistant", "user"]);
@@ -423,10 +441,10 @@ test("a repeated requestId after an error is answered again, without a second us
   const requestId = crypto.randomUUID();
   create.mockImplementationOnce(fakeStream([{ error: Object.assign(new Error("HTTP 400"), { status: 400 }) }]));
   const failed = await readAll(await post({ shop: shopA, message: "retry me", conversationToken: tok, requestId }));
-  expect(failed.map((e) => e.event)).toEqual(["error"]);
+  expect(failed.map((e) => e.event)).toEqual(["meta", "error"]);
 
   const retried = await readAll(await post({ shop: shopA, message: "retry me", conversationToken: tok, requestId }));
-  expect(retried.map((e) => e.event)).toEqual(["text", "text", "done"]);
+  expect(retried.map((e) => e.event)).toEqual(["meta", "text", "text", "done"]);
   const conversationId = token.verifyToken(storeA, tok);
   const msgs = await admin`select role, content from messages where conversation_id = ${conversationId} order by created_at`;
   expect(msgs).toEqual([
@@ -442,6 +460,6 @@ test("a product marker streams a product event between the text and done, as val
   liveCheck.mockResolvedValueOnce({ ok: true, products: new Map([[gid("1"), live("1")]]) });
   create.mockImplementation(fakeStream(["Here: ", "[[prod", "uct:1]]"]));
   const events = await readAll(await post({ shop: shopA, message: "tee?" }));
-  expect(events.map((e) => e.event)).toEqual(["text", "product", "done"]);
-  expect(events[1].data).toMatchObject({ id: gid("1"), price: "10.00", currency: "EUR", action: "add" });
+  expect(events.map((e) => e.event)).toEqual(["meta", "text", "product", "done"]);
+  expect(events[2].data).toMatchObject({ id: gid("1"), price: "10.00", currency: "EUR", action: "add" });
 });

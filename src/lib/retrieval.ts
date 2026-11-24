@@ -2,6 +2,7 @@ import { and, asc, cosineDistance, eq, notInArray, sql } from "drizzle-orm";
 import { forStore } from "@/db/client";
 import { chunks, products } from "@/db/schema";
 import { embed } from "@/lib/embeddings";
+import { productGid } from "@/lib/ids";
 
 export type SearchHit = { chunkId: string; source: "product"; productId: string; content: string; score: number };
 
@@ -38,7 +39,7 @@ export async function search(
   const {
     vectors: [q],
   } = await embed([query]);
-  const productId = opts.productId && /^\d+$/.test(opts.productId) ? `gid://shopify/Product/${opts.productId}` : opts.productId;
+  const productId = productGid(opts.productId);
 
   const distance = cosineDistance(chunks.embedding, q);
   const cols = {

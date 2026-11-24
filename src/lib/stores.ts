@@ -20,7 +20,8 @@ export function upsertStore(
     await tx.delete(accounts).where(eq(accounts.id, account.id));
     const [existing] = await tx
       .update(stores)
-      .set({ active: true })
+      // Shopify deletes app-owned metafields on uninstall, so the widget config must be written again (syncWidgetConfig).
+      .set({ active: true, widgetConfigHash: null })
       .where(eq(stores.shopDomain, shopDomain))
       .returning({ id: stores.id, accountId: stores.accountId });
     return { storeId: existing.id, accountId: existing.accountId, created: false };

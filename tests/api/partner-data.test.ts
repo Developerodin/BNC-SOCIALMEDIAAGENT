@@ -137,6 +137,14 @@ test("a backfill reaching past 60 days without read_all_orders is 403 with a rea
   expect((await orders.GET(get("orders?createdFrom=2020-01-01&createdTo=2026-11-01"))).status).toBe(200);
 });
 
+test("the 60-day boundary has a day's margin for the shop's time zone: 60 days back is read, 62 days back is 403", async () => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+  const today = daysAgo(0);
+  adminGraphql.mockResolvedValue(ordersData([orderNode(1)], false, null, ["read_orders"]));
+  expect((await orders.GET(get(`orders?createdFrom=${daysAgo(60)}&createdTo=${today}`))).status).toBe(200);
+  expect((await orders.GET(get(`orders?createdFrom=${daysAgo(62)}&createdTo=${today}`))).status).toBe(403);
+});
+
 test("an incremental read without read_all_orders carries a warning, since older orders are left out", async () => {
   adminGraphql.mockResolvedValueOnce(ordersData([orderNode(1)], false, null, ["read_orders"]));
   const body = await (await orders.GET(get("orders?updatedSince=2026-11-01T00:00:00Z"))).json();

@@ -12,9 +12,10 @@ type Handler = (shopDomain: string, tx: Conn, payload: any) => Promise<void>;
 export const handlers: Record<string, Handler> = {
   async APP_UNINSTALLED(shopDomain, tx) {
     // Reset the sync too: polls fail without tokens, and a reinstall must start a fresh sync instead of polling a dead one.
+    // Shopify deletes the app-owned widget metafield on uninstall: clearing the hash makes the next app load rewrite it.
     const [s] = await tx
       .update(stores)
-      .set({ active: false, syncStatus: "idle", bulkOperationId: null })
+      .set({ active: false, syncStatus: "idle", bulkOperationId: null, widgetConfigHash: null })
       .where(eq(stores.shopDomain, shopDomain))
       .returning({ id: stores.id });
     if (!s) return;
