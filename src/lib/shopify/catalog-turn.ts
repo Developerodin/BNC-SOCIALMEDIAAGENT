@@ -27,7 +27,7 @@ export const CATALOG_DEGRADED =
  * `degraded` = the latest search got no answer from Shopify at all (breaker open, budget spent, errors).
  */
 export type TurnCatalog = {
-  store: { id: string; shopDomain: string; currencyCode: string | null };
+  store: { id: string; shopDomain: string; currencyCode: string | null; domains?: string[] };
   country?: string;
   products: Map<string, Obj>;
   spentMs: number;
@@ -48,12 +48,19 @@ async function timed<T>(cat: TurnCatalog, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/** How toLiveProduct is told to treat this store: its currency (a product in another one is never shown) and its hosts (card links). */
+const liveOpts = (cat: TurnCatalog, includeGiftCards: boolean) => ({
+  includeGiftCards,
+  currency: cat.store.currencyCode ?? undefined,
+  shop: { domain: cat.store.shopDomain, hosts: cat.store.domains ?? [] },
+});
+
 /**
- * One UCP catalog tool call: its `products`, or null (never throws) when the breaker is open, the budget is spent, or the
- * call failed. Always sends context.currency (and the country when known) so prices come in the store's currency.
+ * One UCP catalog tool call: the reply's `key` (`products` for search and lookup, `product` for get_product), or null
+ * (never throws) when the breaker is open, the budget is spent, or the call failed. Always sends context.currency (and the country when known) so prices come in the store's currency.
  * Logs tool, status kind, ms and retryAfter; never the query, the ids or anything from the reply.
  */
-async function catalogCall(cat: TurnCatalog, tool: string, args: Obj, signal?: AbortSignal): Promise<Obj[] | null> {
+async function catalogCall(cat: TurnCatalog, tool: string, args: Obj, signal?: AbortSignal, key: "products" | "product" = "products"): Promise<unknown> {
   const log = (status: string, ms: number, retryAfter?: number) =>
     console.info("ucp call", { storeId: cat.store.id, tool, status, ms, ...(retryAfter ? { retryAfter } : {}) });
   const profile = process.env.UCP_AGENT_PROFILE_URL;
@@ -73,22 +80,27 @@ async function catalogCall(cat: TurnCatalog, tool: string, args: Obj, signal?: A
   }
   const context = { ...(cat.store.currencyCode ? { currency: cat.store.currencyCode } : {}), ...(cat.country ? { address_country: cat.country } : {}) };
   const start = Date.now();
+  const timeoutMs = Math.min(CALL_TIMEOUT_MS, left);
   try {
-    const { sc } = await callUcpTool(shop, tool, { meta: { "ucp-agent": { profile } }, catalog: { ...args, context } }, signal, Math.min(CALL_TIMEOUT_MS, left));
-    if (!Array.isArray(sc?.products)) throw new Error("tool error: no products");
+    const { sc } = await callUcpTool(shop, tool, { meta: { "ucp-agent": { profile } }, catalog: { ...args, context } }, signal, timeoutMs);
+    const got = sc?.[key];
+    if (key === "products" ? !Array.isArray(got) : !got || typeof got !== "object") throw new Error(`tool error: no ${key}`);
     recordUcp(shop, { kind: "ok" });
     log("ok", Date.now() - start);
-    return objs(sc.products);
+    return key === "products" ? objs(got) : got;
   } catch (err) {
     const ms = Date.now() - start;
+    const timedOut = err instanceof Error && /Timeout|Abort/.test(err.name);
     if (signal?.aborted) {
       log("aborted", ms); // the shopper left: says nothing about Shopify's health
+    } else if (timedOut && timeoutMs < CALL_TIMEOUT_MS) {
+      log("budget_timeout", ms); // our turn's budget cut this call short, not a slow Shopify: no breaker failure
     } else if (err instanceof McpHttpError && err.status === 429) {
       recordUcp(shop, { kind: "rate_limited", retryAfter: err.retryAfter });
       log("rate_limited", ms, err.retryAfter);
     } else {
       recordUcp(shop, { kind: "failure" });
-      log(err instanceof McpHttpError ? "http" : err instanceof Error && /Timeout|Abort/.test(err.name) ? "timeout" : "error", ms);
+      log(err instanceof McpHttpError ? "http" : timedOut ? "timeout" : "error", ms);
     }
     return null;
   }
@@ -125,13 +137,13 @@ export async function catalogSearch(
 ): Promise<{ hits: SearchHit[]; status: "ok" | "degraded" }> {
   if (!query.trim() || k < 1) return { hits: [], status: "ok" };
   const call = (available: boolean) => catalogCall(cat, "search_catalog", { query, filters: { available }, pagination: { limit: k } }, opts.signal);
-  const [ready, soldOut] = await timed(cat, () => Promise.all([call(true), call(false)]));
+  const [ready, soldOut] = (await timed(cat, () => Promise.all([call(true), call(false)]))) as (Obj[] | null)[];
   cat.degraded = ready === null && soldOut === null;
   if (cat.degraded) return { hits: [], status: "degraded" };
   const found = [...(ready ?? []), ...(soldOut ?? [])];
   remember(cat, found);
   const ids = [...new Set(found.map((p) => p.id).filter((id): id is string => typeof id === "string" && cat.products.has(id)))].filter((id) =>
-    toLiveProduct(cat.products.get(id), { includeGiftCards: !!opts.includeGiftCards }),
+    toLiveProduct(cat.products.get(id), liveOpts(cat, !!opts.includeGiftCards)),
   );
   const hits = ids.slice(0, k).map((id, i) => {
     const p = cat.products.get(id)!;
@@ -149,16 +161,27 @@ export async function catalogSearch(
  */
 export async function catalogLive(cat: TurnCatalog, ids: string[], opts: { includeGiftCards: boolean; signal?: AbortSignal }): Promise<Map<string, LiveProduct>> {
   const missing = [...new Set(ids)].filter((id) => !cat.products.has(id));
-  const calls: Promise<Obj[] | null>[] = [];
+  const calls: Promise<unknown>[] = [];
   for (let i = 0; i < missing.length; i += LOOKUP_IDS) {
     const batch = missing.slice(i, i + LOOKUP_IDS);
     for (const available of [true, false]) calls.push(catalogCall(cat, "lookup_catalog", { ids: batch, filters: { available } }, opts.signal));
   }
-  if (calls.length) for (const r of await timed(cat, () => Promise.all(calls))) if (r) remember(cat, r);
+  if (calls.length) for (const r of await timed(cat, () => Promise.all(calls))) if (r) remember(cat, r as Obj[]);
   const out = new Map<string, LiveProduct>();
   for (const id of ids) {
-    const live = cat.products.has(id) ? toLiveProduct(cat.products.get(id), { includeGiftCards: opts.includeGiftCards }) : null;
+    const live = cat.products.has(id) ? toLiveProduct(cat.products.get(id), liveOpts(cat, opts.includeGiftCards)) : null;
     if (live) out.set(id, live);
   }
   return out;
+}
+
+/**
+ * get_product for the product_details tool in an mcp store, through the same breaker, time budget and logging as the
+ * search: the full product (sale-ready and sold-out variants merged, like getProduct), or null on any failure.
+ * The GID is ours (the tool maps a number from this turn's <store_data>), never shopper text.
+ */
+export async function catalogProduct(cat: TurnCatalog, productGid: string, signal?: AbortSignal): Promise<Obj | null> {
+  const call = (available: boolean) => catalogCall(cat, "get_product", { id: productGid, filters: { available } }, signal, "product");
+  const parts = (await timed(cat, () => Promise.all([call(true), call(false)]))).filter((p): p is Obj => !!p);
+  return parts.length ? mergeProducts(parts) : null;
 }

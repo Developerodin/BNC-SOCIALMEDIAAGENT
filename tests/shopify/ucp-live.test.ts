@@ -118,3 +118,18 @@ test("variants in a different currency than the first are dropped (one currency 
   const p = live(ucpProduct(1, { variants: [ucpVariant(11), ucpVariant(12, { price: money(900, "EUR") })] }))!;
   expect(p.variants.map((v) => v.id)).toEqual(["11"]);
 });
+
+test("currency option: a product in another currency than the store's is refused", () => {
+  const gbp = ucpProduct(1, { variants: [ucpVariant(11, { price: money(3000, "GBP") })] });
+  expect(toLiveProduct(gbp, { includeGiftCards: false, currency: "USD" })).toBeNull();
+  expect(toLiveProduct(gbp, { includeGiftCards: false, currency: "GBP" })!.currency).toBe("GBP");
+});
+
+test("url option: off-store hosts are rebuilt from a plain handle, or the product is dropped without one", () => {
+  const shop = { domain: "a.myshopify.com", hosts: ["www.brand.com"] };
+  const o = { includeGiftCards: false, shop };
+  expect(toLiveProduct(ucpProduct(1, { url: "https://www.brand.com/products/x" }), o)!.url).toBe("https://www.brand.com/products/x");
+  expect(toLiveProduct(ucpProduct(1, { url: "https://evil.example/p" }), o)!.url).toBe("https://a.myshopify.com/products/h1");
+  expect(toLiveProduct({ ...ucpProduct(1, { url: "https://evil.example/p" }), handle: "../x?y" }, o)).toBeNull();
+  expect(toLiveProduct({ ...ucpProduct(1, { url: "https://evil.example/p" }), handle: undefined }, o)).toBeNull();
+});

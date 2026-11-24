@@ -1,0 +1,1 @@
+CREATE INDEX "messages_store_created_idx" ON "messages" USING btree ("store_id","created_at");

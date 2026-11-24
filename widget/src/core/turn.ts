@@ -4,7 +4,7 @@
 //     bubble before the retried stream's first event,
 //   - 409 (a turn is running): wait 2 s and retry, up to 30 s in total, then `busy`,
 //   - 401/404 with a token: `reset` (the UI drops the token) and resend once without a token,
-//   - 413: `too_long`; an `error` event: `unavailable` with the token it carries; anything else: `unavailable`.
+//   - 413: `too_long`; an `error` event: `unavailable` with the token it carries (`capped` for code daily_cap); anything else: `unavailable`.
 // The server's first event is `meta` { conversationToken } (D84): passed on at once, so a Delete chat during the very
 // first answer knows which conversation to delete.
 import type { Card, WidgetApi } from "../../../src/lib/widget-contract";
@@ -22,6 +22,7 @@ export type TurnOutcome =
   | { kind: "unavailable"; token: string | null }
   | { kind: "busy" }
   | { kind: "too_long" }
+  | { kind: "capped"; token: string | null }
   | { kind: "offline" }
   | { kind: "aborted" };
 
@@ -96,7 +97,9 @@ export async function runSend(
           // messageId arrives with Task 22; a replay or an older server may leave it out.
           return { kind: "done", token: d.conversationToken, messageId: typeof d.messageId === "string" ? d.messageId : null };
         } else if (event === "error") {
-          return { kind: "unavailable", token: typeof d.conversationToken === "string" ? d.conversationToken : token };
+          const t = typeof d.conversationToken === "string" ? d.conversationToken : token;
+          // The store's daily message cap (mcp stores): a rest-until-tomorrow line, not "unavailable" with a Retry.
+          return d.code === "daily_cap" ? { kind: "capped", token: t } : { kind: "unavailable", token: t };
         }
       }
     } catch {

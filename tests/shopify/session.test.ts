@@ -191,3 +191,22 @@ test("/api/app/me refreshes the shop info while the store language is missing, e
   await GET(req(auth));
   expect(fetchInfo).toHaveBeenCalledTimes(1);
 });
+
+test("installing the app on an mcp store flips it to mode 'app' on the same row and queues the first sync", async () => {
+  const [acc] = await admin`insert into accounts default values returning id`;
+  const [mcp] = await admin`insert into stores (account_id, shop_domain, mode, name, settings) values (${acc.id}, 'a.myshopify.com', 'mcp', 'Pilot', ${admin.json({ embedDomains: ["www.brand.com"] } as never)}) returning id`;
+  vi.spyOn(api.shopify.auth, "tokenExchange").mockResolvedValue(exchanged());
+  const { storeId } = await session.authenticateEmbedded(req(`Bearer ${idToken(process.env.SHOPIFY_API_SECRET!)}`));
+  expect(storeId).toBe(mcp.id);
+  const [s] = await admin`select mode, name, settings from stores where id = ${mcp.id}`;
+  expect(s.mode).toBe("app");
+  expect(s.name).toBe("Pilot");
+  expect(s.settings).toEqual({ embedDomains: ["www.brand.com"] });
+  expect(await admin`select id from pgboss.job where name = 'store-sync' and singleton_key = ${mcp.id}`).toHaveLength(1);
+});
+
+test("an installed store stays 'app' through a token exchange", async () => {
+  vi.spyOn(api.shopify.auth, "tokenExchange").mockResolvedValue(exchanged());
+  const { storeId } = await session.authenticateEmbedded(req(`Bearer ${idToken(process.env.SHOPIFY_API_SECRET!)}`));
+  expect((await admin`select mode from stores where id = ${storeId}`)[0].mode).toBe("app");
+});

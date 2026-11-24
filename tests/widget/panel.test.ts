@@ -195,6 +195,15 @@ describe("sending (D81)", () => {
     expect(b.requestId).toBe(a.requestId);
   });
 
+  it("a daily-cap error shows the resting line with no Retry, and keeps the token", async () => {
+    const api = mockApi({ send: vi.fn().mockResolvedValueOnce(sseResponse([ev("error", { code: "daily_cap", conversationToken: "t5" })])) });
+    await setup(api).open();
+    await type("hi");
+    expect(q(".err")!.textContent).toContain("resting until tomorrow");
+    expect(q(".err button")).toBeNull();
+    expect(localStorage.getItem(TOKEN_KEY)).toBe("t5");
+  });
+
   it("unavailable shows a Retry that reuses the requestId and keeps the token from the error event", async () => {
     const api = mockApi({
       send: vi

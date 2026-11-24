@@ -57,6 +57,9 @@ export async function authenticateEmbedded(req: Request): Promise<{ storeId: str
       expiring: true,
     });
     const { storeId } = await upsertStore(shop, lock);
+    // Phase 4 upgrade path: a store that ran MCP-only has now installed the app, so sync, widget config and shop info
+    // resume (the first sync is queued below). Chats, settings and the embed list carry over on the same row.
+    await lock.update(stores).set({ mode: "app" }).where(and(eq(stores.id, storeId), eq(stores.mode, "mcp")));
     await saveTokens(storeId, {
       accessToken: session.accessToken!,
       accessExpiresAt: session.expires ?? null,

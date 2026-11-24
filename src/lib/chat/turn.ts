@@ -31,6 +31,8 @@ export type TurnStore = {
   settings: unknown;
   /** 'mcp' = no install: products come from Shopify's UCP endpoints, not our tables. Missing means 'app'. */
   mode?: "app" | "mcp";
+  /** The store's hosts (stores.domains): an mcp card link must be on one of them. */
+  domains?: string[];
 };
 
 /** The product event (§7.6). A C11 (b) fallback card has null price, stock, currency and availability, and action "none". */
@@ -418,7 +420,8 @@ export async function runTurn(t: {
     if (catalog && (await mcpOverDailyCap(storeId))) {
       await release(storeId, t.conversationId);
       released = true;
-      t.send("error", { message: DAILY_CAP_MESSAGE, conversationToken: t.token });
+      // `code` lets the widget show its translated "resting until tomorrow" line instead of the generic one.
+      t.send("error", { message: DAILY_CAP_MESSAGE, code: "daily_cap", conversationToken: t.token });
       return;
     }
     const rw = await rewriteQuery({

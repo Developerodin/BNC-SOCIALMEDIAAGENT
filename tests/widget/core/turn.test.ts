@@ -106,6 +106,12 @@ describe("runSend", () => {
     expect(events).toEqual([{ kind: "text", delta: "ok" }]);
   });
 
+  it("an error event with code daily_cap is capped (with its token), not unavailable", async () => {
+    fetchMock.mockResolvedValueOnce(sseResponse([ev("error", { message: "m", code: "daily_cap", conversationToken: "tokC" })]));
+    expect(await run()).toEqual({ kind: "capped", token: "tokC" });
+    expect(fetchMock).toHaveBeenCalledTimes(1); // no retry: it would fail the same way
+  });
+
   it("409 for over 30 s gives up with busy", async () => {
     fetchMock.mockImplementation(async () => jsonResponse(409, { error: "turn_in_progress" }));
     expect(await run()).toEqual({ kind: "busy" });

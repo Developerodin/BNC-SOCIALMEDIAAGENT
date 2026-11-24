@@ -4,12 +4,15 @@
 //
 // Usage (from the repo root, with DATABASE_URL and UCP_AGENT_PROFILE_URL set, like scripts/mcp-compare/run.mts):
 //   npx tsx --env-file=.env --tsconfig tsconfig.json scripts/provision-mcp-store.mts <x.myshopify.com> \
-//     [--name "Store name"] [--domain www.brand.com ...] [--currency EUR] [--locale en] [--query shirt]
+//     [--name "Store name"] [--domain www.brand.com ...] [--currency EUR] [--locale en] [--query shirt] \
+//     [--confirm-domain <host>]
 // 1. Fetches https://{shop}/ (redirects followed) and prints the final host, whether our embed tag is on the page
 //    (<script src="{APP_URL}/embed.js">: a manual check, nothing is verified automatically), the page's locale.
 // 2. Asks the store's search_catalog for one product and reads the currency from its price_range (--currency overrides;
 //    --query picks the search words, default "a").
-// 3. Upserts the stores row: mode 'mcp', a new account (on a new row), name, lowercased domains (myshopify + the host the
+//    When the storefront redirects to another host (a custom domain), the script stops and prints it; run again with
+//    --confirm-domain <that host> once you have checked it is the merchant's own. That host is what lands in the allow-list.
+// 3. Upserts the stores row (one transaction): mode 'mcp', a new account (on a new row), name, lowercased domains (myshopify + the host the
 //    page landed on + each --domain), settings.embedDomains = those domains (so the hosted chat page is allowed),
 //    currency_code, primary_locale. Re-running updates the same row.
 // Roll back: set stores.active = false for the row (storeFor then answers 404).
@@ -59,6 +62,9 @@ for (let hop = 0; page && page.status >= 300 && page.status < 400 && page.locati
 }
 clearTimeout(timer);
 if (!page) fail(`could not fetch https://${shop}/ (unreachable, refused, or a non-public address)`);
+if (host !== shop && arg("confirm-domain")[0]?.toLowerCase() !== host) {
+  fail(`https://${shop}/ redirects to ${host}. Check that it is the merchant's own domain, then run again with --confirm-domain ${host}`);
+}
 const body = page!.body;
 const origin = appOrigin();
 console.log(`storefront: https://${host}${path} -> HTTP ${page!.status}`);
@@ -77,10 +83,14 @@ if (!currency) {
 
 // 3. The row.
 const domains = [...new Set([shop, host, ...arg("domain")].map((d) => parseHost(d)).filter((d): d is string => !!d))].slice(0, MAX_EMBED_DOMAINS);
-const { storeId, accountId, created } = await upsertStore(shop);
-await db
-  .update(stores)
-  .set({ mode: "mcp", name: arg("name")[0] ?? shop, domains, primaryLocale: locale, currencyCode: currency, settings: dsql`${stores.settings} || ${JSON.stringify({ embedDomains: domains })}::jsonb`, active: true })
-  .where(eq(stores.id, storeId));
+// One transaction: a crash between the upsert and the update must not leave an active row in mode 'app' with no tokens.
+const { storeId, accountId, created } = await db.transaction(async (tx) => {
+  const r = await upsertStore(shop, tx);
+  await tx
+    .update(stores)
+    .set({ mode: "mcp", name: arg("name")[0] ?? shop, domains, primaryLocale: locale, currencyCode: currency, settings: dsql`${stores.settings} || ${JSON.stringify({ embedDomains: domains })}::jsonb`, active: true })
+    .where(eq(stores.id, r.storeId));
+  return r;
+});
 console.log(`${created ? "created" : "updated"} store ${storeId} (account ${accountId}): mode mcp, currency ${currency}, locale ${locale ?? "-"}, domains ${domains.join(", ")}`);
 await sql.end();

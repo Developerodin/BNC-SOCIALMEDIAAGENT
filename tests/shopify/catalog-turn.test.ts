@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { catalogLive, catalogSearch, newTurnCatalog } from "@/lib/shopify/catalog-turn";
+import { catalogLive, catalogProduct, catalogSearch, newTurnCatalog } from "@/lib/shopify/catalog-turn";
 import { breakerOpen, MCP_BUDGET_MS, recordUcp, resetUcpGuard, ucpGuardSize } from "@/lib/shopify/ucp-guard";
-import { pgid, ucpProduct, ucpReply, ucpVariant } from "../helpers/ucp";
+import { money, pgid, ucpProduct, ucpReply, ucpVariant } from "../helpers/ucp";
 
 // Offline: fetch is stubbed. Payloads are schema-derived (tests/helpers/ucp.ts); re-record in Phase 0.
 const fetchMock = vi.fn();
-const store = (shop = "a.myshopify.com", currencyCode: string | null = "EUR") => ({ id: `id-${shop}`, shopDomain: shop, currencyCode });
+const store = (shop = "a.myshopify.com", currencyCode: string | null = "USD") => ({ id: `id-${shop}`, shopDomain: shop, currencyCode });
 const sent = () => fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).params as { name: string; arguments: { catalog: Record<string, unknown> } });
 const info = vi.spyOn(console, "info");
 
@@ -41,7 +41,7 @@ test("search sends both availability calls with the store currency and country, 
   expect([...cat.products.keys()]).toEqual([pgid(1), pgid(2)]);
   const calls = sent();
   expect(calls.map((c) => c.arguments.catalog.filters)).toEqual([{ available: true }, { available: false }]);
-  for (const c of calls) expect(c.arguments.catalog.context).toEqual({ currency: "EUR", address_country: "DE" });
+  for (const c of calls) expect(c.arguments.catalog.context).toEqual({ currency: "USD", address_country: "DE" });
 });
 
 test("no known currency or country: context is empty rather than invented", async () => {
@@ -160,14 +160,31 @@ test("a huge Retry-After is capped at a minute, a missing one defaults to 10 s",
   expect(breakerOpen("b.myshopify.com", 11_000)).toBe(false);
 });
 
-test("the global breaker opens after 5 consecutive failures across stores; a success resets the count", () => {
-  for (let i = 0; i < 4; i++) recordUcp(`s${i}.myshopify.com`, { kind: "failure" }, 0);
-  recordUcp("x.myshopify.com", { kind: "ok" }, 0);
-  for (let i = 0; i < 4; i++) recordUcp(`s${i}.myshopify.com`, { kind: "failure" }, 0);
-  expect(breakerOpen("any.myshopify.com", 1)).toBe(false);
-  recordUcp("s9.myshopify.com", { kind: "failure" }, 0);
-  expect(breakerOpen("any.myshopify.com", 1)).toBe(true);
-  expect(breakerOpen("any.myshopify.com", 31_000)).toBe(false);
+test("the global breaker opens only when 3 distinct stores fail within the window; one broken store never trips it", () => {
+  for (let i = 0; i < 20; i++) recordUcp("broken.myshopify.com", { kind: "failure" }, i);
+  expect(breakerOpen("other.myshopify.com", 100)).toBe(false);
+  recordUcp("b.myshopify.com", { kind: "failure" }, 200);
+  expect(breakerOpen("other.myshopify.com", 300)).toBe(false);
+  recordUcp("c.myshopify.com", { kind: "failure" }, 400);
+  expect(breakerOpen("other.myshopify.com", 500)).toBe(true);
+  expect(breakerOpen("other.myshopify.com", 31_000)).toBe(false);
+});
+
+test("failures from different stores outside the window don't add up; a success clears that store's failure", () => {
+  recordUcp("a.myshopify.com", { kind: "failure" }, 0);
+  recordUcp("b.myshopify.com", { kind: "failure" }, 1000);
+  recordUcp("c.myshopify.com", { kind: "failure" }, 40_000); // a and b are older than the window
+  expect(breakerOpen("x.myshopify.com", 40_001)).toBe(false);
+  recordUcp("d.myshopify.com", { kind: "failure" }, 41_000);
+  recordUcp("c.myshopify.com", { kind: "ok" }, 41_500);
+  recordUcp("e.myshopify.com", { kind: "failure" }, 42_000); // c cleared, so d and e only
+  expect(breakerOpen("x.myshopify.com", 42_001)).toBe(false);
+});
+
+test("429s never count toward the global breaker, however many stores send them", () => {
+  for (let i = 0; i < 10; i++) recordUcp(`s${i}.myshopify.com`, { kind: "rate_limited", retryAfter: 5 }, 0);
+  expect(breakerOpen("fresh.myshopify.com", 1)).toBe(false);
+  expect(breakerOpen("s1.myshopify.com", 1)).toBe(true); // each keeps its own cooldown
 });
 
 test("the per-store breaker map is bounded", () => {
@@ -239,4 +256,72 @@ test("a shopper who left (aborted signal) is not counted against Shopify's healt
   });
   for (let i = 0; i < 6; i++) await catalogSearch(newTurnCatalog(store()), "tee", 8, { signal: ac.signal });
   expect(breakerOpen("a.myshopify.com")).toBe(false);
+});
+
+test("a call cut short by the turn's budget that then times out is not a breaker failure; a full-length timeout is", async () => {
+  fetchMock.mockImplementation(async () => {
+    throw new DOMException("timed out", "TimeoutError");
+  });
+  for (let i = 0; i < 4; i++) {
+    const cat = newTurnCatalog(store(`t${i}.myshopify.com`));
+    cat.spentMs = MCP_BUDGET_MS - 1000; // 1 s left: the call's timeout is shortened
+    expect((await catalogSearch(cat, "tee", 8, {})).status).toBe("degraded");
+  }
+  expect(breakerOpen("anything.myshopify.com")).toBe(false); // four budget timeouts on four stores: nothing recorded
+  for (let i = 0; i < 3; i++) await catalogSearch(newTurnCatalog(store(`full${i}.myshopify.com`)), "tee", 8, {});
+  expect(breakerOpen("anything.myshopify.com")).toBe(true); // three stores, real 3 s timeouts
+});
+
+test("budget: a product priced in another currency than the store's is dropped, so a budget never compares GBP with USD", async () => {
+  searchReplies([
+    ucpProduct(1, { variants: [ucpVariant(11, { price: money(4000, "USD") })] }),
+    ucpProduct(2, { variants: [ucpVariant(21, { price: money(3000, "GBP") })] }),
+  ]);
+  const cat = newTurnCatalog(store("a.myshopify.com", "USD"));
+  const r = await catalogSearch(cat, "tee", 8, {});
+  expect(r.hits.map((h) => h.productId)).toEqual([pgid(1)]);
+  const live = await catalogLive(cat, [pgid(1), pgid(2)], { includeGiftCards: false });
+  expect([...live.keys()]).toEqual([pgid(1)]);
+  // no known store currency: nothing to compare with, nothing dropped
+  searchReplies([ucpProduct(2, { variants: [ucpVariant(21, { price: money(3000, "GBP") })] })]);
+  expect((await catalogSearch(newTurnCatalog(store("a.myshopify.com", null)), "tee", 8, {})).hits).toHaveLength(1);
+});
+
+test("card links: the store's own hosts and *.myshopify.com pass; any other host is rebuilt from the handle on the store's domain", async () => {
+  searchReplies([
+    ucpProduct(1, { url: "https://www.brand.com/products/h1" }),
+    ucpProduct(2, { url: "https://a.myshopify.com/products/h2" }),
+    ucpProduct(3, { url: "https://evil.example.net/products/h3" }),
+    ucpProduct(4, { url: "http://www.brand.com/products/h4" }),
+  ]);
+  const cat = newTurnCatalog({ ...store(), domains: ["a.myshopify.com", "www.brand.com"] });
+  await catalogSearch(cat, "tee", 8, {});
+  const live = await catalogLive(cat, [pgid(1), pgid(2), pgid(3), pgid(4)], { includeGiftCards: false });
+  expect([...live.values()].map((p) => p.url)).toEqual([
+    "https://www.brand.com/products/h1",
+    "https://a.myshopify.com/products/h2",
+    "https://a.myshopify.com/products/h3",
+    "https://a.myshopify.com/products/h4",
+  ]);
+});
+
+test("product_details in an mcp store goes through the breaker, the budget, the currency context and the log", async () => {
+  const detail = (available: boolean) =>
+    new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { structuredContent: { product: ucpProduct(1, { variants: [ucpVariant(available ? 11 : 12, { available })] }) } } }), { status: 200 });
+  fetchMock.mockImplementation(async (_u: string, init: { body: string }) => detail(JSON.parse(init.body).params.arguments.catalog.filters.available));
+  const cat = newTurnCatalog(store());
+  const p = await catalogProduct(cat, pgid(1));
+  expect((p!.variants as unknown[]).length).toBe(2); // sale-ready and sold-out merged
+  expect(sent().map((c) => [c.name, c.arguments.catalog.context])).toEqual([["get_product", { currency: "USD" }], ["get_product", { currency: "USD" }]]);
+  expect(info.mock.calls.filter(([m]) => m === "ucp call")).toHaveLength(2);
+
+  fetchMock.mockClear();
+  recordUcp("a.myshopify.com", { kind: "rate_limited", retryAfter: 30 });
+  expect(await catalogProduct(newTurnCatalog(store()), pgid(1))).toBeNull(); // breaker open: no call
+  expect(fetchMock).not.toHaveBeenCalled();
+  resetUcpGuard();
+  const spent = newTurnCatalog(store());
+  spent.spentMs = MCP_BUDGET_MS;
+  expect(await catalogProduct(spent, pgid(1))).toBeNull(); // budget spent: no call
+  expect(fetchMock).not.toHaveBeenCalled();
 });

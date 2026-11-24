@@ -52,16 +52,40 @@ function imageOf(p: Obj, variants: Obj[]): string | null {
 }
 
 /**
+ * The card link: the payload's url when it is https on one of the store's hosts or *.myshopify.com (the payload is
+ * untrusted, and a card must not send a shopper elsewhere); else https://{shop}/products/{handle} when the handle is
+ * plain; else null (the product is dropped, a card without a link is not possible). Without `shop`, any https url.
+ */
+function productUrl(p: Obj, shop?: { domain: string; hosts: string[] }): string | null {
+  const url = httpsUrl(typeof p.url === "string" ? p.url : null);
+  if (!shop) return url;
+  if (url) {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host.endsWith(".myshopify.com") || shop.hosts.includes(host)) return url;
+  }
+  return typeof p.handle === "string" && /^[a-z0-9][a-z0-9_-]{0,254}$/i.test(p.handle) ? `https://${shop.domain}/products/${p.handle}` : null;
+}
+
+/**
  * LiveProduct for one UCP product, or null when it must not be shown: not a product GID, no title, no https url, a gift
  * card (unless includeGiftCards, D74), or no variant with a valid GID and price.
  * Variants with a bad GID or price are dropped one by one; a card without a numeric variant id could never add to cart.
  * A variant that needs a selling plan makes the product action 'view_options' (a subscription can't be added blindly).
  */
-export function toLiveProduct(raw: unknown, opts: { includeGiftCards: boolean }): LiveProduct | null {
+export function toLiveProduct(
+  raw: unknown,
+  opts: {
+    includeGiftCards: boolean;
+    /** The store's currency: a product priced in another one is refused, so a budget never compares GBP with USD. */
+    currency?: string;
+    /** The store's hosts: a product url must be on one of them (or *.myshopify.com); otherwise it is rebuilt from the handle. */
+    shop?: { domain: string; hosts: string[] };
+  },
+): LiveProduct | null {
   const p = obj(raw);
   if (!p || typeof p.id !== "string" || !PRODUCT_GID.test(p.id)) return null;
   const title = text(p.title, 300).trim();
-  const url = httpsUrl(typeof p.url === "string" ? p.url : null);
+  const url = productUrl(p, opts.shop);
   if (!title || !url) return null;
   if (p.gift_card === true && !opts.includeGiftCards) return null;
 
@@ -88,7 +112,7 @@ export function toLiveProduct(raw: unknown, opts: { includeGiftCards: boolean })
       compareAtPrice: list && list.currency === currency && list.amount > price.amount ? list.text : null,
     });
   }
-  if (!variants.length || !currency) return null;
+  if (!variants.length || !currency || (opts.currency && currency !== opts.currency)) return null;
 
   const available = variants.some((v) => v.available);
   const options = objs(p.options).map((o) => ({

@@ -159,6 +159,8 @@ export const messages = pgTable(
   (t) => [
     foreignKey({ columns: [t.storeId, t.conversationId], foreignColumns: [conversations.storeId, conversations.id] }).onDelete("cascade"),
     index("messages_conversation_created_idx").on(t.conversationId, t.createdAt),
+    // The daily message cap for mcp stores counts a store's user messages since midnight.
+    index("messages_store_created_idx").on(t.storeId, t.createdAt),
     uniqueIndex("messages_conversation_request_uq").on(t.conversationId, t.requestId).where(sql`${t.requestId} is not null`),
     check("messages_role_chk", sql`${t.role} in ('user', 'assistant')`),
     check("messages_model_chk", sql`${t.model} in ('small', 'large')`),

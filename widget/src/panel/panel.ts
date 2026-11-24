@@ -291,6 +291,11 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
         answer.remove();
         messages.error(t("error_unavailable"), retry);
         break;
+      case "capped":
+        if (outcome.token) tokens.set(outcome.token);
+        answer.remove();
+        messages.error(t("error_capped")); // no Retry: it would fail the same way until tomorrow
+        break;
       case "busy":
         answer.remove();
         messages.error(t("error_busy"), retry);

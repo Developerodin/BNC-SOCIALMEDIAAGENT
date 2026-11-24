@@ -2,7 +2,7 @@ import type { FunctionTool } from "openai/resources/responses/responses";
 import type { SearchHit } from "@/lib/retrieval";
 import { searchProducts } from "@/lib/search-provider";
 import { getProduct } from "@/lib/shopify/catalog-mcp";
-import { CATALOG_DEGRADED, type TurnCatalog } from "@/lib/shopify/catalog-turn";
+import { CATALOG_DEGRADED, catalogProduct, type TurnCatalog } from "@/lib/shopify/catalog-turn";
 import { askPolicies, POLICY_TYPES, type PolicyType } from "@/lib/shopify/storefront-mcp";
 import { productBlock, sanitizeData, type PromptProducts } from "./prompt";
 
@@ -139,7 +139,8 @@ async function productDetails(arg: unknown, ctx: ToolContext): Promise<string> {
   const n = typeof arg === "number" ? String(arg) : typeof arg === "string" ? arg.trim().replace(/^#/, "") : "";
   const id = ctx.allowed.get(n);
   if (!id) return "Unknown product number: use a number from <store_data>.";
-  const p = await getProduct(ctx.store.shopDomain, id, { storeId: ctx.store.id, signal: ctx.signal });
+  // An mcp store goes through the turn's breaker and time budget; an installed store calls get_product as before.
+  const p = ctx.catalog ? await catalogProduct(ctx.catalog, id, ctx.signal) : await getProduct(ctx.store.shopDomain, id, { storeId: ctx.store.id, signal: ctx.signal });
   if (!p) return "Product details are unavailable right now. Answer from <store_data> only.";
 
   const lines = [`#${n} ${text(p.title)}`];

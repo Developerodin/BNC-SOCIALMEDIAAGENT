@@ -141,6 +141,7 @@ test("daily cap: over MCP_DAILY_MESSAGES shopper messages today ends the turn wi
   const r = await run(id); // this message is the (n+1)th
   expect(r.events.map((e) => e.event)).toEqual(["error"]);
   expect(String(r.events[0].data.message)).toMatch(/daily limit/);
+  expect(r.events[0].data.code).toBe("daily_cap"); // the widget maps this code to its translated line
   expect(create).not.toHaveBeenCalled();
   expect(rewriteQuery).not.toHaveBeenCalled();
   expect(fetchMock).not.toHaveBeenCalled();
