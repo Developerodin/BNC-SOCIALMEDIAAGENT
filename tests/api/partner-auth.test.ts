@@ -58,11 +58,14 @@ test("a wrong secret, a non-Bearer scheme, or an unset PARTNER_API_SECRET is 401
   expect(adminGraphql).not.toHaveBeenCalled();
 });
 
-test("an unset PARTNER_STORE_DOMAIN is 404 for every request, even with the right secret", async () => {
+// Plan (h): the routes now exist for per-store token holders, so an unset PARTNER_STORE_DOMAIN only turns the
+// legacy secret off (401), where it used to hide the routes (404).
+test("an unset PARTNER_STORE_DOMAIN turns the legacy secret off: 401 for every legacy request, even with the right secret", async () => {
   vi.stubEnv("PARTNER_STORE_DOMAIN", "");
-  expect((await shopRoute.GET(get("shop"))).status).toBe(404);
-  expect((await shopRoute.GET(get("shop", {}))).status).toBe(404);
-  expect((await ordersRoute.GET(get("orders?updatedSince=2026-11-01T00:00:00Z"))).status).toBe(404);
+  expect((await shopRoute.GET(get("shop"))).status).toBe(401);
+  expect((await shopRoute.GET(get("shop", {}))).status).toBe(401);
+  expect((await ordersRoute.GET(get("orders?updatedSince=2026-11-01T00:00:00Z"))).status).toBe(401);
+  expect(adminGraphql).not.toHaveBeenCalled();
 });
 
 test("the request can't choose the shop: query, headers and host are ignored", async () => {

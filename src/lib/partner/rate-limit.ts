@@ -1,11 +1,11 @@
-/** Requests allowed per secret per window. */
+/** Requests allowed per key (one per token, or the legacy secret) per window. */
 export const PARTNER_LIMIT = 60;
 const WINDOW_MS = 60_000;
 
 const windows = new Map<string, { start: number; count: number }>();
 
 /**
- * Fixed one-minute window per key (a hash of the secret). Returns the seconds to wait when over the limit, or 0.
+ * Fixed one-minute window per key (a token id, or a hash of the legacy secret). Returns the seconds to wait when over the limit, or 0.
  * ponytail: the counts live in this process only, so N instances allow N × 60 per minute and a restart resets them.
  * Fine for one partner on one instance; move it to Postgres or Redis with the M10 deployment work.
  */

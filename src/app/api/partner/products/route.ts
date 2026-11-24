@@ -1,4 +1,5 @@
 import { partnerGuard, partnerJson } from "@/lib/partner/auth";
+import { ENDPOINT_SCOPE } from "@/lib/partner/scopes";
 import { parseCursor } from "@/lib/partner/params";
 import { fetchProducts, shopifyErrorResponse } from "@/lib/partner/queries";
 
@@ -6,7 +7,7 @@ import { fetchProducts, shopifyErrorResponse } from "@/lib/partner/queries";
 // Dynamic because it reads req.headers and req.url; no `runtime` export under cacheComponents.
 
 export async function GET(req: Request) {
-  const store = await partnerGuard(req);
+  const store = await partnerGuard(req, ENDPOINT_SCOPE.products);
   if (store instanceof Response) return store;
   const cursor = parseCursor(new URL(req.url).searchParams);
   if (cursor !== null && typeof cursor === "object") return partnerJson({ error: cursor.error }, 400);
