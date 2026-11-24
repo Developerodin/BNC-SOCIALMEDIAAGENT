@@ -213,11 +213,17 @@ test("proxy: a repeated logged_in_customer_id, shop, timestamp or signature is r
   expect((await proxyRoute.GET(new Request(`http://x/api/proxy/session?${dupSig}`))).status).toBe(403);
 });
 
-test("proxy: a store over its per-minute limit gets 429", async () => {
-  for (let i = 0; i < 300; i++) await proxyReq([["logged_in_customer_id", "1001"]]);
+test("proxy: one customer over their per-minute limit gets 429 while another customer is still served", async () => {
+  for (let i = 0; i < 10; i++) expect((await proxyReq([["logged_in_customer_id", "1001"]])).status).toBe(200);
   const res = await proxyReq([["logged_in_customer_id", "1001"]]);
   expect(res.status).toBe(429);
   expect(res.headers.get("retry-after")).toBeTruthy();
+  expect((await proxyReq([["logged_in_customer_id", "1002"]])).status).toBe(200);
+});
+
+test("proxy: the store-wide backstop still applies across many customers", async () => {
+  for (let i = 0; i < 600; i++) await proxyReq([["logged_in_customer_id", String(5000 + i)]]);
+  expect((await proxyReq([["logged_in_customer_id", "9999"]])).status).toBe(429);
 });
 
 // --- ownership ---

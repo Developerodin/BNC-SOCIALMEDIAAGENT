@@ -11,21 +11,23 @@ import { verifyProxy } from "@/lib/shopify/app-proxy";
 // Not cached: it is customer-specific (and a GET that reads req.url isn't prerendered, as in api/chat/history).
 
 const SHOP = /^[a-z0-9-]+\.myshopify\.com$/;
-// Per store and minute. Requests are signed, so this only caps a busy store; in-memory like cors.ts (N instances = N x).
-const PROXY_STORE_LIMIT = 300;
+// Per minute. The per-customer cap (keyed on the signature-verified id) stops one reloading shopper from using up the store's
+// allowance; the store cap is only a backstop. In-memory like cors.ts (N instances = N x).
+const PROXY_CUSTOMER_LIMIT = 10;
+const PROXY_STORE_LIMIT = 600;
 
 export async function GET(req: Request) {
   const headers = { "Cache-Control": "no-store" };
   const params = new URL(req.url).searchParams;
-  const secret = process.env.SHOPIFY_API_SECRET;
   const shop = params.get("shop");
-  if (!secret || !shop || !SHOP.test(shop) || !(await verifyProxy(params))) return new Response(null, { status: 403, headers });
-
-  const wait = rateLimit(`proxy:${shop}`, Date.now(), PROXY_STORE_LIMIT);
-  if (wait) return Response.json({ error: "rate_limited" }, { status: 429, headers: { ...headers, "Retry-After": String(wait) } });
+  if (!shop || !SHOP.test(shop) || !(await verifyProxy(params))) return new Response(null, { status: 403, headers });
 
   const gid = customerGid(params.get("logged_in_customer_id") ?? "");
   if (!gid) return Response.json({ error: "not_logged_in" }, { status: 401, headers });
+
+  const wait =
+    rateLimit(`proxy:${shop}:${gid}`, Date.now(), PROXY_CUSTOMER_LIMIT) || rateLimit(`proxy:${shop}`, Date.now(), PROXY_STORE_LIMIT);
+  if (wait) return Response.json({ error: "rate_limited" }, { status: 429, headers: { ...headers, "Retry-After": String(wait) } });
 
   const [store] = await db.select({ id: stores.id, active: stores.active }).from(stores).where(eq(stores.shopDomain, shop));
   if (!store?.active) return Response.json({ error: "unknown_shop" }, { status: 404, headers });

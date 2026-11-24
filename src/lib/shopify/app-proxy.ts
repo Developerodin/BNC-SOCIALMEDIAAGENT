@@ -14,6 +14,7 @@ import { shopify } from "./api";
 // Replay: a signed URL is valid until the timestamp window passes; inside it, someone who captured the URL could reuse it.
 // That needs access to a TLS request, and all it yields is the session for the customer who made it, so there is no nonce store.
 
+// The library sorts keys with localeCompare, Shopify with byte order: extra mixed-case query params could fail closed. Acceptable; our session call adds none.
 const SINGLE_VALUE = ["shop", "timestamp", "signature", "logged_in_customer_id"];
 
 /** True when the request is a genuine, fresh App Proxy request with no repeated identity params. */
