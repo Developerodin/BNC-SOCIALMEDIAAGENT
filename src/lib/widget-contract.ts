@@ -36,7 +36,7 @@ export type Card = import("./chat/turn").Card;
 export type DoneEvent = { conversationToken: string; messageId: string | null }; // messageId added in Task 22
 
 export type HistoryItem = {
-  id: string;
+  id: string | null; // null when the server sent none (before Task 22); thumbs need an id
   role: "user" | "assistant";
   content: string;
   status: "ok" | "cut_off";
@@ -55,7 +55,9 @@ export type WidgetApi = {
     pageUrl: string; // origin + pathname only
     signal?: AbortSignal;
   }): Promise<Response>;
-  history(token: string): Promise<HistoryItem[] | null>;
+  /** "reset": the token is dead (401/404), drop it. null: any other failure, keep the token. */
+  history(token: string): Promise<HistoryItem[] | "reset" | null>;
+  /** true when the conversation is gone (204, or a dead token); false on 409 (a turn is running) or a failure. */
   deleteConversation(token: string): Promise<boolean>;
   rate(token: string, messageId: string, rating: -1 | 1 | null): Promise<boolean>;
   logCartAdd(token: string, event: { messageId: string | null; productId: string; variantId: string; quantity: number; eventId: string }): Promise<void>;
