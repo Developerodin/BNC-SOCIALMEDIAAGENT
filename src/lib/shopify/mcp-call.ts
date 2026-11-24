@@ -2,7 +2,7 @@
 // at /api/mcp). The arguments carry the shopper's words, and Shopify's error bodies and messages can echo them, so every
 // error thrown here names only a kind or a status: never log or rethrow anything from the response (§7.10).
 
-/** An HTTP error from the endpoint. The message is only the status (�7.10); `retryAfter` is Retry-After in seconds, when numeric. */
+/** An HTTP error from the endpoint. The message is only the status (§7.10); `retryAfter` is Retry-After in seconds, when numeric. */
 export class McpHttpError extends Error {
   constructor(
     readonly status: number,
