@@ -20,6 +20,8 @@ export async function GET(req: Request) {
   const product = productGid(params.get("product"));
   if (!product) return Response.json({ error: "invalid_product" }, { status: 400, headers: { ...found.cors, "Cache-Control": "no-store" } });
 
+  // An mcp store has no synced product FAQs (the block is hidden for it); same shape as a product with none.
+  if (found.store.mode === "mcp") return Response.json({ items: [] }, { headers: { ...found.cors, "Cache-Control": "public, max-age=300" } });
   const items = await productFaqs(found.store.id, product);
   return Response.json({ items }, { headers: { ...found.cors, "Cache-Control": "public, max-age=300" } });
 }

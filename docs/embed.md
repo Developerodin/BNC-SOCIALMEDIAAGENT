@@ -31,6 +31,21 @@ Paste this once, before `</body>`:
 A chat button appears bottom-right. Nothing is loaded from AskCart until a visitor clicks it. The chat opens in a
 panel (full screen on a phone); the button turns into a close button.
 
+## A store that has not installed AskCart (MCP-only, pilot)
+
+For a pilot store the chat reads products from Shopify's public endpoints instead of an install (no sync, no Admin
+access). We create its row by hand, then the merchant pastes the tag above into `theme.liquid` (and
+`layout/password.liquid` for a password-protected store):
+
+```
+npx tsx --env-file=.env --tsconfig tsconfig.json scripts/provision-mcp-store.mts my-store.myshopify.com --name "My Store"
+```
+
+The script fetches the storefront and prints whether our tag is on the page (check it by hand), reads the currency from
+a live search, and sets `mode = 'mcp'`, the domains and the allowed embedding sites. It refuses a store that installed
+the app. To switch the chat off, set `active = false` on the row. Limits: 100 shopper messages per day per store; stock
+counts ("only 3 left") are not available, only in stock or sold out.
+
 ## Share it as a link
 
 `https://<askcart-host>/chat/my-store.myshopify.com` opens the chat as a full page. Use it in a newsletter, a social

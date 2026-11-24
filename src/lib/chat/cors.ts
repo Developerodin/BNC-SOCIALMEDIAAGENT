@@ -94,6 +94,7 @@ export async function storeFor(req: Request, shop: unknown) {
       primaryLocale: stores.primaryLocale,
       currencyCode: stores.currencyCode,
       settings: stores.settings,
+      mode: stores.mode,
       mobileKeyHash: stores.mobileKeyHash,
     })
     .from(stores)

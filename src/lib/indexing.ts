@@ -29,8 +29,8 @@ export async function embedStore(
   { storeId }: { storeId: string },
   signal?: AbortSignal,
 ): Promise<{ embedded: number; removed: number; tokens: number }> {
-  const [s] = await db.select({ active: stores.active }).from(stores).where(eq(stores.id, storeId));
-  if (!s?.active) return { embedded: 0, removed: 0, tokens: 0 };
+  const [s] = await db.select({ active: stores.active, mode: stores.mode }).from(stores).where(eq(stores.id, storeId));
+  if (!s?.active || s.mode === "mcp") return { embedded: 0, removed: 0, tokens: 0 };
 
   const { removed, stale } = await forStore(storeId, async (tx) => {
     // C8: only ACTIVE and published products are searchable. Deleted products are gone through the cascade.

@@ -4,10 +4,12 @@ import { conversations, messages } from "@/db/schema";
 import { productGid } from "@/lib/ids";
 import type { SearchHit } from "@/lib/retrieval";
 import { searchProducts } from "@/lib/search-provider";
+import { CATALOG_DEGRADED, catalogLive, newTurnCatalog, type TurnCatalog } from "@/lib/shopify/catalog-turn";
+import { MCP_BUDGET_MS } from "@/lib/shopify/ucp-guard";
 import { fallbackCards, liveCheck, type FallbackCard, type LiveProduct, type LiveVariant, type Stock } from "@/lib/shopify/live-products";
 import { answer, ChatUnavailable } from "./answer";
 import { applyBudget } from "./budget";
-import { HISTORY_MESSAGES } from "./limits";
+import { HISTORY_MESSAGES, MCP_DAILY_MESSAGES } from "./limits";
 import { maskPII } from "./mask";
 import { buildInput, LARGE_SYSTEM_PROMPT, SYSTEM_PROMPT, type PromptProducts } from "./prompt";
 import { rewriteQuery, type ChatTurn } from "./rewrite";
@@ -27,6 +29,8 @@ export type TurnStore = {
   primaryLocale: string | null;
   currencyCode: string | null;
   settings: unknown;
+  /** 'mcp' = no install: products come from Shopify's UCP endpoints, not our tables. Missing means 'app'. */
+  mode?: "app" | "mcp";
 };
 
 /** The product event (§7.6). A C11 (b) fallback card has null price, stock, currency and availability, and action "none". */
@@ -58,12 +62,27 @@ const PROMPT_PRODUCTS = 8;
 const DEFAULT_STOCK_THRESHOLD = 5; // UD10
 const UNAVAILABLE = "Assistant unavailable right now"; // §8, C13
 const COUNTRY = /^[A-Z]{2}$/;
+const DAILY_CAP_MESSAGE = "This assistant has reached its daily limit. Please try again tomorrow.";
+
+/** Shopper messages saved today (UTC) for this store, openTurn's included, against MCP_DAILY_MESSAGES. */
+async function mcpOverDailyCap(storeId: string): Promise<boolean> {
+  const [r] = await forStore(storeId, (tx) =>
+    tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(messages)
+      .where(and(eq(messages.storeId, storeId), eq(messages.role, "user"), sql`${messages.createdAt} >= date_trunc('day', now() at time zone 'utc') at time zone 'utc'`)),
+  );
+  return r.n > MCP_DAILY_MESSAGES;
+}
 
 // D81: one turn at a time per conversation. openTurn claims the conversation by setting busy_until; runTurn clears it
 // before its last event, on every path. A crashed process leaves the claim to expire.
-// `// ponytail:` 90 s = the answer's 60 s total budget + the 5 s rewrite + search and the live check, with margin. A turn
-// that outlives it can overlap the next one, and its release then frees that one early; raise this with the timeouts.
-const TURN_LOCK = sql`now() + interval '90 seconds'`;
+// `// ponytail:` the worst case is the rewrite's 8 s (REWRITE_TIMEOUT_MS) + the catalog budget (MCP_BUDGET_MS, 5 s; an
+// installed store's 3 s live check fits inside it) + the answer's 60 s total (TOTAL_MS in answer.ts, tool calls included)
+// = 73 s, plus 17 s margin for the saves and SSE. A turn that outlives it can overlap the next one, and its release then
+// frees that one early; recompute this whenever one of those timeouts changes.
+const TURN_LOCK_S = 8 + MCP_BUDGET_MS / 1000 + 60 + 17;
+const TURN_LOCK = sql.raw(`now() + interval '${TURN_LOCK_S} seconds'`);
 
 /** UD10: the merchant's "Only N left" threshold, settings.stockThreshold, default 5. */
 export function stockThreshold(settings: unknown): number {
@@ -350,8 +369,11 @@ function topProducts(hits: SearchHit[], live: PromptProducts, n: number): Search
 async function checkProducts(
   store: TurnStore,
   ids: string[],
-  opts: { country?: string; includeGiftCards: boolean; signal: AbortSignal },
+  opts: { country?: string; includeGiftCards: boolean; signal: AbortSignal; catalog?: TurnCatalog },
 ): Promise<PromptProducts> {
+  // An mcp store has no table to fall back on, so this comes BEFORE the currency gate (an mcp row's prices are Shopify's
+  // own, in the currency the payload names) and never returns fallback cards. Products Shopify couldn't give are absent.
+  if (opts.catalog) return { ok: true, products: await catalogLive(opts.catalog, ids, opts) };
   if (store.currencyCode) {
     const r = await liveCheck(store.id, store.shopDomain, ids, { ...opts, currency: store.currencyCode });
     if (r.ok) return r;
@@ -388,8 +410,17 @@ export async function runTurn(t: {
   const country = t.country && COUNTRY.test(t.country) ? t.country : undefined;
   const name = store.name ?? store.shopDomain;
   let released = false;
+  // Per-turn payload map for an mcp store (catalog-turn.ts); undefined for installed stores, whose path is unchanged.
+  const catalog = store.mode === "mcp" ? newTurnCatalog(store, country) : undefined;
 
   try {
+    // Hard daily cap for mcp stores: openTurn has already saved this message, so over the cap means the count exceeds it.
+    if (catalog && (await mcpOverDailyCap(storeId))) {
+      await release(storeId, t.conversationId);
+      released = true;
+      t.send("error", { message: DAILY_CAP_MESSAGE, conversationToken: t.token });
+      return;
+    }
     const rw = await rewriteQuery({
       message: t.message,
       history: t.history,
@@ -403,12 +434,15 @@ export async function runTurn(t: {
       productId: currentProductId,
       includeGiftCards: rw.includeGiftCards,
       signal,
+      catalog,
     });
     const ids = [...new Set([...found.map((h) => h.productId), ...(currentProductId ? [currentProductId] : [])])];
-    const checked = await checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal });
+    const checked = await checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal, catalog });
     // D87: drop products outside the budget and order by price, by the live price (never the index's).
     const priced = applyBudget({ hits: found, live: checked, budget: rw.budget, sort: rw.sort, currency: store.currencyCode });
-    const { live, note } = priced;
+    const { live } = priced;
+    // Shopify gave no answer at all: say so, so the model never turns an outage into "we don't carry that".
+    const note = catalog?.degraded ? [CATALOG_DEGRADED, priced.note].filter(Boolean).join(" ") : priced.note;
     const hits = wide ? topProducts(priced.hits, live, PROMPT_PRODUCTS) : priced.hits;
     const { input, allowed } = buildInput({ hits, live, currentProductId, history: t.history, message: t.message, threshold, note });
 
@@ -421,7 +455,8 @@ export async function runTurn(t: {
       threshold,
       includeGiftCards: rw.includeGiftCards,
       signal,
-      check: (ids) => checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal }),
+      check: (ids) => checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal, catalog }),
+      catalog,
     };
     const result = await answer({
       system: SYSTEM_PROMPT(name),

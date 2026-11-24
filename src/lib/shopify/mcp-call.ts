@@ -2,6 +2,17 @@
 // at /api/mcp). The arguments carry the shopper's words, and Shopify's error bodies and messages can echo them, so every
 // error thrown here names only a kind or a status: never log or rethrow anything from the response (ยง7.10).
 
+/** An HTTP error from the endpoint. The message is only the status (ง7.10); `retryAfter` is Retry-After in seconds, when numeric. */
+export class McpHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly retryAfter?: number,
+  ) {
+    super(message);
+  }
+}
+
 export type McpResult = { structuredContent?: unknown; content?: { text?: unknown }[] };
 
 /** The `result` of one tools/call. Throws on HTTP, JSON-RPC, tool or network errors and on timeout/abort. */
@@ -21,7 +32,8 @@ export async function callMcpTool(
   });
   if (!res.ok) {
     const loc = res.headers.get("location");
-    throw new Error(`HTTP ${res.status}${loc ? ` -> ${loc}` : ""}`);
+    const ra = Number(res.headers.get("retry-after"));
+    throw new McpHttpError(res.status, `HTTP ${res.status}${loc ? ` -> ${loc}` : ""}`, Number.isFinite(ra) && ra > 0 ? ra : undefined);
   }
   // A JSON.parse error message quotes the start of the text, so it is replaced by a fixed one.
   const json = await res.json().catch(() => {

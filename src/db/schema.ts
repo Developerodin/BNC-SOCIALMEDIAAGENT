@@ -8,7 +8,9 @@ export const accounts = pgTable("accounts", {
 });
 
 // Not RLS-protected: install and webhook lookups go by shop_domain.
-export const stores = pgTable("stores", {
+export const stores = pgTable(
+  "stores",
+  {
   id: uuid("id").primaryKey().defaultRandom(),
   accountId: uuid("account_id").notNull().references(() => accounts.id),
   shopDomain: text("shop_domain").notNull().unique(),
@@ -36,7 +38,12 @@ export const stores = pgTable("stores", {
   // First 12 characters ('ackm_' + 7), shown in the admin so the merchant can tell keys apart.
   mobileKeyPrefix: text("mobile_key_prefix"),
   mobileKeyCreatedAt: timestamp("mobile_key_created_at", { withTimezone: true }),
-});
+  // 'app' = installed through Shopify (synced catalog, Admin API). 'mcp' = served only through Shopify's public UCP
+  // endpoints, no install: no sync, no embeddings, no Admin calls (provision-mcp-store.mts creates these rows).
+  mode: text("mode").$type<"app" | "mcp">().notNull().default("app"),
+  },
+  (t) => [check("stores_mode_chk", sql`${t.mode} in ('app', 'mcp')`)],
+);
 
 export const storeTokens = pgTable("store_tokens", {
   storeId: uuid("store_id").primaryKey().references(() => stores.id, { onDelete: "cascade" }),

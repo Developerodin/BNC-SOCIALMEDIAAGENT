@@ -2,6 +2,7 @@ import type { FunctionTool } from "openai/resources/responses/responses";
 import type { SearchHit } from "@/lib/retrieval";
 import { searchProducts } from "@/lib/search-provider";
 import { getProduct } from "@/lib/shopify/catalog-mcp";
+import { CATALOG_DEGRADED, type TurnCatalog } from "@/lib/shopify/catalog-turn";
 import { askPolicies, POLICY_TYPES, type PolicyType } from "@/lib/shopify/storefront-mcp";
 import { productBlock, sanitizeData, type PromptProducts } from "./prompt";
 
@@ -83,6 +84,8 @@ export type ToolContext = {
   signal: AbortSignal;
   /** The turn's live check (turn.ts checkProducts). */
   check: (ids: string[]) => Promise<PromptProducts>;
+  /** An mcp-mode store's per-turn catalog (see catalog-turn.ts); undefined for installed stores. */
+  catalog?: TurnCatalog;
 };
 
 const data = (body: string) => `<store_data>\n${body}\n</store_data>`;
@@ -167,7 +170,8 @@ async function productDetails(arg: unknown, ctx: ToolContext): Promise<string> {
  * same Shopify API seconds apart.
  */
 async function searchMore(query: string, ctx: ToolContext): Promise<string> {
-  const hits = await searchProducts(ctx.store, query, TOOL_SEARCH_K, { includeGiftCards: ctx.includeGiftCards, signal: ctx.signal });
+  const hits = await searchProducts(ctx.store, query, TOOL_SEARCH_K, { includeGiftCards: ctx.includeGiftCards, signal: ctx.signal, catalog: ctx.catalog });
+  if (ctx.catalog?.degraded) return CATALOG_DEGRADED; // an outage is not "no products match"
   const numberOf = new Map([...ctx.allowed].map(([n, id]) => [id, n]));
   const texts = new Map<string, string[]>();
   for (const h of hits as SearchHit[]) {

@@ -39,14 +39,14 @@ const IDLE_TIMEOUT_MS = 4000;
 const MAX_BYTES = 200 * 1024;
 const MAX_REDIRECTS = 2;
 
-type Page = { status: number; headers: Record<string, string | string[] | undefined>; body: string; location: string | null };
+export type Page = { status: number; headers: Record<string, string | string[] | undefined>; body: string; location: string | null };
 
 /**
  * One vetted GET. We resolve the name ourselves, refuse unless EVERY address is public, then connect to that IP with
  * the hostname kept for TLS (servername) and the Host header. The socket never re-resolves, so DNS rebinding between
  * the check and the connect can't redirect us inward. Never throws: null means unreachable or refused.
  */
-async function fetchPage(host: string, path: string, signal: AbortSignal): Promise<Page | null> {
+export async function fetchPage(host: string, path: string, signal: AbortSignal): Promise<Page | null> {
   let address: string;
   try {
     const aborted = new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(new Error("deadline")), { once: true }));
@@ -99,7 +99,7 @@ async function fetchPage(host: string, path: string, signal: AbortSignal): Promi
  * cdn.shopify.com also appear on headless/Hydrogen sites, Buy Buttons and Shopify-hosted images, so they prove nothing
  * about whose storefront it is and must not decide "another store".
  */
-function pageShop(p: Page): string | null {
+export function pageShop(p: Page): string | null {
   return /Shopify\.shop\s*=\s*["']([^"']+)["']/.exec(p.body)?.[1]?.toLowerCase() ?? null;
 }
 

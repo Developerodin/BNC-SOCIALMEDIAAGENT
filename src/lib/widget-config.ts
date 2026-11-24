@@ -111,10 +111,10 @@ export async function syncWidgetConfig(storeId: string, shop: string): Promise<v
       return;
     }
     const [s] = await db
-      .select({ settings: stores.settings, name: stores.name, hash: stores.widgetConfigHash })
+      .select({ settings: stores.settings, name: stores.name, hash: stores.widgetConfigHash, mode: stores.mode })
       .from(stores)
       .where(eq(stores.id, storeId));
-    if (!s) return;
+    if (!s || s.mode === "mcp") return; // an mcp store has no app installation to hold the metafield (the embed tag carries its config)
     const config = buildWidgetConfig(s, apiBase);
     const hash = createHash("sha256").update(JSON.stringify(config)).digest("hex");
     if (hash === s.hash) return;

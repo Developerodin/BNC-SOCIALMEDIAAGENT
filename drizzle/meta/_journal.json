@@ -134,6 +134,13 @@
       "when": 1795529726518,
       "tag": "0018_storefront_token_minted_at",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1795531410208,
+      "tag": "0019_mcp_mode",
+      "breakpoints": true
     }
   ]
 }

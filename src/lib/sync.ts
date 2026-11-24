@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { JobWithMetadata } from "pg-boss";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
@@ -57,7 +57,8 @@ export async function resyncScan(): Promise<void> {
   const rows = await db
     .select({ id: stores.id, settings: stores.settings, lastSyncAt: stores.lastSyncAt, syncStatus: stores.syncStatus })
     .from(stores)
-    .where(eq(stores.active, true));
+    // mcp stores have no catalog to sync or embed (and no Admin token): filtered here so no job is ever queued for them.
+    .where(and(eq(stores.active, true), eq(stores.mode, "app")));
   const now = new Date();
   for (const r of rows) {
     // Costs no OpenAI call when nothing changed; recovers lost or exhausted embed runs and stores synced before M3.
@@ -100,10 +101,10 @@ export async function runSyncJob(job: JobWithMetadata<{ storeId: string }>, run:
 /** The `store-sync` handler: starts a bulk query over the catalog and schedules the first poll. */
 export async function startSync({ storeId }: { storeId: string }): Promise<void> {
   const [s] = await db
-    .select({ shop: stores.shopDomain, active: stores.active, syncStatus: stores.syncStatus, syncError: stores.syncError })
+    .select({ shop: stores.shopDomain, active: stores.active, mode: stores.mode, syncStatus: stores.syncStatus, syncError: stores.syncError })
     .from(stores)
     .where(eq(stores.id, storeId));
-  if (!s?.active || s.syncError === RECONNECT_NEEDED) return;
+  if (!s?.active || s.mode === "mcp" || s.syncError === RECONNECT_NEEDED) return; // mcp: no Admin token to sync with
   // A sync already running (or left running by a poll that ran out of retries): poll it to completion or failure instead.
   if (s.syncStatus === "running") return enqueuePoll(storeId);
 

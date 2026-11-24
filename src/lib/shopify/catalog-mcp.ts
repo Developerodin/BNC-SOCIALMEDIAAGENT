@@ -142,7 +142,7 @@ const objs = (v: unknown): Obj[] => (Array.isArray(v) ? v.filter((x): x is Obj =
  * second), so variants are sorted by their numeric id (Shopify's creation order, usually the merchant's) and each
  * option's values by first appearance in that order.
  */
-function mergeProducts(parts: Obj[]): Obj {
+export function mergeProducts(parts: Obj[]): Obj {
   const variants = new Map<string, Obj>();
   for (const v of parts.flatMap((p) => objs(p.variants))) variants.set(String(v.id ?? v.title), variants.get(String(v.id ?? v.title)) ?? v);
   const num = (v: Obj) => Number(String(v.id ?? "").match(/\d+$/)?.[0] ?? NaN);
@@ -160,8 +160,8 @@ function mergeProducts(parts: Obj[]): Obj {
 }
 
 /** One tools/call on the store's UCP MCP: its structured payload. Throws on an HTTP, JSON-RPC, tool or network error, or a timeout of ~3 s. */
-async function callUcpTool(shopDomain: string, name: string, args: unknown, signal?: AbortSignal) {
-  const r = await callMcpTool(`https://${shopDomain}/api/ucp/mcp`, name, args, { timeoutMs: TIMEOUT_MS, signal, redirect: "manual" });
+export async function callUcpTool(shopDomain: string, name: string, args: unknown, signal?: AbortSignal, timeoutMs = TIMEOUT_MS) {
+  const r = await callMcpTool(`https://${shopDomain}/api/ucp/mcp`, name, args, { timeoutMs, signal, redirect: "manual" });
   const text = r?.content?.[0]?.text;
   // A payload that isn't JSON throws a fixed message, not the parser's (which quotes the text).
   const sc = (r?.structuredContent ?? (text ? parseJson(text) : undefined)) as Record<string, unknown> | undefined;

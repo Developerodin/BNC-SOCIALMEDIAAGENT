@@ -1,6 +1,7 @@
 import { search, type SearchHit } from "@/lib/retrieval";
 import { productGid } from "@/lib/ids";
 import { mcpSearch } from "@/lib/shopify/catalog-mcp";
+import { catalogSearch, type TurnCatalog } from "@/lib/shopify/catalog-turn";
 
 // D89: the per-store product search provider, stores.settings.searchProvider.
 export type SearchProvider = "ours" | "mcp" | "hybrid";
@@ -19,13 +20,16 @@ export function searchProvider(settings: unknown): SearchProvider {
  * - "hybrid": search() first; if it found nothing but the current product's own chunks, MCP's hits are put first.
  * MCP needs UCP_AGENT_PROFILE_URL; without it "mcp" and "hybrid" run as "ours" and log a line.
  * Gift cards are left out unless opts.includeGiftCards (D74), on both providers.
+ * An mcp-mode store (opts.catalog is its per-turn TurnCatalog) skips all of that: no provider setting, no embedding, none of
+ * our tables; catalogSearch keeps Shopify's payload for the live check, and a degraded answer sets catalog.degraded.
  */
 export async function searchProducts(
   store: { id: string; shopDomain: string; settings: unknown },
   query: string,
   k: number,
-  opts: { productId?: string; includeGiftCards?: boolean; signal?: AbortSignal } = {},
+  opts: { productId?: string; includeGiftCards?: boolean; signal?: AbortSignal; catalog?: TurnCatalog } = {},
 ): Promise<SearchHit[]> {
+  if (opts.catalog) return (await catalogSearch(opts.catalog, query, k, { includeGiftCards: opts.includeGiftCards, signal: opts.signal })).hits;
   let provider = searchProvider(store.settings);
   if (provider !== "ours" && !process.env.UCP_AGENT_PROFILE_URL) {
     console.warn("search provider falls back to ours", { storeId: store.id, provider, reason: "UCP_AGENT_PROFILE_URL is not set" });

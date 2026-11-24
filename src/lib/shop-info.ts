@@ -27,6 +27,12 @@ export type ShopInfo = { name: string; domains: string[]; primaryLocale: string 
  * can be refused for up to a day, or until the merchant opens the app.
  */
 export async function refreshShopInfo(storeId: string, shop: string): Promise<ShopInfo> {
+  // An mcp store has no Admin token: its values were set by provision-mcp-store, so return them as they are.
+  const [row] = await db
+    .select({ mode: stores.mode, name: stores.name, domains: stores.domains, primaryLocale: stores.primaryLocale, currencyCode: stores.currencyCode })
+    .from(stores)
+    .where(eq(stores.id, storeId));
+  if (row?.mode === "mcp") return { name: row.name ?? shop, domains: row.domains, primaryLocale: row.primaryLocale, currencyCode: row.currencyCode ?? "" };
   const { shop: s } = await adminGraphql<ShopInfoData>(storeId, shop, SHOP_INFO);
   const info: ShopInfo = {
     name: s.name,

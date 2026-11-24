@@ -85,7 +85,7 @@ type ProductNode = {
 type Row = { id: string; title: string; url: string | null; imageUrl: string | null; status: string; published: boolean; isGiftCard: boolean };
 
 /** D71: card links are https only. */
-function httpsUrl(u: string | null): string | null {
+export function httpsUrl(u: string | null): string | null {
   if (!u) return null;
   try {
     return new URL(u).protocol === "https:" ? u : null;
@@ -95,7 +95,7 @@ function httpsUrl(u: string | null): string | null {
 }
 
 /** Images are shown only from Shopify's CDN. */
-function cdnImage(u: string | null | undefined): string | null {
+export function cdnImage(u: string | null | undefined): string | null {
   if (!u) return null;
   try {
     const url = new URL(u);
