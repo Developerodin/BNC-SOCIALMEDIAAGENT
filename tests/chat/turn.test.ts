@@ -191,7 +191,9 @@ test("a turn streams text and cards, saves the assistant row with both calls' to
     variants: [{ id: "11", title: "Default Title", options: [], available: true, stock: { kind: "in_stock" }, price: "10.00", compareAtPrice: null }],
     moreVariants: false,
   });
-  expect(r.events[2].data).toEqual({ conversationToken: r.token });
+  // Task 22: done carries the saved assistant row's id, so the widget can show thumbs under it.
+  const [saved] = await admin`select id from messages where conversation_id = ${r.conversationId} and role = 'assistant'`;
+  expect(r.events[2].data).toEqual({ conversationToken: r.token, messageId: saved.id });
   const [row] = await assistantRows(r.conversationId);
   expect(row).toEqual({
     content: "Try this ",
@@ -577,13 +579,14 @@ test("a repeated requestId after the answer was saved is replayed: same text and
   await runOpened(st, first);
   const [saved] = await assistantRows(first.conversationId);
   expect(saved.cards).toHaveLength(1);
+  const [savedId] = await admin`select id from messages where conversation_id = ${first.conversationId} and role = 'assistant'`;
   create.mockClear();
   rewriteQuery.mockClear();
 
   const again = await turn.openTurn(st, { token: first.token, message: "tee?", pageUrl: null, requestId: rid });
   expect(again).toEqual({
     ok: true,
-    replay: { content: "Try ", cards: saved.cards },
+    replay: { id: savedId.id, content: "Try ", cards: saved.cards },
     conversationId: first.conversationId,
     token: first.token,
   });

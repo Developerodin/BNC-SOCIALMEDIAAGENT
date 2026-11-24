@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, foreignKey, halfvec, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, foreignKey, halfvec, index, integer, jsonb, pgTable, primaryKey, smallint, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { EMBEDDING_DIMS } from "../lib/embedding-config";
 
 export const accounts = pgTable("accounts", {
@@ -28,6 +28,8 @@ export const stores = pgTable("stores", {
   // D76: the store's language, from the primary domain; null when Shopify doesn't give one (no query translation then).
   primaryLocale: text("primary_locale"),
   currencyCode: text("currency_code"),
+  // Task 24: hash of the widget config last written to the AppInstallation metafield, so an unchanged config isn't rewritten.
+  widgetConfigHash: text("widget_config_hash"),
 });
 
 export const storeTokens = pgTable("store_tokens", {
@@ -125,6 +127,8 @@ export const messages = pgTable(
     outputTokens: integer("output_tokens").notNull().default(0),
     // D81: the client's id for a user message, so a retry of the same message isn't answered twice. Null on assistant rows.
     requestId: uuid("request_id"),
+    // UD14: the shopper's thumbs on an answer, 1 or -1; null when unrated. C27: it can be changed or cleared.
+    rating: smallint("rating").$type<-1 | 1>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -134,5 +138,53 @@ export const messages = pgTable(
     check("messages_role_chk", sql`${t.role} in ('user', 'assistant')`),
     check("messages_model_chk", sql`${t.model} in ('small', 'large')`),
     check("messages_status_chk", sql`${t.status} in ('ok', 'cut_off')`),
+    check("messages_rating_chk", sql`${t.rating} in (-1, 1)`),
+  ],
+);
+
+// §7.6: an Add to cart from a chat card (UD21 metric, UD22 filter). Deleted with its conversation (D84, retention).
+export const cartEvents = pgTable(
+  "cart_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    storeId: uuid("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id").notNull(),
+    // The answer whose card was added; no FK, a message of another conversation is stored as null (Task 27).
+    messageId: uuid("message_id"),
+    productId: text("product_id").notNull(),
+    variantId: text("variant_id").notNull(),
+    quantity: integer("quantity").notNull(),
+    // The client's id for this add, so a retried log isn't counted twice.
+    eventId: uuid("event_id").notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Named: the generated name is over Postgres' 63-character limit.
+    foreignKey({
+      name: "cart_events_conversation_fk",
+      columns: [t.storeId, t.conversationId],
+      foreignColumns: [conversations.storeId, conversations.id],
+    }).onDelete("cascade"),
+    // Serves the cascade when a conversation is deleted (D84, retention).
+    index("cart_events_conversation_idx").on(t.storeId, t.conversationId),
+  ],
+);
+
+// §7.13 Faq (D32). product_id is a Product GID with no FK to products: FAQs are merchant content and outlive a resync.
+export const faqs = pgTable(
+  "faqs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    storeId: uuid("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
+    productId: text("product_id").notNull(),
+    question: text("question").notNull(),
+    answer: text("answer").notNull(),
+    position: integer("position").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("faqs_store_product_position_idx").on(t.storeId, t.productId, t.position),
+    check("faqs_question_len_chk", sql`char_length(${t.question}) <= 300`),
+    check("faqs_answer_len_chk", sql`char_length(${t.answer}) <= 2000`),
   ],
 );

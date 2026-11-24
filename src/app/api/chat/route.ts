@@ -36,11 +36,12 @@ export async function POST(req: Request) {
   if (!opened.ok) return fail(OPEN_ERRORS[opened.status], opened.status);
   if (opened.replay) {
     // A retry of a message already answered: the saved answer again, as the same events, with no OpenAI or Shopify call.
-    const { content, cards } = opened.replay;
+    // `done` names the original answer row (Task 22), so thumbs given before the retry still apply.
+    const { id, content, cards } = opened.replay;
     const events = [
       ...(content ? [sseEvent("text", { delta: content })] : []),
       ...cards.map((c) => sseEvent("product", c)),
-      sseEvent("done", { conversationToken: opened.token }),
+      sseEvent("done", { conversationToken: opened.token, messageId: id }),
     ];
     return new Response(events.join(""), { headers: { ...SSE_HEADERS, ...cors } });
   }

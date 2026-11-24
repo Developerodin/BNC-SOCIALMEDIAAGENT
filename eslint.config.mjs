@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Built widget bundles (scripts/build-widget.mjs) and the Shopify CLI dev bundle.
+    "extensions/askcart/assets/askcart-*.js",
+    ".shopify/**",
   ]),
 ]);
 

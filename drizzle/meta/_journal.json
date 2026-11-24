@@ -85,6 +85,20 @@
       "when": 1795507646831,
       "tag": "0011_conversation_turn_lock",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1795510088742,
+      "tag": "0012_widget_data",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1795510088743,
+      "tag": "0013_widget_rls",
+      "breakpoints": true
     }
   ]
 }

@@ -68,7 +68,7 @@ function productGid(raw: string | undefined): string | undefined {
 
 export type OpenedTurn =
   | { ok: true; replay?: undefined; conversationId: string; token: string; history: ChatTurn[]; message: string }
-  | { ok: true; replay: { content: string; cards: Card[] }; conversationId: string; token: string }
+  | { ok: true; replay: { id: string; content: string; cards: Card[] }; conversationId: string; token: string }
   | { ok: false; status: 401 | 404 | 409 };
 
 /**
@@ -115,13 +115,13 @@ export async function openTurn(
           .where(and(inConversation, eq(messages.role, "user"), eq(messages.requestId, opts.requestId)));
         if (earlier) {
           const [next] = await tx
-            .select({ role: messages.role, content: messages.content, cards: messages.cards })
+            .select({ id: messages.id, role: messages.role, content: messages.content, cards: messages.cards })
             .from(messages)
             .where(and(inConversation, gt(messages.createdAt, createdAtOf(earlier.id))))
             .orderBy(asc(messages.createdAt))
             .limit(1);
           if (next?.role === "assistant") {
-            return { ok: true, replay: { content: next.content, cards: (next.cards as Card[] | null) ?? [] }, conversationId, token };
+            return { ok: true, replay: { id: next.id, content: next.content, cards: (next.cards as Card[] | null) ?? [] }, conversationId, token };
           }
         }
       }
@@ -186,7 +186,15 @@ async function conversationExists(tx: Conn, storeId: string, conversationId: str
   return found.length > 0;
 }
 
-export type HistoryMessage = { role: "user" | "assistant"; content: string; status: "ok" | "cut_off"; cards: Card[] };
+/** Task 22: `id` lets the widget rate an answer (UD14); `rating` is the saved thumbs, null when unrated. */
+export type HistoryMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  status: "ok" | "cut_off";
+  cards: Card[];
+  rating: -1 | 1 | null;
+};
 
 /**
  * GET /api/chat/history (Task 20, UD13): the conversation's last 20 messages, oldest first, already masked (D41).
@@ -204,7 +212,14 @@ export async function readHistory(
   return forStore(storeId, async (tx) => {
     if (!(await conversationExists(tx, storeId, conversationId))) return { ok: false as const, status: 404 as const };
     const rows = await tx
-      .select({ role: messages.role, content: messages.content, status: messages.status, cards: messages.cards })
+      .select({
+        id: messages.id,
+        role: messages.role,
+        content: messages.content,
+        status: messages.status,
+        cards: messages.cards,
+        rating: messages.rating,
+      })
       .from(messages)
       .where(and(eq(messages.storeId, storeId), eq(messages.conversationId, conversationId)))
       .orderBy(desc(messages.createdAt))
@@ -295,7 +310,8 @@ async function checkProducts(
 }
 
 /**
- * Runs the turn after openTurn and sends its events: `text`, `product`, then `done`, or `error` on failure. Never throws.
+ * Runs the turn after openTurn and sends its events: `text`, `product`, then `done` ({ conversationToken, messageId }, the
+ * saved assistant row's id), or `error` on failure. Never throws.
  * `message` and `history` must already be masked (openTurn). `country` is used only when it matches ^[A-Z]{2}$; otherwise
  * the D77 check is skipped (C16 a). When `signal` aborts (the shopper left), the OpenAI request is aborted and what was
  * shown is saved as cut_off (C19); nothing more is sent. On every path the conversation is released (D81) before the last
@@ -356,23 +372,28 @@ export async function runTurn(t: {
     if (signal.aborted) console.info("chat answer aborted: client left", { storeId });
     // C19: a cut-off answer is saved as shown; if nothing was shown there is nothing to save.
     if (result.status === "cut_off" && !result.text && cards.length === 0) return;
-    await forStore(storeId, async (tx) => {
-      await tx.insert(messages).values({
-        storeId,
-        conversationId: t.conversationId,
-        role: "assistant",
-        content: result.text,
-        productIds: cards.map((c) => c.id),
-        cards,
-        model: result.model,
-        status: result.status,
-        inputTokens: rw.tokens.input + result.tokens.input,
-        outputTokens: rw.tokens.output + result.tokens.output,
-      });
+    const messageId = await forStore(storeId, async (tx) => {
+      const [saved] = await tx
+        .insert(messages)
+        .values({
+          storeId,
+          conversationId: t.conversationId,
+          role: "assistant",
+          content: result.text,
+          productIds: cards.map((c) => c.id),
+          cards,
+          model: result.model,
+          status: result.status,
+          inputTokens: rw.tokens.input + result.tokens.input,
+          outputTokens: rw.tokens.output + result.tokens.output,
+        })
+        .returning({ id: messages.id });
       await releaseIn(tx, storeId, t.conversationId);
+      return saved.id;
     });
     released = true;
-    if (!signal.aborted) t.send("done", { conversationToken: t.token });
+    // Task 22: the saved answer's id, so the widget can show thumbs under it (UD14).
+    if (!signal.aborted) t.send("done", { conversationToken: t.token, messageId });
   } catch (err) {
     if (signal.aborted) return;
     // ChatUnavailable is already logged by answer(). Never log message text or the token (§7.10).

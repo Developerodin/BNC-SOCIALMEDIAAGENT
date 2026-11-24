@@ -70,6 +70,11 @@ function parseSse(raw: string): Ev[] {
   return out;
 }
 const readAll = async (res: Response) => parseSse(await res.text());
+/** Task 22: the id of the conversation's latest assistant row, which `done` carries as messageId. */
+async function lastAssistantId(conversationId: string | null) {
+  const [row] = await admin`select id from messages where conversation_id = ${conversationId} and role = 'assistant' order by created_at desc limit 1`;
+  return row.id as string;
+}
 
 beforeAll(async () => {
   process.env.CHAT_TOKEN_SECRET = "dGVzdC1jaGF0LXRva2VuLXNlY3JldC0zMi1ieXRlcyE="; // test-only dummy
@@ -220,7 +225,9 @@ test("the first message creates one conversation; done carries a token verifyTok
 
   const res2 = await post({ shop: shopA, message: "second", conversationToken: tok });
   const events2 = await readAll(res2);
-  expect(events2.at(-1)).toEqual({ event: "done", data: { conversationToken: tok } });
+  expect(events2.at(-1)).toEqual({ event: "done", data: { conversationToken: tok, messageId: await lastAssistantId(conversationId) } });
+  expect(events.at(-1)!.data.messageId).toEqual(expect.any(String));
+  expect(events.at(-1)!.data.messageId).not.toBe(events2.at(-1)!.data.messageId);
   const msgs = await admin`select role, content from messages where conversation_id = ${conversationId} order by created_at`;
   expect(msgs).toEqual([
     { role: "user", content: "first" },
@@ -340,7 +347,10 @@ test("a second POST while the conversation's turn runs → 409 turn_in_progress 
   expect(saved[0].n).toBe(0);
 
   open();
-  expect((await readAll(first)).at(-1)).toEqual({ event: "done", data: { conversationToken: tok } });
+  expect((await readAll(first)).at(-1)).toEqual({
+    event: "done",
+    data: { conversationToken: tok, messageId: await lastAssistantId(token.verifyToken(storeA, tok)) },
+  });
   // Released after done: the next message goes through.
   const third = await post({ shop: shopA, message: "next", conversationToken: tok });
   expect(third.status).toBe(200);
@@ -384,8 +394,10 @@ test("a repeated requestId after done replays the saved answer as SSE (text, pro
   expect(events).toEqual([
     { event: "text", data: { delta: "Here you go: " } },
     { event: "product", data: firstEvents[2].data },
-    { event: "done", data: { conversationToken: tok } },
+    { event: "done", data: { conversationToken: tok, messageId: firstEvents[3].data.messageId } },
   ]);
+  // The replay names the original answer row, so thumbs given to the first stream apply to the replayed one too.
+  expect(firstEvents[3].data.messageId).toBe(await lastAssistantId(token.verifyToken(storeA, tok)));
   noCalls();
   const rows = await admin`select role from messages where request_id = ${requestId} or (role = 'assistant' and content = 'Here you go: ')`;
   expect(rows.map((r) => r.role).sort()).toEqual(["assistant", "user"]);

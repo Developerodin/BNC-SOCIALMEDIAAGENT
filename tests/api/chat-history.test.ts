@@ -1,6 +1,12 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
 import postgres from "postgres";
 import { newStore } from "../helpers/seed";
+import type { HistoryMessage } from "@/lib/chat/turn";
+import type { HistoryItem } from "@/lib/widget-contract";
+
+// Task 22: the server's history item is the shape the widget's contract expects (compile-time check, run by tsc).
+const _historyMatchesContract: HistoryItem[] = [] as HistoryMessage[];
+void _historyMatchesContract;
 
 // GET /api/chat/history (Task 20, UD13). C15 = (b): the saved card snapshot comes back as saved, with no live re-check,
 // so nothing here calls OpenAI or Shopify.
@@ -33,15 +39,19 @@ async function conversation(storeId: string) {
 async function addMessages(
   storeId: string,
   conversationId: string,
-  rows: { role: "user" | "assistant"; content: string; status?: string; cards?: unknown }[],
+  rows: { role: "user" | "assistant"; content: string; status?: string; cards?: unknown; rating?: number }[],
 ) {
   const base = Date.parse("2026-11-24T10:00:00Z");
+  const ids: string[] = [];
   for (const [i, r] of rows.entries()) {
-    await admin`
-      insert into messages (store_id, conversation_id, role, content, status, cards, created_at)
+    const [row] = await admin`
+      insert into messages (store_id, conversation_id, role, content, status, cards, rating, created_at)
       values (${storeId}, ${conversationId}, ${r.role}, ${r.content}, ${r.status ?? "ok"},
-              ${r.cards === undefined ? null : admin.json(r.cards as never)}, ${new Date(base + i * 1000)})`;
+              ${r.cards === undefined ? null : admin.json(r.cards as never)}, ${r.rating ?? null}, ${new Date(base + i * 1000)})
+      returning id`;
+    ids.push(row.id);
   }
+  return ids;
 }
 
 beforeAll(async () => {
@@ -120,7 +130,7 @@ test("a valid token whose conversation is gone → 404", async () => {
 test("a valid token returns that conversation's messages only, oldest first, uncached, with CORS headers", async () => {
   const mine = await conversation(storeA);
   const other = await conversation(storeA);
-  await addMessages(storeA, mine.id, [
+  const ids = await addMessages(storeA, mine.id, [
     { role: "user", content: "hi" },
     { role: "assistant", content: "hello", cards: [] },
     { role: "user", content: "boots?" },
@@ -135,10 +145,27 @@ test("a valid token returns that conversation's messages only, oldest first, unc
   expect(res.headers.get("vary")).toBe("Origin");
   const { messages } = await res.json();
   expect(messages).toEqual([
-    { role: "user", content: "hi", status: "ok", cards: [] },
-    { role: "assistant", content: "hello", status: "ok", cards: [] },
-    { role: "user", content: "boots?", status: "ok", cards: [] },
-    { role: "assistant", content: "these", status: "cut_off", cards: [] },
+    { id: ids[0], role: "user", content: "hi", status: "ok", cards: [], rating: null },
+    { id: ids[1], role: "assistant", content: "hello", status: "ok", cards: [], rating: null },
+    { id: ids[2], role: "user", content: "boots?", status: "ok", cards: [], rating: null },
+    { id: ids[3], role: "assistant", content: "these", status: "cut_off", cards: [], rating: null },
+  ]);
+});
+
+test("a saved rating comes back with its message (UD14, C27)", async () => {
+  const c = await conversation(storeA);
+  const ids = await addMessages(storeA, c.id, [
+    { role: "user", content: "hi" },
+    { role: "assistant", content: "liked", rating: 1 },
+    { role: "user", content: "and?" },
+    { role: "assistant", content: "disliked", rating: -1 },
+  ]);
+  const { messages } = await (await get(shopA, c.token)).json();
+  expect(messages.map((m: { id: string; rating: number | null }) => [m.id, m.rating])).toEqual([
+    [ids[0], null],
+    [ids[1], 1],
+    [ids[2], null],
+    [ids[3], -1],
   ]);
 });
 
