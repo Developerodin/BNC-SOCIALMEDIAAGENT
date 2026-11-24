@@ -81,7 +81,8 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
       append(delta) {
         if (!txt) {
           txt = el("div", "txt");
-          typing.before(txt);
+          wrap.prepend(txt);
+          typing.remove(); // the dots are for the wait before the first token (a retried stream starts without them)
         }
         text += delta;
         txt.textContent = text;

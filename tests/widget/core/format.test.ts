@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
-import { formatPrice, resolveHttpsUrl, safeHex, safeHttpsUrl, safeImageUrl, stockLabel, textOn } from "../../../widget/src/core/format";
+import { contrastRatio, formatPrice, resolveHttpsUrl, safeHex, safeHttpsUrl, safeImageUrl, stockLabel, textOn } from "../../../widget/src/core/format";
 import { translator } from "../../../widget/src/core/i18n";
 
 const t = translator("en");
@@ -53,5 +53,25 @@ describe("format", () => {
     expect(resolveHttpsUrl("/cart", "http://a.example/")).toBeNull();
     expect(resolveHttpsUrl(null, "https://a.example/")).toBeNull();
     expect(resolveHttpsUrl("", "https://a.example/")).toBeNull();
+  });
+});
+
+describe("accent contrast", () => {
+  it("contrastRatio matches the WCAG reference values", () => {
+    expect(contrastRatio("#000000", "#ffffff")).toBeCloseTo(21, 5);
+    expect(contrastRatio("#ffffff", "#ffffff")).toBeCloseTo(1, 5);
+  });
+
+  it("textOn keeps WCAG AA (4.5:1) on every accent, including the worst mid-tones", () => {
+    for (let r = 0; r < 256; r += 51) {
+      for (let g = 0; g < 256; g += 51) {
+        for (let b = 0; b < 256; b += 51) {
+          const hex = "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
+          expect(contrastRatio(hex, textOn(hex))).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
+    expect(textOn("#ffe600")).toBe("#000000");
+    expect(textOn("#0a0a0a")).toBe("#ffffff");
   });
 });

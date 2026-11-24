@@ -523,6 +523,52 @@ describe("menu (C22)", () => {
     expect(btn.getAttribute("aria-expanded")).toBe("false");
     expect(q(".panel")!.hidden).toBe(false);
   });
+
+  it("Escape from a menu item returns focus to the menu button", async () => {
+    await setup(mockApi()).open();
+    await openMenu();
+    item("New chat").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+    expect(sh().activeElement).toBe(q("button.menu"));
+  });
+});
+
+describe("header and empty state", () => {
+  it("shows the store's initial on the accent when there is no avatar, plus the subtitle and online dot", async () => {
+    await setup(mockApi(), config({ name: "maison bleue" })).open();
+    expect(q(".avatar.initial")!.textContent).toBe("M");
+    expect(q("img.avatar")).toBeNull();
+    expect(q(".hd .sub")!.textContent).toBe("AI shopping assistant");
+    expect(q(".hd .dot")).not.toBeNull();
+  });
+
+  it("uses the avatar image when the config has one", async () => {
+    await setup(mockApi(), config({ avatarUrl: "https://cdn.shopify.com/s/a.png" })).open();
+    expect(q<HTMLImageElement>("img.avatar")!.src).toBe("https://cdn.shopify.com/s/a.png");
+    expect(q(".avatar.initial")).toBeNull();
+  });
+
+  it("the welcome and the chips sit together at the top of an empty chat", async () => {
+    await setup(mockApi(), config({ suggested: ["A?", "B?", "C?"] })).open();
+    await flush();
+    expect(q(".log")!.firstElementChild!.className).toBe("welcome");
+    expect(qa(".sugg button").map((b) => b.textContent)).toEqual(["A?", "B?", "C?"]);
+  });
+
+  it("the typing dots go away at the first token", async () => {
+    const api = mockApi({ send: vi.fn(async () => sseResponse([ev("text", { delta: "Hi" }), ev("done", { conversationToken: "t1", messageId: "m1" })])) });
+    await setup(api).open();
+    await type("hello");
+    expect(q(".typing")).toBeNull();
+    expect(assistantTexts()).toEqual(["Hi"]);
+  });
+
+  it("every animation in the panel CSS is switched off under prefers-reduced-motion", async () => {
+    await setup(mockApi()).open();
+    const css = q("style")!.textContent!;
+    const reduced = css.slice(css.indexOf("prefers-reduced-motion"));
+    expect(css).toContain("animation:in");
+    expect(reduced).toContain(".panel,.typing span{animation:none}");
+  });
 });
 
 describe("a11y (UD17)", () => {

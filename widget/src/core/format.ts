@@ -57,14 +57,23 @@ export function safeHex(c: unknown): string | null {
   return typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c) ? c : null;
 }
 
-/** UD17: black or white text, whichever has the higher WCAG contrast on the accent. Expects #rrggbb (see safeHex).
- * The launcher uses this one too (white on a tie). */
-export function textOn(accentHex: string): "#000000" | "#ffffff" {
+/** WCAG relative luminance of a #rrggbb colour. */
+function luminance(hex: string): number {
   const ch = (i: number) => {
-    const v = parseInt(accentHex.slice(i, i + 2), 16) / 255;
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
     return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
   };
-  const l = 0.2126 * ch(1) + 0.7152 * ch(3) + 0.0722 * ch(5);
-  // Contrast with black is (l + 0.05) / 0.05, with white 1.05 / (l + 0.05).
-  return (l + 0.05) / 0.05 > 1.05 / (l + 0.05) ? "#000000" : "#ffffff";
+  return 0.2126 * ch(1) + 0.7152 * ch(3) + 0.0722 * ch(5);
+}
+
+/** WCAG contrast ratio (1 to 21) between two #rrggbb colours. */
+export function contrastRatio(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** UD17: black or white text, whichever has the higher WCAG contrast on the accent, so never below 4.5:1 (WCAG AA).
+ * Expects #rrggbb (see safeHex). The launcher uses this one too (white on a tie). */
+export function textOn(accentHex: string): "#000000" | "#ffffff" {
+  return contrastRatio(accentHex, "#000000") > contrastRatio(accentHex, "#ffffff") ? "#000000" : "#ffffff";
 }

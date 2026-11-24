@@ -88,6 +88,7 @@ describe("launcher (UD1, UD2)", () => {
     start();
     expect(button().textContent).toBe("Need help?");
     expect(button().type).toBe("button");
+    expect(button().querySelector("svg")).not.toBeNull(); // icon + label pill
   });
 
   it("the pill shows the translated default when the label is null", () => {

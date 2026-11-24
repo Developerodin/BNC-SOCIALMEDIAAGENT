@@ -14,9 +14,11 @@ const DEFAULT_ACCENT = "#0A0A0A";
 const CSS =
   ":host{all:initial}" +
   ".l,.t{position:fixed;z-index:2147483000;font:inherit;font-size:15px;line-height:20px;box-sizing:border-box}" +
-  ".l{display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;min-width:48px;padding:0 20px;" +
+  ".l{display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;min-width:48px;padding:0 20px 0 16px;" +
   "border:0;border-radius:24px;background:var(--ac-bg);color:var(--ac-fg);cursor:pointer;" +
-  "box-shadow:0 4px 16px rgba(0,0,0,.2);font-weight:600;margin:0;text-transform:none;letter-spacing:normal}" +
+  "box-shadow:0 4px 16px rgba(0,0,0,.2),0 1px 3px rgba(0,0,0,.12);font-weight:600;margin:0;text-transform:none;letter-spacing:normal;" +
+  "animation:f .35s ease-out;transition:transform .15s,box-shadow .15s}" +
+  ".l:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(0,0,0,.24),0 1px 3px rgba(0,0,0,.12)}" +
   ".l.i{padding:0;width:56px;height:56px;border-radius:28px}" +
   ".l:focus-visible,.t button:focus-visible{outline:3px solid var(--ac-bg);outline-offset:3px}" +
   ".t{display:flex;align-items:flex-start;gap:8px;max-width:280px;padding:12px 12px 12px 16px;border-radius:12px;" +
@@ -24,14 +26,14 @@ const CSS =
   ".t button{flex:none;width:24px;height:24px;border:0;border-radius:12px;background:transparent;color:#555;" +
   "cursor:pointer;font:inherit;font-size:18px;line-height:24px;padding:0;margin:0}" +
   "@keyframes f{from{opacity:0;transform:translateY(8px)}}" +
-  "@media (prefers-reduced-motion:reduce){.t{animation:none}}";
+  "@media (prefers-reduced-motion:reduce){.l,.t{animation:none;transition:none}.l:hover{transform:none}}";
 
 function chatIcon(): SVGSVGElement {
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("width", "26");
-  svg.setAttribute("height", "26");
+  svg.setAttribute("width", "24");
+  svg.setAttribute("height", "24");
   svg.setAttribute("aria-hidden", "true");
   const path = document.createElementNS(ns, "path");
   path.setAttribute("fill", "currentColor");
@@ -78,7 +80,7 @@ export function start(): (() => void) | undefined {
     btn.append(chatIcon());
   } else {
     // The visible label is the accessible name (WCAG 2.5.3), so no aria-label that would differ from it.
-    btn.textContent = cfg.launcher.label || d.label || "Ask us anything";
+    btn.append(chatIcon(), cfg.launcher.label || d.label || "Ask us anything"); // icon + label pill
   }
   shadow.append(style, btn);
   document.body.append(host);

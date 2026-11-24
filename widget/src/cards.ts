@@ -313,25 +313,29 @@ void _contract;
 
 /** Card styles for the panel's shadow root (Task 30 owns styles.ts and includes this). px only (Global Constraints). */
 export const CARDS_CSS = `
-.ac-cards{position:relative;margin:8px 0}
-.ac-cards__track{display:flex;gap:8px;overflow-x:auto;scroll-snap-type:x mandatory;list-style:none;margin:0;padding:0 0 4px}
-.ac-cards__slide{flex:0 0 72%;scroll-snap-align:start}
-.ac-cards__nav{position:absolute;top:60px;width:28px;height:28px;border-radius:14px;border:1px solid #d0d0d0;background:#fff;cursor:pointer;z-index:1}
-.ac-cards__nav--prev{left:-6px}.ac-cards__nav--next{right:-6px}
-.ac-card{display:flex;flex-direction:column;height:100%;border:1px solid #e3e3e3;border-radius:10px;overflow:hidden;background:#fff}
-.ac-card__img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;background:#f2f2f2}
-.ac-card__body{display:flex;flex-direction:column;gap:4px;padding:8px 10px 10px;font-size:13px;line-height:18px}
-.ac-card__title{font-weight:600;color:inherit;text-decoration:none}
+.ac-cards{position:relative;margin:4px 0}
+.ac-cards__track{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;list-style:none;margin:0;padding:0 0 6px;scrollbar-width:thin}
+.ac-cards__slide{flex:0 0 74%;scroll-snap-align:start}
+.ac-cards__nav{position:absolute;top:70px;width:30px;height:30px;border-radius:15px;border:1px solid #d0d0d0;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.14);cursor:pointer;z-index:1}
+.ac-cards__nav--prev{left:-8px}.ac-cards__nav--next{right:-8px}
+.ac-card{display:flex;flex-direction:column;height:100%;border:1px solid #e3e3e3;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.ac-card__img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:#f2f2f2}
+.ac-card__body{display:flex;flex-direction:column;gap:6px;flex:1;padding:10px 12px 12px;font-size:13px;line-height:18px}
+.ac-card__title{font-weight:600;font-size:14px;line-height:19px;color:inherit;text-decoration:none;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 a.ac-card__title:hover{text-decoration:underline}
 .ac-card__prices{display:flex;gap:6px;align-items:baseline}
+.ac-card__price{font-weight:700;font-size:15px}
 .ac-card__compare,.ac-card__price-hint,.ac-card__stock{color:#6b6b6b;font-size:12px;margin:0}
 .ac-card__badge{align-self:flex-start;padding:2px 8px;border-radius:10px;background:#eee;font-size:12px}
-.ac-card__actions{display:flex;flex-direction:column;gap:6px;margin-top:auto}
-.ac-card__picker{display:flex;flex-direction:column;gap:2px;font-size:12px}
-.ac-card__select{font:inherit;font-size:13px;padding:4px;border:1px solid #8a8a8a;border-radius:6px}
-.ac-card__add{font:inherit;font-size:13px;padding:8px;border:0;border-radius:8px;cursor:pointer;background:var(--ac-accent,#111);color:var(--ac-on-accent,#fff)}
+.ac-card__actions{display:flex;flex-direction:column;gap:8px;margin-top:auto}
+.ac-card__picker{display:flex;flex-direction:column;gap:2px;font-size:12px;color:#444}
+.ac-card__select{font:inherit;font-size:13px;padding:6px 8px;border:1px solid #8a8a8a;border-radius:8px;background:#fff;color:#111}
+.ac-card__add{font:inherit;font-size:14px;font-weight:600;width:100%;padding:10px 12px;border:0;border-radius:10px;cursor:pointer;background:var(--ac-accent,#111);color:var(--ac-on-accent,#fff)}
+.ac-card__add:hover:not(:disabled){filter:brightness(.92)}
 .ac-card__add:disabled{opacity:.5;cursor:default}
-.ac-card__options{font-weight:600;color:inherit}
+.ac-card__options{display:block;text-align:center;font-weight:600;color:inherit;padding:9px 12px;border:1px solid #8a8a8a;border-radius:10px;text-decoration:none}
+.ac-card__options:hover{background:#f4f4f4}
 .ac-card__status{margin:0;font-size:12px}
 .ac-card__error{color:#b00020}
+@media (prefers-reduced-motion:reduce){.ac-cards__track{scroll-behavior:auto}}
 `;

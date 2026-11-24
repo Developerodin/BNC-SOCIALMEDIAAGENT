@@ -87,23 +87,42 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   hd.className = "hd";
   const back = button("ib back", t("back"), "back");
   hd.append(back);
+  // Avatar (or the store name's initial when there is none) with a small online dot; name and subtitle beside it.
+  const av = document.createElement("span");
+  av.className = "av";
   const avatar = safeImageUrl(config.avatarUrl);
   if (avatar) {
     const img = document.createElement("img");
     img.className = "avatar";
     img.alt = "";
     img.src = avatar;
-    hd.append(img);
+    av.append(img);
+  } else {
+    const ini = document.createElement("span");
+    ini.className = "avatar initial";
+    ini.setAttribute("aria-hidden", "true");
+    ini.textContent = (Array.from(config.name.trim())[0] ?? "?").toUpperCase();
+    av.append(ini);
   }
+  const dot = document.createElement("span");
+  dot.className = "dot";
+  dot.setAttribute("aria-hidden", "true");
+  av.append(dot);
+  const who = document.createElement("div");
+  who.className = "who";
   const name = document.createElement("span");
   name.className = "name";
   name.textContent = config.name;
+  const sub = document.createElement("span");
+  sub.className = "sub";
+  sub.textContent = t("subtitle");
+  who.append(name, sub);
   const menu = createMenu(t, [
     { label: t("new_chat"), run: newChat },
     { label: t("delete_chat"), run: () => void deleteChat() },
   ]);
   const closeBtn = button("ib close", t("close"), "close");
-  hd.append(name, menu.el, closeBtn);
+  hd.append(av, who, menu.el, closeBtn);
 
   const offline = document.createElement("div");
   offline.className = "offline";
