@@ -1,7 +1,7 @@
 import { PgBoss, type SendOptions } from "pg-boss";
 import { and, eq, notExists } from "drizzle-orm";
 import { db } from "@/db/client";
-import { accounts, stores } from "@/db/schema";
+import { accounts, partnerConnectRequests, stores } from "@/db/schema";
 
 // Admin URL: pg-boss creates and migrates its own `pgboss` schema, which app_user cannot do.
 export const boss = new PgBoss(process.env.DATABASE_ADMIN_URL!);
@@ -26,7 +26,7 @@ function init(): Promise<void> {
   })());
 }
 
-/** Deletes the store (store_tokens go with it via ON DELETE CASCADE), then its account if no other store uses it. Idempotent. */
+/** Deletes the store (store_tokens, partner_grants and partner_tokens go with it via ON DELETE CASCADE) and its partner connect requests, then its account if no other store uses it. Idempotent. */
 export async function shopRedact({ shopDomain }: { shopDomain: string }): Promise<void> {
   await db.transaction(async (tx) => {
     // D65: a store that reinstalled before the job ran is active again, so it is kept.
@@ -35,6 +35,8 @@ export async function shopRedact({ shopDomain }: { shopDomain: string }): Promis
       .where(and(eq(stores.shopDomain, shopDomain), eq(stores.active, false)))
       .returning({ accountId: stores.accountId });
     if (!s) return;
+    // Keyed by shop domain with no FK to stores, so the cascade doesn't reach them.
+    await tx.delete(partnerConnectRequests).where(eq(partnerConnectRequests.shopDomain, shopDomain));
     await tx
       .delete(accounts)
       .where(and(eq(accounts.id, s.accountId), notExists(tx.select().from(stores).where(eq(stores.accountId, s.accountId)))));

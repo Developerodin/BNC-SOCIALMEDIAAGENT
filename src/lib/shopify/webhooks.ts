@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { type Conn, db, forStore } from "@/db/client";
-import { stores, storeTokens, webhookEvents } from "@/db/schema";
+import { partnerConnectRequests, partnerGrants, stores, storeTokens, webhookEvents } from "@/db/schema";
 import { enqueue, enqueueProductSync } from "@/lib/jobs";
 import { enqueuePoll } from "@/lib/sync";
 import { shopify } from "./api";
@@ -20,7 +20,24 @@ export const handlers: Record<string, Handler> = {
       .returning({ id: stores.id });
     if (!s) return;
     // Inside forStore: RLS hides store_tokens otherwise and the delete would silently affect 0 rows.
-    await forStore(s.id, (t) => t.delete(storeTokens).where(eq(storeTokens.storeId, s.id)), tx);
+    await forStore(
+      s.id,
+      async (t) => {
+        await t.delete(storeTokens).where(eq(storeTokens.storeId, s.id));
+        // P8: revoking the grant stops every access and refresh token under it (the guard checks revoked_at).
+        // `revoked_at is null` keeps the first revocation's time and reason; a reinstall doesn't clear them.
+        await t
+          .update(partnerGrants)
+          .set({ revokedAt: new Date(), revokedReason: "app_uninstalled" })
+          .where(and(eq(partnerGrants.storeId, s.id), isNull(partnerGrants.revokedAt)));
+        // An open connect can't finish against an uninstalled store.
+        await t
+          .update(partnerConnectRequests)
+          .set({ status: "expired" })
+          .where(and(eq(partnerConnectRequests.shopDomain, shopDomain), inArray(partnerConnectRequests.status, ["pending", "approved"])));
+      },
+      tx,
+    );
   },
   async CUSTOMERS_DATA_REQUEST(shopDomain) {
     console.info("webhook customers/data_request received", { shopDomain });
