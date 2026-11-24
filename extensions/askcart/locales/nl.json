@@ -1,7 +1,9 @@
 {
   "launcher": {
     "label": "Stel ons je vraag",
-    "aria_label": "Chatassistent openen"
+    "aria_label": "Chatassistent openen",
+    "teaser": "Vragen? We helpen je graag.",
+    "teaser_close": "Sluiten"
   },
   "ask_block": {
     "button": "Vraag over dit product"

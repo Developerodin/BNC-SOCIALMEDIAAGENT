@@ -1,7 +1,9 @@
 {
   "launcher": {
     "label": "Fragen Sie uns",
-    "aria_label": "Chat-Assistenten öffnen"
+    "aria_label": "Chat-Assistenten öffnen",
+    "teaser": "Fragen? Wir helfen gern.",
+    "teaser_close": "Schließen"
   },
   "ask_block": {
     "button": "Frage zu diesem Produkt"

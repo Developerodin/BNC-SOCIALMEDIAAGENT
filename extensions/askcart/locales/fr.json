@@ -1,7 +1,9 @@
 {
   "launcher": {
     "label": "Posez-nous vos questions",
-    "aria_label": "Ouvrir l’assistant de discussion"
+    "aria_label": "Ouvrir l’assistant de discussion",
+    "teaser": "Des questions ? Nous sommes là pour vous aider.",
+    "teaser_close": "Fermer"
   },
   "ask_block": {
     "button": "Poser une question sur ce produit"

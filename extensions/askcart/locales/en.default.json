@@ -1,7 +1,9 @@
 {
   "launcher": {
     "label": "Ask us anything",
-    "aria_label": "Open the chat assistant"
+    "aria_label": "Open the chat assistant",
+    "teaser": "Questions? We’re here to help.",
+    "teaser_close": "Dismiss"
   },
   "ask_block": {
     "button": "Ask about this product"

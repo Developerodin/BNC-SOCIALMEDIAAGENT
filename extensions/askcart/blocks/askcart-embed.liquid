@@ -1,5 +1,5 @@
 {%- comment -%}
-  AskCart app embed (D39). Task 23 owns only the context capture and the schema; Task 26 fills in the rest.
+  AskCart app embed (D39). Task 23 wrote the context capture and the schema; Task 26 added the widget source and the launcher strings.
   The config is public (it's the page source), so it never holds a secret. Every value leaves Liquid through
   `json` and then `escape`, so merchant text can't break out of the data attribute (Review Focus 2).
 {%- endcomment -%}
@@ -9,7 +9,18 @@
   {%- capture ctx -%}
     {"shop":{{ shop.permanent_domain | json }},"locale":{{ request.locale.iso_code | json }},"country":{{ localization.country.iso_code | json }},"currency":{{ cart.currency.iso_code | json }},"productId":{{ product_id }},"cartAddUrl":{{ routes.cart_add_url | json }},"cartUrl":{{ routes.cart_url | json }},"privacyUrl":{{ shop.privacy_policy.url | json }},"designMode":{{ request.design_mode | json }}}
   {%- endcapture -%}
-  <div id="askcart-root" data-config="{{ cfg | json | escape }}" data-page="{{ ctx | strip | escape }}" hidden></div>
+  {%- comment -%} C20: the chat script is an extension asset on Shopify's CDN; the launcher injects it on first click. {%- endcomment -%}
+  <div
+    id="askcart-root"
+    data-config="{{ cfg | json | escape }}"
+    data-page="{{ ctx | strip | escape }}"
+    data-widget-src="{{ 'askcart-widget.js' | asset_url }}"
+    data-label="{{ 'launcher.label' | t | escape }}"
+    data-aria-label="{{ 'launcher.aria_label' | t | escape }}"
+    data-teaser="{{ 'launcher.teaser' | t | escape }}"
+    data-teaser-close="{{ 'launcher.teaser_close' | t | escape }}"
+    hidden
+  ></div>
 {%- endif -%}
 
 {% schema %}
