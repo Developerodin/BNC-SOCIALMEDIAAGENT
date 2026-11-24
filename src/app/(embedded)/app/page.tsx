@@ -119,6 +119,7 @@ export default function AppHome() {
       </s-button>
       <ConnectWebsiteCard />
       <MobileKeyCard />
+      <WidgetSettingsCard />
     </s-page>
   );
 }
@@ -416,6 +417,209 @@ function MobileKeyCard() {
           </s-button>
         </>
       )}
+    </s-section>
+  );
+}
+
+type WidgetForm = {
+  name: string;
+  accent: string;
+  avatarUrl: string;
+  style: "pill" | "icon";
+  label: string;
+  side: "right" | "left";
+  welcome: string;
+  suggested: string[];
+  teaserOn: boolean;
+  teaserText: string;
+  teaserDelay: string;
+};
+type WidgetView = {
+  name: string;
+  accent: string;
+  avatarUrl: string | null;
+  launcher: { style: "pill" | "icon"; label: string | null; side: "right" | "left" };
+  welcome: string | null;
+  suggested: string[];
+  teaser: { enabled: boolean; text: string | null; delaySec: number };
+};
+
+const toForm = (v: WidgetView): WidgetForm => ({
+  name: v.name,
+  accent: v.accent,
+  avatarUrl: v.avatarUrl ?? "",
+  style: v.launcher.style,
+  label: v.launcher.label ?? "",
+  side: v.launcher.side,
+  welcome: v.welcome ?? "",
+  suggested: v.suggested,
+  teaserOn: v.teaser.enabled,
+  teaserText: v.teaser.text ?? "",
+  teaserDelay: String(v.teaser.delaySec),
+});
+
+const FIELD_LABELS: Record<string, string> = {
+  name: "Name",
+  accent: "Accent color",
+  avatarUrl: "Avatar URL",
+  welcome: "Welcome message",
+  suggested: "Suggested questions",
+  "launcher.style": "Button style",
+  "launcher.label": "Button label",
+  "launcher.side": "Button side",
+  "teaser.text": "Teaser text",
+  "teaser.delaySec": "Teaser delay",
+};
+
+/** Black or white, whichever reads better on the accent (WCAG relative luminance). */
+function textOn(hex: string): string {
+  const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] > 0.179 ? "#000000" : "#ffffff";
+}
+
+/** The look of the chat on the store's theme (GET/PUT /api/app/widget-settings). Saving also updates the theme widget. */
+function WidgetSettingsCard() {
+  const [form, setForm] = useState<WidgetForm | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [errors, setErrors] = useState<string[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await authed("/api/app/widget-settings");
+        if (res.ok) setForm(toForm(await res.json()));
+      } catch {
+        // the card just stays hidden
+      }
+    })();
+  }, []);
+
+  async function save(body: object) {
+    setBusy(true);
+    setNote(null);
+    setErrors([]);
+    try {
+      const res = await authed("/api/app/widget-settings", { method: "PUT", body: JSON.stringify(body) });
+      if (res.status === 400) {
+        const { errors: e } = await res.json();
+        setErrors(Object.keys(e ?? {}));
+        setNote("Some fields need a fix.");
+      } else if (!res.ok) throw new Error(String(res.status));
+      else {
+        setForm(toForm(await res.json()));
+        setNote("reset" in body ? "Reset to defaults." : "Saved.");
+      }
+    } catch {
+      setNote("That didn't work. Try again.");
+    }
+    setBusy(false);
+  }
+
+  if (!form) return null;
+  const set = <K extends keyof WidgetForm>(k: K, v: WidgetForm[K]) => setForm((f) => f && { ...f, [k]: v });
+  const validAccent = /^#[0-9a-fA-F]{6}$/.test(form.accent);
+
+  function submit() {
+    if (!form) return;
+    save({
+      name: form.name,
+      accent: form.accent,
+      avatarUrl: form.avatarUrl,
+      welcome: form.welcome,
+      suggested: form.suggested.map((q) => q.trim()).filter(Boolean),
+      launcher: { style: form.style, label: form.label, side: form.side },
+      teaser: { enabled: form.teaserOn, text: form.teaserText, delaySec: form.teaserDelay.trim() === "" ? null : Number(form.teaserDelay) },
+    });
+  }
+
+  return (
+    <s-section heading="Chat widget">
+      <s-text>Change how the chat looks on your store. Anything you leave unchanged uses our defaults.</s-text>
+      <div>
+        <label>
+          <s-text>Name</s-text>
+          <input value={form.name} maxLength={40} onChange={(e) => set("name", e.target.value)} style={{ width: "100%" }} />
+        </label>
+        <label>
+          <s-text>Accent color</s-text>
+          <div>
+            <input type="color" value={validAccent ? form.accent : "#000000"} onChange={(e) => set("accent", e.target.value)} aria-label="Accent color picker" />{" "}
+            <input value={form.accent} maxLength={7} onChange={(e) => set("accent", e.target.value)} aria-label="Accent color hex" />
+          </div>
+        </label>
+        <label>
+          <s-text>Avatar URL (upload the image in Content, then Files, and paste its cdn.shopify.com link)</s-text>
+          <input value={form.avatarUrl} onChange={(e) => set("avatarUrl", e.target.value)} placeholder="https://cdn.shopify.com/..." style={{ width: "100%" }} />
+        </label>
+        <label>
+          <s-text>Button style</s-text>
+          <select value={form.style} onChange={(e) => set("style", e.target.value as WidgetForm["style"])}>
+            <option value="pill">Pill with label</option>
+            <option value="icon">Icon only</option>
+          </select>
+        </label>{" "}
+        <label>
+          <s-text>Button side</s-text>
+          <select value={form.side} onChange={(e) => set("side", e.target.value as WidgetForm["side"])}>
+            <option value="right">Right</option>
+            <option value="left">Left</option>
+          </select>
+        </label>
+        <label>
+          <s-text>Button label (empty uses the theme&apos;s default)</s-text>
+          <input value={form.label} maxLength={40} onChange={(e) => set("label", e.target.value)} style={{ width: "100%" }} />
+        </label>
+        <label>
+          <s-text>Welcome message</s-text>
+          <textarea value={form.welcome} maxLength={300} rows={3} onChange={(e) => set("welcome", e.target.value)} style={{ width: "100%" }} />
+        </label>
+        <s-text>Suggested questions (up to 4)</s-text>
+        {form.suggested.map((q, i) => (
+          <div key={i}>
+            <input
+              value={q}
+              maxLength={120}
+              aria-label={`Suggested question ${i + 1}`}
+              onChange={(e) => set("suggested", form.suggested.map((x, j) => (j === i ? e.target.value : x)))}
+              style={{ width: "80%" }}
+            />{" "}
+            <s-button onClick={() => set("suggested", form.suggested.filter((_, j) => j !== i))}>Remove</s-button>
+          </div>
+        ))}
+        {form.suggested.length < 4 && <s-button onClick={() => set("suggested", [...form.suggested, ""])}>Add question</s-button>}
+        <div>
+          <label>
+            <input type="checkbox" checked={form.teaserOn} onChange={(e) => set("teaserOn", e.target.checked)} /> <s-text>Show a teaser bubble</s-text>
+          </label>
+        </div>
+        {form.teaserOn && (
+          <>
+            <label>
+              <s-text>Teaser text</s-text>
+              <input value={form.teaserText} maxLength={120} onChange={(e) => set("teaserText", e.target.value)} style={{ width: "100%" }} />
+            </label>
+            <label>
+              <s-text>Show after (seconds, 0 to 120)</s-text>
+              <input type="number" min={0} max={120} value={form.teaserDelay} onChange={(e) => set("teaserDelay", e.target.value)} />
+            </label>
+          </>
+        )}
+      </div>
+      {/* Not the real widget: only the accent and the text color the widget will pick on it. */}
+      <div aria-label="Button preview">
+        <span style={{ display: "inline-block", padding: "8px 16px", borderRadius: 999, background: validAccent ? form.accent : "#0A0A0A", color: textOn(validAccent ? form.accent : "#0A0A0A") }}>
+          {form.style === "icon" ? "Chat" : form.label || "Ask us anything"}
+        </span>
+      </div>
+      {errors.length > 0 && <s-text>Check: {errors.map((f) => FIELD_LABELS[f] ?? f).join(", ")}.</s-text>}
+      {note && <s-text>{note}</s-text>}
+      <s-button onClick={submit} disabled={busy || !validAccent}>
+        Save
+      </s-button>
+      <s-button onClick={() => save({ reset: true })} disabled={busy}>
+        Reset to defaults
+      </s-button>
     </s-section>
   );
 }

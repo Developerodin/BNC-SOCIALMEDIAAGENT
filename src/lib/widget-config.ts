@@ -20,22 +20,71 @@ export function retentionDays(settings: unknown): 30 | 90 | 365 {
   return RETENTION_DAYS.find((d) => d === v) ?? 30;
 }
 
+// What a store shows before the merchant writes anything: a welcome and generic questions, in the widget's six
+// locales (UD18; English for any other). Merchant text is never translated, so these apply only while unset.
+const DEFAULT_COPY: Record<string, { welcome: string; suggested: string[] }> = {
+  en: {
+    welcome: "Hi! I can help you find products, compare options and answer questions about orders and shipping.",
+    suggested: ["What's popular right now?", "Help me find a gift", "What's your return policy?", "Do you ship to my country?"],
+  },
+  fr: {
+    welcome: "Bonjour ! Je peux vous aider à trouver des produits, comparer des options et répondre à vos questions sur les commandes et la livraison.",
+    suggested: ["Qu'est-ce qui est populaire en ce moment ?", "Aidez-moi à trouver un cadeau", "Quelle est votre politique de retour ?", "Livrez-vous dans mon pays ?"],
+  },
+  de: {
+    welcome: "Hallo! Ich helfe Ihnen, Produkte zu finden, Optionen zu vergleichen und Fragen zu Bestellungen und Versand zu beantworten.",
+    suggested: ["Was ist gerade beliebt?", "Hilf mir, ein Geschenk zu finden", "Wie lautet Ihre Rückgaberegelung?", "Liefern Sie in mein Land?"],
+  },
+  es: {
+    welcome: "¡Hola! Puedo ayudarte a encontrar productos, comparar opciones y resolver dudas sobre pedidos y envíos.",
+    suggested: ["¿Qué es lo más popular ahora?", "Ayúdame a encontrar un regalo", "¿Cuál es su política de devoluciones?", "¿Envían a mi país?"],
+  },
+  it: {
+    welcome: "Ciao! Posso aiutarti a trovare prodotti, confrontare opzioni e rispondere a domande su ordini e spedizioni.",
+    suggested: ["Cosa va per la maggiore adesso?", "Aiutami a trovare un regalo", "Qual è la vostra politica sui resi?", "Spedite nel mio paese?"],
+  },
+  nl: {
+    welcome: "Hoi! Ik help je graag producten te vinden, opties te vergelijken en vragen over bestellingen en verzending te beantwoorden.",
+    suggested: ["Wat is er nu populair?", "Help me een cadeau te vinden", "Wat is jullie retourbeleid?", "Verzenden jullie naar mijn land?"],
+  },
+};
+const defaultCopy = (locale: string | null | undefined) => DEFAULT_COPY[(locale ?? "").slice(0, 2).toLowerCase()] ?? DEFAULT_COPY.en;
+
+export type WidgetResolution = {
+  config: WidgetConfig;
+  /** Fields (dotted, as in settings.widget) showing their default because the merchant set nothing usable. */
+  defaulted: string[];
+  /** Fields the merchant set that failed validation (the config shows the default instead); PUT answers 400 with these. */
+  rejected: string[];
+};
+
+type StoreInput = { settings: unknown; name: string | null; primaryLocale?: string | null };
+
 /**
- * C23: the look is edited only in M7 Settings, which saves it under `stores.settings.widget` (same field names as
- * WidgetConfig); until then every store gets the defaults. Each bad value falls back to its default and is logged.
+ * C23: the look is edited in the admin's "Chat widget" card (PUT /api/app/widget-settings), which saves it under
+ * `stores.settings.widget` (same field names as WidgetConfig); a field the merchant never set gets its default. Each
+ * bad value falls back to its default and is logged. This is the one validation, for reading and for saving.
  * Never throws. The value is public (page source), so nothing secret goes in here.
  */
-export function buildWidgetConfig(store: { settings: unknown; name: string | null }, apiBase: string): WidgetConfig {
+export function resolveWidgetConfig(store: StoreInput, apiBase: string): WidgetResolution {
   const settings = obj(store.settings);
   const w = obj(settings.widget);
   const launcher = obj(w.launcher);
   const teaser = obj(w.teaser);
+  const copy = defaultCopy(store.primaryLocale);
+  const defaulted: string[] = [];
+  const rejected: string[] = [];
 
   // Takes the merchant's value when it passes `ok`, else the default; logs only values that were set and rejected.
   function pick<T>(field: string, v: unknown, ok: (v: unknown) => boolean, def: T): T {
-    if (v === undefined || v === null) return def;
+    if (v === undefined || v === null) {
+      defaulted.push(field);
+      return def;
+    }
     if (ok(v)) return v as T;
     console.warn("widget config: bad value replaced by its default", { field });
+    rejected.push(field);
+    defaulted.push(field);
     return def;
   }
   const text = (max: number) => (v: unknown) => typeof v === "string" && v.trim().length > 0 && v.length <= max;
@@ -43,11 +92,25 @@ export function buildWidgetConfig(store: { settings: unknown; name: string | nul
   const bool = (v: unknown) => typeof v === "boolean";
   const oneOf = (...xs: unknown[]) => (v: unknown) => xs.includes(v);
 
-  const suggestedRaw = Array.isArray(w.suggested) ? w.suggested : pick<unknown[]>("suggested", w.suggested, () => false, []);
-  const suggested = suggestedRaw.filter((q) => text(120)(q)) as string[];
-  if (suggested.length !== suggestedRaw.length || suggested.length > 4) console.warn("widget config: suggested questions dropped", { field: "suggested" });
+  // Absent means "use the generic questions"; an array, even an empty one, is the merchant's deliberate choice.
+  let suggested: string[];
+  if (w.suggested === undefined || w.suggested === null) {
+    defaulted.push("suggested");
+    suggested = copy.suggested;
+  } else if (Array.isArray(w.suggested)) {
+    suggested = w.suggested.filter((q) => text(120)(q)) as string[];
+    if (suggested.length !== w.suggested.length || suggested.length > 4) {
+      console.warn("widget config: suggested questions dropped", { field: "suggested" });
+      rejected.push("suggested");
+    }
+  } else {
+    console.warn("widget config: bad value replaced by its default", { field: "suggested" });
+    rejected.push("suggested");
+    defaulted.push("suggested");
+    suggested = copy.suggested;
+  }
 
-  return {
+  const config: WidgetConfig = {
     v: 1,
     enabled: pick("enabled", w.enabled, bool, true),
     apiBase,
@@ -60,7 +123,7 @@ export function buildWidgetConfig(store: { settings: unknown; name: string | nul
       side: pick("launcher.side", launcher.side, oneOf("right", "left"), "right"),
       offset: pick("launcher.offset", launcher.offset, int(0, 200), 20),
     },
-    welcome: pick("welcome", w.welcome, text(300), null),
+    welcome: pick("welcome", w.welcome, text(300), copy.welcome),
     suggested: suggested.slice(0, 4),
     teaser: {
       enabled: pick("teaser.enabled", teaser.enabled, bool, false),
@@ -72,6 +135,11 @@ export function buildWidgetConfig(store: { settings: unknown; name: string | nul
     // D41 retention lives at the top of settings (no editor before M7).
     retentionDays: pick("retentionDays", settings.retentionDays, oneOf(...RETENTION_DAYS), 30),
   };
+  return { config, defaulted, rejected };
+}
+
+export function buildWidgetConfig(store: StoreInput, apiBase: string): WidgetConfig {
+  return resolveWidgetConfig(store, apiBase).config;
 }
 
 function isShopifyCdnUrl(v: unknown): boolean {
@@ -97,8 +165,8 @@ export function appOrigin(): string | null {
 
 /**
  * Builds the store's widget config and writes it to the app installation metafield, skipping the write when it equals
- * the last one written (stores.widget_config_hash). Called on every app load and by M7's Settings save. Never throws:
- * a failed write leaves the old metafield and no hash, so the next app load retries.
+ * the last one written (stores.widget_config_hash). Called on every app load and by the Chat widget card's save. Never
+ * throws: a failed write leaves the old metafield and no hash, so the next app load retries.
  * Ceilings: in dev a new tunnel reaches the storefront only after the app is opened again; a store never opened since
  * M5 shipped has no metafield, so the embed renders nothing (`// ponytail:` backfill every active store in M10).
  * Two loads at once may both write the same value; harmless.
@@ -111,7 +179,7 @@ export async function syncWidgetConfig(storeId: string, shop: string): Promise<v
       return;
     }
     const [s] = await db
-      .select({ settings: stores.settings, name: stores.name, hash: stores.widgetConfigHash, mode: stores.mode })
+      .select({ settings: stores.settings, name: stores.name, primaryLocale: stores.primaryLocale, hash: stores.widgetConfigHash, mode: stores.mode })
       .from(stores)
       .where(eq(stores.id, storeId));
     if (!s || s.mode === "mcp") return; // an mcp store has no app installation to hold the metafield (the embed tag carries its config)

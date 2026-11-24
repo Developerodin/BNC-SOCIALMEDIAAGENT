@@ -39,12 +39,32 @@ test("buildWidgetConfig fills every default from empty settings", () => {
     accent: "#0A0A0A",
     avatarUrl: null,
     launcher: { style: "pill", label: null, side: "right", offset: 20 },
-    welcome: null,
-    suggested: [],
+    welcome: "Hi! I can help you find products, compare options and answer questions about orders and shipping.",
+    suggested: ["What's popular right now?", "Help me find a gift", "What's your return policy?", "Do you ship to my country?"],
     teaser: { enabled: false, text: null, delaySec: 8 },
     stockThreshold: 5,
     retentionDays: 30,
   });
+});
+
+test("default welcome and questions follow the store's locale; unknown locales and null get English", () => {
+  const of = (primaryLocale: string | null) => wc.buildWidgetConfig({ settings: {}, name: "Acme", primaryLocale }, API);
+  expect(of("fr-CA").welcome).toMatch(/^Bonjour/);
+  expect(of("DE").suggested[0]).toBe("Was ist gerade beliebt?");
+  for (const l of ["es", "it", "nl"]) expect(of(l).suggested).toHaveLength(4);
+  expect(of("ja").welcome).toMatch(/^Hi!/);
+  expect(of(null).welcome).toMatch(/^Hi!/);
+});
+
+test("suggested: absent gets the defaults, an explicit empty list stays empty, merchant text is never localized", () => {
+  const fr = (widget: object) => wc.buildWidgetConfig({ settings: { widget }, name: "Acme", primaryLocale: "fr" }, API);
+  expect(fr({}).suggested).toHaveLength(4);
+  expect(fr({ suggested: [] }).suggested).toEqual([]);
+  expect(fr({ suggested: ["Sizes?"], welcome: "Hello" })).toMatchObject({ suggested: ["Sizes?"], welcome: "Hello" });
+  const r = wc.resolveWidgetConfig({ settings: { widget: { suggested: [], welcome: "Hello" } }, name: "Acme" }, API);
+  expect(r.defaulted).not.toContain("suggested");
+  expect(r.defaulted).not.toContain("welcome");
+  expect(r.defaulted).toContain("accent");
 });
 
 test("buildWidgetConfig keeps valid merchant values", () => {
@@ -99,7 +119,7 @@ test("buildWidgetConfig replaces each bad value with its default, logs it, and n
     accent: "#0A0A0A",
     avatarUrl: null,
     launcher: { style: "pill", label: null, side: "right", offset: 20 },
-    welcome: null,
+    welcome: "Hi! I can help you find products, compare options and answer questions about orders and shipping.",
     suggested: ["ok", "a", "b", "c"],
     teaser: { enabled: false, text: null, delaySec: 8 },
     retentionDays: 30,
