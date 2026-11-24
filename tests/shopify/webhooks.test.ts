@@ -107,6 +107,28 @@ test("a valid customers/redact gives 200", async () => {
   expect(res.status).toBe(200);
 });
 
+test("customers/data_request logs the store, request id and owned-conversation count, and no message text", async () => {
+  const shop = `dr-${randomUUID()}.myshopify.com`;
+  const id = await installedStore(shop);
+  const owner = "gid://shopify/Customer/777";
+  await admin`insert into conversations (store_id, token_hash, owner_customer_id) values (${id}, ${randomUUID()}, ${owner}), (${id}, ${randomUUID()}, ${owner}), (${id}, ${randomUUID()}, 'gid://shopify/Customer/8'), (${id}, ${randomUUID()}, null)`;
+  const [c] = await admin`select id from conversations where store_id = ${id} and owner_customer_id = ${owner} limit 1`;
+  await admin`insert into messages (store_id, conversation_id, role, content) values (${id}, ${c.id}, 'user', 'SECRET-CHAT-TEXT')`;
+  const info = vi.spyOn(console, "info").mockImplementation(() => {});
+  const res = await webhooks.handleWebhook(
+    webhook("customers/data_request", shop, undefined, undefined, { customer: { id: 777, email: "a@b.c" }, data_request: { id: 4242 } }),
+  );
+  expect(res.status).toBe(200);
+  expect(info).toHaveBeenCalledWith("webhook customers/data_request received", { shopDomain: shop, storeId: id, dataRequestId: 4242, ownedConversations: 2 });
+  expect(JSON.stringify(info.mock.calls)).not.toMatch(/SECRET-CHAT-TEXT|a@b\.c/);
+});
+
+test("customers/data_request for an unknown store or a payload without a customer still gives 200", async () => {
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  expect((await webhooks.handleWebhook(webhook("customers/data_request", "nobody.myshopify.com", undefined, undefined, { customer: { id: 1 } }))).status).toBe(200);
+  expect((await webhooks.handleWebhook(webhook("customers/data_request", "nobody2.myshopify.com"))).status).toBe(200);
+});
+
 test("bulk_operations/finish for a known store queues sync-poll", async () => {
   const id = await installedStore(`b-${randomUUID()}.myshopify.com`);
   const [s] = await admin`select shop_domain from stores where id = ${id}`;

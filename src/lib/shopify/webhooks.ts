@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, count, eq, inArray, isNull } from "drizzle-orm";
 import { type Conn, db, forStore } from "@/db/client";
 import { conversations, partnerConnectRequests, partnerGrants, stores, storeTokens, webhookEvents } from "@/db/schema";
 import { enqueue, enqueueProductSync } from "@/lib/jobs";
@@ -39,8 +39,31 @@ export const handlers: Record<string, Handler> = {
       tx,
     );
   },
-  async CUSTOMERS_DATA_REQUEST(shopDomain) {
-    console.info("webhook customers/data_request received", { shopDomain });
+  async CUSTOMERS_DATA_REQUEST(shopDomain, tx, payload) {
+    // Chats linked to a customer are personal data, so the request is logged with what is needed to answer it: the
+    // store, Shopify's request id and how many conversations the customer owns (never message text). The export itself is
+    // manual: run `node --env-file=.env scripts/export-customer-chats.mjs <shop> <customerId>` and give the JSON to the
+    // merchant, who replies to the customer. ponytail: automate (email the merchant the file) if requests become frequent.
+    const id = String(payload?.customer?.id ?? "");
+    const [s] = await tx.select({ id: stores.id }).from(stores).where(eq(stores.shopDomain, shopDomain));
+    const owned =
+      s && /^\d{1,20}$/.test(id)
+        ? await forStore(
+            s.id,
+            (t) =>
+              t
+                .select({ n: count() })
+                .from(conversations)
+                .where(and(eq(conversations.storeId, s.id), eq(conversations.ownerCustomerId, `gid://shopify/Customer/${id}`))),
+            tx,
+          )
+        : [{ n: 0 }];
+    console.info("webhook customers/data_request received", {
+      shopDomain,
+      storeId: s?.id ?? null,
+      dataRequestId: payload?.data_request?.id ?? null,
+      ownedConversations: owned[0].n,
+    });
   },
   async CUSTOMERS_REDACT(shopDomain, tx, payload) {
     console.info("webhook customers/redact received", { shopDomain });
