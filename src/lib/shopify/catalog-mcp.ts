@@ -3,6 +3,7 @@ import { forStore } from "@/db/client";
 import { products } from "@/db/schema";
 import { chunkText } from "@/lib/chunking";
 import type { SearchHit } from "@/lib/retrieval";
+import { callMcpTool } from "./mcp-call";
 
 // D89: Shopify's Storefront Catalog MCP (search_catalog over JSON-RPC at https://{shop}/api/ucp/mcp) as an alternative
 // product search. Request and response handling follow scripts/mcp-compare/run.mts.
@@ -94,8 +95,8 @@ async function callSearchCatalog(
   signal?: AbortSignal,
 ): Promise<string[]> {
   const args = { meta: { "ucp-agent": { profile } }, catalog: { query, filters: { available }, pagination: { limit: k } } };
-  const { r, sc } = await callUcpTool(shopDomain, "search_catalog", args, signal);
-  if (r?.isError || !Array.isArray(sc?.products)) throw new Error(`tool error: ${JSON.stringify(r).slice(0, 300)}`);
+  const { sc } = await callUcpTool(shopDomain, "search_catalog", args, signal);
+  if (!Array.isArray(sc?.products)) throw new Error("tool error: no products");
   const ids = (sc.products as McpProduct[])
     .map((p) => p.id)
     .filter((id): id is string => typeof id === "string" && /^gid:\/\/shopify\/Product\/\d+$/.test(id));
@@ -127,8 +128,8 @@ export async function getProduct(shopDomain: string, productGid: string, opts: {
 
 async function callGetProduct(shopDomain: string, productGid: string, profile: string, available: boolean, signal?: AbortSignal) {
   const args = { meta: { "ucp-agent": { profile } }, catalog: { id: productGid, filters: { available } } };
-  const { r, sc } = await callUcpTool(shopDomain, "get_product", args, signal);
-  if (r?.isError || !sc?.product || typeof sc.product !== "object") throw new Error(`tool error: ${JSON.stringify(r).slice(0, 300)}`);
+  const { sc } = await callUcpTool(shopDomain, "get_product", args, signal);
+  if (!sc?.product || typeof sc.product !== "object") throw new Error("tool error: no product");
   return sc.product as Record<string, unknown>;
 }
 
@@ -158,25 +159,19 @@ function mergeProducts(parts: Obj[]): Obj {
   return { ...parts[0], variants: sorted, options: [...options.values()] };
 }
 
-/** One tools/call on the store's UCP MCP: the raw `result` and its structured payload. Throws on an HTTP, JSON-RPC or network error, or a timeout of ~3 s. */
+/** One tools/call on the store's UCP MCP: its structured payload. Throws on an HTTP, JSON-RPC, tool or network error, or a timeout of ~3 s. */
 async function callUcpTool(shopDomain: string, name: string, args: unknown, signal?: AbortSignal) {
-  const body = { jsonrpc: "2.0", method: "tools/call", id: 1, params: { name, arguments: args } };
-  const timeout = AbortSignal.timeout(TIMEOUT_MS);
-  const res = await fetch(`https://${shopDomain}/api/ucp/mcp`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    redirect: "manual",
-    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-  });
-  const text = await res.text();
-  if (res.status !== 200) {
-    const loc = res.headers.get("location");
-    throw new Error(`HTTP ${res.status}${loc ? ` -> ${loc}` : ""}: ${text.slice(0, 300)}`);
+  const r = await callMcpTool(`https://${shopDomain}/api/ucp/mcp`, name, args, { timeoutMs: TIMEOUT_MS, signal, redirect: "manual" });
+  const text = r?.content?.[0]?.text;
+  // A payload that isn't JSON throws a fixed message, not the parser's (which quotes the text).
+  const sc = (r?.structuredContent ?? (text ? parseJson(text) : undefined)) as Record<string, unknown> | undefined;
+  return { sc };
+}
+
+function parseJson(text: unknown): unknown {
+  try {
+    return JSON.parse(String(text));
+  } catch {
+    throw new Error("invalid JSON");
   }
-  const json = JSON.parse(text);
-  if (json.error) throw new Error(`JSON-RPC error: ${JSON.stringify(json.error).slice(0, 300)}`);
-  const r = json.result;
-  const sc = r?.structuredContent ?? (r?.content?.[0]?.text ? JSON.parse(r.content[0].text) : undefined);
-  return { r, sc };
 }

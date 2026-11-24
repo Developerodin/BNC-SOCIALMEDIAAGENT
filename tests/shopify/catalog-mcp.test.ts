@@ -109,8 +109,8 @@ test("another store's products are never returned", async () => {
 });
 
 const failures: [() => Promise<Response> | Response, string][] = [
-  [() => new Response("nope", { status: 500 }), "HTTP 500: nope"],
-  [() => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32602, message: "bad args" } })), "bad args"],
+  [() => new Response("nope", { status: 500 }), "HTTP 500"],
+  [() => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32602, message: "bad args" } })), "JSON-RPC error"],
   [() => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [] } })), "tool error"],
   [() => Promise.reject(new TypeError("fetch failed")), "TypeError: fetch failed"],
 ];
