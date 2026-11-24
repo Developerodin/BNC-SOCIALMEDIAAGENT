@@ -30,6 +30,12 @@ export const stores = pgTable("stores", {
   currencyCode: text("currency_code"),
   // Task 24: hash of the widget config last written to the AppInstallation metafield, so an unchanged config isn't rewritten.
   widgetConfigHash: text("widget_config_hash"),
+  // The merchant's mobile app key (docs/mobile-api.md): sha256 hex only, the key itself is never stored. One per store;
+  // creating a new one replaces it, and null means none (native requests are then refused).
+  mobileKeyHash: text("mobile_key_hash").unique(),
+  // First 12 characters ('ackm_' + 7), shown in the admin so the merchant can tell keys apart.
+  mobileKeyPrefix: text("mobile_key_prefix"),
+  mobileKeyCreatedAt: timestamp("mobile_key_created_at", { withTimezone: true }),
 });
 
 export const storeTokens = pgTable("store_tokens", {

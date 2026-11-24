@@ -116,6 +116,83 @@ export default function AppHome() {
       <s-button onClick={resync} disabled={running}>
         Resync
       </s-button>
+      <MobileKeyCard />
     </s-page>
+  );
+}
+
+type MobileKey = { prefix: string | null; createdAt: string | null };
+
+/** docs/mobile-api.md: the key the store's own mobile app sends to use the chat. Replace and Revoke ask twice, since both break the live app. */
+function MobileKeyCard() {
+  const [current, setCurrent] = useState<MobileKey | null>(null);
+  const [shown, setShown] = useState<string | null>(null); // the new key, shown once
+  const [confirming, setConfirming] = useState<"replace" | "revoke" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const res = await authed("/api/app/mobile-key");
+      if (res.ok) setCurrent(await res.json());
+    })();
+  }, []);
+
+  async function act(method: "POST" | "DELETE") {
+    setBusy(true);
+    setError(false);
+    setConfirming(null);
+    try {
+      const res = await authed("/api/app/mobile-key", { method });
+      if (!res.ok) throw new Error(String(res.status));
+      if (method === "POST") {
+        const k: MobileKey & { key: string } = await res.json();
+        setShown(k.key);
+        setCurrent({ prefix: k.prefix, createdAt: k.createdAt });
+      } else {
+        setShown(null);
+        setCurrent({ prefix: null, createdAt: null });
+      }
+    } catch {
+      setError(true);
+    }
+    setBusy(false);
+  }
+
+  if (!current) return null;
+  const has = current.prefix !== null;
+  return (
+    <s-section heading="Mobile app key">
+      <s-text>Your mobile app sends this key to use the same chat assistant as your store.</s-text>
+      {has && current.createdAt && (
+        <s-text>
+          Active key {current.prefix}… · created {new Date(current.createdAt).toLocaleString()}
+        </s-text>
+      )}
+      {!has && <s-text>No key yet. Your mobile app can&apos;t use the chat until you create one.</s-text>}
+      {shown && <s-text>New key (copy it now, it won&apos;t be shown again): {shown}</s-text>}
+      {error && <s-text>That didn&apos;t work. Try again.</s-text>}
+      {confirming && (
+        <s-text>
+          {confirming === "replace"
+            ? "The old key stops working right away, so your app needs the new one. Click again to replace it."
+            : "Your app stops working with the chat right away. Click again to revoke the key."}
+        </s-text>
+      )}
+      {!has ? (
+        <s-button onClick={() => act("POST")} disabled={busy}>
+          Create key
+        </s-button>
+      ) : (
+        <>
+          <s-button onClick={() => (confirming === "replace" ? act("POST") : setConfirming("replace"))} disabled={busy}>
+            {confirming === "replace" ? "Yes, replace key" : "Replace key"}
+          </s-button>
+          <s-button onClick={() => (confirming === "revoke" ? act("DELETE") : setConfirming("revoke"))} disabled={busy}>
+            {confirming === "revoke" ? "Yes, revoke key" : "Revoke key"}
+          </s-button>
+        </>
+      )}
+    </s-section>
   );
 }

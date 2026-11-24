@@ -1,6 +1,9 @@
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
+import { MOBILE_KEY_HEADER } from "@/lib/chat/mobile-key";
+import { rateLimit } from "@/lib/partner/rate-limit";
+import { safeEqualHex, sha256Hex } from "@/lib/partner/secrets";
 
 // CORS for the storefront chat (Review Focus 3). An Origin is allowed only when it is exactly
 // https://<host> for a host in the store's domains (stores.domains, lowercased by refreshShopInfo).
@@ -22,9 +25,37 @@ export function corsFor(req: Request, store: { domains: string[] }): Record<stri
   return { "Access-Control-Allow-Origin": origin!, Vary: "Origin" };
 }
 
+/** Mobile app key path: requests per minute from one client IP, and for the whole store across all its app users. */
+export const MOBILE_IP_LIMIT = 30;
+export const MOBILE_STORE_LIMIT = 600;
+
+/**
+ * The caller's IP for the per-IP limit: the first X-Forwarded-For hop. `// ponytail:` only as trustworthy as the proxy
+ * in front of us, which must overwrite the header (Vercel, Fly and most load balancers do); behind one that appends,
+ * a client can rotate fake IPs and only the per-store limit holds. All callers without the header share one bucket.
+ */
+function clientIp(req: Request): string {
+  return req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
+}
+
+/**
+ * The store's mobile app (docs/mobile-api.md): no Origin, and the store's key in X-AskCart-App-Key. A wrong, revoked
+ * or missing key is a 403 like a wrong Origin; over a limit is a 429 with Retry-After. No CORS headers: a browser
+ * always sends an Origin, so it can never take this path.
+ */
+function appKeyCheck(req: Request, key: string, store: { id: string; mobileKeyHash: string | null }): Response | null {
+  if (!store.mobileKeyHash || !safeEqualHex(sha256Hex(key), store.mobileKeyHash)) return new Response(null, { status: 403 });
+  // ponytail: in-memory counters (see rate-limit.ts), so N instances allow N × the limits; move with the M10 deployment.
+  const wait =
+    rateLimit(`mobile:ip:${store.id}:${clientIp(req)}`, Date.now(), MOBILE_IP_LIMIT) ||
+    rateLimit(`mobile:store:${store.id}`, Date.now(), MOBILE_STORE_LIMIT);
+  return wait ? Response.json({ error: "rate_limited" }, { status: 429, headers: { "Retry-After": String(wait) } }) : null;
+}
+
 /**
  * Steps 1 and 2 of every storefront chat route (Task 19): validate `shop` and load the active store (else 404), then
- * check the Origin against its domains (else 403). Returns the error Response, or the store and its CORS headers.
+ * check the Origin against its domains (else 403). A request with no Origin may instead carry the store's mobile app
+ * key (appKeyCheck). Returns the error Response, or the store and its CORS headers (none for the app).
  */
 export async function storeFor(req: Request, shop: unknown) {
   if (typeof shop !== "string" || !SHOP.test(shop)) return Response.json({ error: "unknown_shop" }, { status: 404 });
@@ -38,13 +69,20 @@ export async function storeFor(req: Request, shop: unknown) {
       primaryLocale: stores.primaryLocale,
       currencyCode: stores.currencyCode,
       settings: stores.settings,
+      mobileKeyHash: stores.mobileKeyHash,
     })
     .from(stores)
     .where(eq(stores.shopDomain, shop));
   if (!store?.active) return Response.json({ error: "unknown_shop" }, { status: 404 });
+  const { mobileKeyHash, ...rest } = store; // the hash stays here, out of the routes and their logs
+  const appKey = req.headers.get(MOBILE_KEY_HEADER);
+  if (!req.headers.get("origin") && appKey) {
+    const refused = appKeyCheck(req, appKey, { id: store.id, mobileKeyHash });
+    return refused ?? { store: rest, cors: {} as Record<string, string> };
+  }
   const cors = corsFor(req, store);
   if (!cors) return new Response(null, { status: 403 });
-  return { store, cors };
+  return { store: rest, cors };
 }
 
 /**

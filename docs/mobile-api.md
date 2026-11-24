@@ -1,0 +1,183 @@
+# AskCart mobile chat API
+
+The store's own mobile app can use the same AI shopping assistant as the store's website: same answers, same
+products, same settings. These are the same endpoints the website chat widget uses, opened to native apps with a
+per-store **mobile app key**.
+
+## Before you start
+
+- **Base URL:** `https://<askcart-host>`. The app's public address. It changes until AskCart is hosted (for now it's
+  the `shopify app dev` tunnel), so keep it in config, not in code.
+- **Shop:** the store's permanent domain, e.g. `my-store.myshopify.com`. Every request names it with `shop`.
+- **Mobile app key:** the merchant creates it in Shopify admin → Apps → AskCart → **Mobile app key** → Create key.
+  It is shown once and looks like `ackm_` + 43 characters.
+
+## Authentication
+
+Send the key on every request:
+
+```
+X-AskCart-App-Key: ackm_…
+```
+
+- **Don't send an `Origin` header.** A request with an `Origin` is treated as a website request and the key is
+  ignored. Native HTTP clients (URLSession, OkHttp, Dart `http`) don't send one. A WebView does, so call the API
+  from native code, not from JavaScript inside a WebView.
+- The key ships inside the app, so treat it as an identifier, not a secret. Its protection is the rate limits below
+  and the merchant's **Replace key** / **Revoke key** buttons. Replace or revoke stops the old key **at once**, so
+  ship the new key in an app update (or load it from your own config server) before replacing.
+
+## Conversations
+
+A conversation is identified by a **conversation token** the server hands out. Send no token to start a new
+conversation; the first stream event (`meta`) gives you the token. Store it on the device and send it with every
+later request in the conversation. Never put it in a URL.
+
+## Endpoints
+
+| Method and path | What it does |
+|---|---|
+| `POST /api/chat` | Send a message, get the answer as a stream |
+| `GET /api/chat/history?shop=…` | The conversation's earlier messages |
+| `POST /api/chat/feedback?shop=…` | Thumbs up / down on an answer |
+| `POST /api/chat/cart-event?shop=…` | Tell AskCart a product from the chat was added to the cart (for the merchant's stats) |
+| `DELETE /api/chat/conversation?shop=…` | Clear chat (deletes the conversation) |
+| `GET /api/faq?shop=…&product=<id>` | A product's FAQ |
+
+### `POST /api/chat`
+
+Request body (JSON, `Content-Type: application/json`):
+
+```json
+{
+  "shop": "my-store.myshopify.com",
+  "message": "Do you have waterproof jackets under $100?",
+  "conversationToken": "…",
+  "requestId": "6f1c2a1e-4b8e-4a51-9a5c-2b9e8f0c7d11",
+  "productId": "1234567890",
+  "country": "US"
+}
+```
+
+- `message` (required): at most 2,000 characters (`413 message_too_long`).
+- `conversationToken`: omit to start a new conversation.
+- `requestId`: a new lowercase UUID per message. If you retry the same message after a dropped connection, send the
+  **same** `requestId`: you get the saved answer back instead of a second answer.
+- `productId` (optional): the numeric id of the product the shopper is looking at, so "is this waterproof?" works.
+- `country` (optional): ISO country code, for prices and availability in the shopper's market.
+
+The answer is a **Server-Sent Events** stream (`Content-Type: text/event-stream`). Each event is
+
+```
+event: <name>
+data: <one line of JSON>
+
+```
+
+Lines starting with `:` are keep-alive pings every 15 seconds; ignore them.
+
+| Event | Data | What to do |
+|---|---|---|
+| `meta` | `{ "conversationToken": "…" }` | Always first. Save the token. |
+| `text` | `{ "delta": "…" }` | Append to the answer bubble. |
+| `product` | a **Card** (below) | Show a product card. |
+| `error` | `{ "message": "…", "conversationToken": "…" }` | The answer failed; show `message` (it's written for shoppers). |
+| `done` | `{ "conversationToken": "…", "messageId": "…" }` | The answer is complete. Keep `messageId` for thumbs. |
+
+If the stream ends without `done` or `error` (connection dropped), retry with the same `requestId`.
+
+**Card:**
+
+```json
+{
+  "id": "gid://shopify/Product/1234567890",
+  "title": "Rain Jacket",
+  "imageUrl": "https://cdn.shopify.com/…",
+  "url": "https://my-store.com/products/rain-jacket",
+  "currency": "USD",
+  "available": true,
+  "action": "add",
+  "stock": { "kind": "count", "n": 3 },
+  "price": "89.00",
+  "compareAtPrice": "120.00",
+  "variants": [
+    {
+      "id": "44556677889900",
+      "title": "M / Blue",
+      "options": [{ "name": "Size", "value": "M" }, { "name": "Color", "value": "Blue" }],
+      "available": true,
+      "stock": { "kind": "in_stock" },
+      "price": "89.00",
+      "compareAtPrice": null
+    }
+  ],
+  "moreVariants": false
+}
+```
+
+- `action`: `add` = can go straight to the cart; `view_options` = open the product (e.g. needs a subscription
+  choice); `none` = not buyable now.
+- `stock.kind`: `count` (only a few left, `n` of them), `in_stock`, or `sold_out`.
+- Prices are decimal strings in `currency`.
+
+### Adding to the cart
+
+AskCart doesn't hold the cart; your app does. Use the variant's numeric `id` with your existing cart. With Shopify's
+Storefront API (`cartCreate` / `cartLinesAdd`) the merchandise id is `gid://shopify/ProductVariant/<variant id>`.
+Then report it, so the merchant sees chat-driven sales:
+
+`POST /api/chat/cart-event?shop=…` with header `X-Conversation-Token` and body
+
+```json
+{ "eventId": "<new UUID>", "messageId": "<the answer's messageId>", "productId": "gid://shopify/Product/1234567890", "variantId": "44556677889900", "quantity": 1 }
+```
+
+`quantity` is 1–99. Answers `204`.
+
+### `GET /api/chat/history?shop=…`
+
+Header `X-Conversation-Token`. Answers `{ "messages": [ … ] }`: the most recent messages, oldest first. Each message:
+`{ "id", "role": "user" | "assistant", "content", "status": "ok" | "cut_off", "cards": [Card], "rating": 1 | -1 | null }`.
+Cards are as saved when the answer was given, so prices may be stale: re-check before checkout.
+
+### `POST /api/chat/feedback?shop=…`
+
+Header `X-Conversation-Token`, body `{ "messageId": "…", "rating": 1 }` (`1`, `-1`, or `null` to clear). Answers `204`.
+
+### `DELETE /api/chat/conversation?shop=…`
+
+Header `X-Conversation-Token`. Answers `204`; then forget the token. `409 turn_in_progress` while an answer is
+still streaming.
+
+### `GET /api/faq?shop=…&product=<id>`
+
+`product` is the numeric id or the Product GID. Answers `{ "items": [{ "question", "answer" }] }`.
+
+## Errors
+
+| Status | Body | Meaning |
+|---|---|---|
+| 400 | `{ "error": "empty_message" \| "invalid_body" \| "invalid_request_id" }` | Fix the request. |
+| 401 | `{ "error": "invalid_token" }` | The conversation token is missing, wrong or expired: drop it and start a new conversation. |
+| 403 | no body | Wrong, replaced or revoked app key, or an `Origin` header was sent. |
+| 404 | `{ "error": "unknown_shop" \| "conversation_not_found" \| "message_not_found" }` | The store isn't using AskCart, or the conversation is gone. |
+| 409 | `{ "error": "turn_in_progress" }` | An answer is still streaming in this conversation; wait for it. |
+| 413 | `{ "error": "message_too_long" \| "body_too_large" }` | Shorten it. |
+| 429 | `{ "error": "rate_limited" }` + `Retry-After: <seconds>` | Too many requests; wait that long. |
+
+## Rate limits (per minute, all endpoints together)
+
+- **30 requests per device IP.**
+- **600 requests for the whole store** across all app users.
+
+A normal chat message costs one request, plus one for history when the chat screen opens. Contact us if a busy store
+needs more.
+
+## Quick test
+
+```bash
+curl -N https://<askcart-host>/api/chat \
+  -H "X-AskCart-App-Key: ackm_…" \
+  -H "Content-Type: application/json" \
+  -d '{"shop":"my-store.myshopify.com","message":"What do you sell?","requestId":"'"$(uuidgen | tr A-Z a-z)"'"}'
+```
