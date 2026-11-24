@@ -53,6 +53,21 @@ Follow `docs/deploy-ec2.md` top to bottom. In order:
 - Partner connect wave 3 (P10) from the previous handover is still pending: E2E test with a stand-in portal, log-leak
   test, "Connected apps" list with Disconnect, `docs/partner-api.md` alignment.
 
+## Failure behaviour and two optional improvements
+MCP is a data source our server calls, not a fallback for the server: if EC2 or OpenAI is down, the chat is down for
+every store (the launcher still loads from Shopify's CDN). Today:
+- Admin API fails (installed store): search still works; cards show without price/stock (C11 fallback).
+- Shopify MCP fails: installed stores lose only policy answers; MCP-only stores show "catalog temporarily unavailable".
+- Merchant uninstalls: the chat switches off for that store.
+
+Options for later (owner's call, not started):
+1. **Price/stock fallback via MCP (~0.5 day):** when the Admin API live check fails for an installed store, read price
+   and availability from the public UCP catalog (same mapping as the MCP-only path, `toLiveProduct`) instead of
+   showing cards without prices.
+2. **Uninstall → MCP-only fallback:** if the app is uninstalled but our embed line is still on the theme, keep the chat
+   running in MCP-only mode instead of switching it off (open decision #3 in the MCP-only plan; needs a verification of
+   the embed line and the merchant's consent to keep serving).
+
 ## Working notes
 - **Run locally:** Docker Desktop → `docker compose up -d` → `shopify app dev --config shopify.app.askcart.toml --store
   ask-cart-hv7ufqqy.myshopify.com` (storefront password: Online Store → Preferences → Store access). Open AskCart once
