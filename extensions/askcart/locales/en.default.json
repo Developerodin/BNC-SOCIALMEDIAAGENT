@@ -1,0 +1,13 @@
+{
+  "launcher": {
+    "label": "Ask us anything",
+    "aria_label": "Open the chat assistant"
+  },
+  "ask_block": {
+    "button": "Ask about this product"
+  },
+  "faq": {
+    "heading": "Frequently asked questions",
+    "show_answer": "Show answer"
+  }
+}

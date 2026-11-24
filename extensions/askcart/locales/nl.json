@@ -1,0 +1,13 @@
+{
+  "launcher": {
+    "label": "Stel ons je vraag",
+    "aria_label": "Chatassistent openen"
+  },
+  "ask_block": {
+    "button": "Vraag over dit product"
+  },
+  "faq": {
+    "heading": "Veelgestelde vragen",
+    "show_answer": "Antwoord tonen"
+  }
+}

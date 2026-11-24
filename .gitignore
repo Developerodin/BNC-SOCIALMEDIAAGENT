@@ -44,3 +44,6 @@ next-env.d.ts
 .shopify/
 !.env.example
 .superpowers/
+
+# widget build output (npm run build:widget), served from the extension assets (C20)
+/extensions/askcart/assets/askcart-*.js

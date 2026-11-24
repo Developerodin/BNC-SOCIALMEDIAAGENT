@@ -1,0 +1,22 @@
+{%- comment -%}
+  AskCart app embed (D39). Task 23 owns only the context capture and the schema; Task 26 fills in the rest.
+  The config is public (it's the page source), so it never holds a secret. Every value leaves Liquid through
+  `json` and then `escape`, so merchant text can't break out of the data attribute (Review Focus 2).
+{%- endcomment -%}
+{%- assign cfg = app.metafields.askcart.widget.value -%}
+{%- if cfg.enabled -%}
+  {%- capture product_id -%}{%- if request.page_type == 'product' and product -%}{{ product.id | append: '' | json }}{%- else -%}null{%- endif -%}{%- endcapture -%}
+  {%- capture ctx -%}
+    {"shop":{{ shop.permanent_domain | json }},"locale":{{ request.locale.iso_code | json }},"country":{{ localization.country.iso_code | json }},"currency":{{ cart.currency.iso_code | json }},"productId":{{ product_id }},"cartAddUrl":{{ routes.cart_add_url | json }},"cartUrl":{{ routes.cart_url | json }},"privacyUrl":{{ shop.privacy_policy.url | json }},"designMode":{{ request.design_mode | json }}}
+  {%- endcapture -%}
+  <div id="askcart-root" data-config="{{ cfg | json | escape }}" data-page="{{ ctx | strip | escape }}" hidden></div>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "AskCart chat",
+  "target": "body",
+  "javascript": "askcart-launcher.js",
+  "settings": []
+}
+{% endschema %}

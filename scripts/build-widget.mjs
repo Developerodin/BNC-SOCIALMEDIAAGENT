@@ -1,0 +1,61 @@
+// Bundles the storefront widget (widget/src) into the theme app extension's assets (C20: Shopify serves them).
+// The output is gitignored, so run this before `shopify app dev` / `shopify app deploy` (`npm run dev` does it).
+//   node scripts/build-widget.mjs           one build, fails when a file is over its gzip budget
+//   node scripts/build-widget.mjs --watch   rebuilds on change, budgets only warn
+import * as esbuild from "esbuild";
+import { readFileSync } from "node:fs";
+import { gzipSync } from "node:zlib";
+import path from "node:path";
+
+const root = path.resolve(import.meta.dirname, "..");
+const outdir = path.join(root, "extensions/askcart/assets");
+const watch = process.argv.includes("--watch");
+
+// Gzip budgets in bytes. Launcher and chat come from the M5 plan's Global Constraints; the block scripts use
+// Shopify's suggested 10 KB compressed limit for schema-loaded JS.
+const entries = [
+  { in: "widget/src/launcher.ts", out: "askcart-launcher", budget: 4 * 1024 },
+  { in: "widget/src/widget.ts", out: "askcart-widget", budget: 30 * 1024 },
+  { in: "widget/src/faq-block.ts", out: "askcart-faq", budget: 10 * 1024 },
+  { in: "widget/src/ask-block.ts", out: "askcart-ask", budget: 10 * 1024 },
+];
+
+function report() {
+  let over = false;
+  for (const e of entries) {
+    const buf = readFileSync(path.join(outdir, `${e.out}.js`));
+    const gz = gzipSync(buf, { level: 9 }).length;
+    const bad = gz > e.budget;
+    over ||= bad;
+    console.log(`${bad ? "OVER" : "ok  "} ${e.out}.js  ${buf.length} B raw, ${gz} B gzip (budget ${e.budget} B)`);
+  }
+  return over;
+}
+
+const options = {
+  absWorkingDir: root,
+  entryPoints: entries.map((e) => ({ in: e.in, out: e.out })),
+  outdir,
+  bundle: true,
+  minify: true,
+  format: "iife",
+  target: "es2020",
+  platform: "browser",
+  legalComments: "none",
+  logLevel: "warning",
+};
+
+if (watch) {
+  const ctx = await esbuild.context({
+    ...options,
+    plugins: [{ name: "size", setup: (b) => b.onEnd((r) => { if (r.errors.length === 0) report(); }) }],
+  });
+  await ctx.watch();
+  console.log("Watching widget/src ...");
+} else {
+  await esbuild.build(options);
+  if (report()) {
+    console.error("A widget file is over its gzip budget.");
+    process.exit(1);
+  }
+}

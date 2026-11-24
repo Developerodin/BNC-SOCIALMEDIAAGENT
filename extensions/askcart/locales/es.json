@@ -1,0 +1,13 @@
+{
+  "launcher": {
+    "label": "Pregúntanos lo que quieras",
+    "aria_label": "Abrir el asistente de chat"
+  },
+  "ask_block": {
+    "button": "Preguntar sobre este producto"
+  },
+  "faq": {
+    "heading": "Preguntas frecuentes",
+    "show_answer": "Mostrar respuesta"
+  }
+}

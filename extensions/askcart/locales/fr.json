@@ -1,0 +1,13 @@
+{
+  "launcher": {
+    "label": "Posez-nous vos questions",
+    "aria_label": "Ouvrir l’assistant de discussion"
+  },
+  "ask_block": {
+    "button": "Poser une question sur ce produit"
+  },
+  "faq": {
+    "heading": "Questions fréquentes",
+    "show_answer": "Afficher la réponse"
+  }
+}

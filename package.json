@@ -6,11 +6,13 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/build-widget.mjs && next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:widget": "node scripts/build-widget.mjs",
+    "widget:watch": "node scripts/build-widget.mjs --watch"
   },
   "dependencies": {
     "@shopify/shopify-api": "^15.1.2",
@@ -28,8 +30,10 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.31.11",
+    "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
+    "happy-dom": "^21.0.4",
     "tailwindcss": "4.3.3",
     "typescript": "^5",
     "vitest": "^5.1.1"

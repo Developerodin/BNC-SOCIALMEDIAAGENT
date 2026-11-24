@@ -1,0 +1,13 @@
+{
+  "launcher": {
+    "label": "Fragen Sie uns",
+    "aria_label": "Chat-Assistenten öffnen"
+  },
+  "ask_block": {
+    "button": "Frage zu diesem Produkt"
+  },
+  "faq": {
+    "heading": "Häufig gestellte Fragen",
+    "show_answer": "Antwort anzeigen"
+  }
+}
