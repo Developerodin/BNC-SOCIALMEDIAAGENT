@@ -7,7 +7,7 @@ vi.mock("openai", () => ({
   }),
 }));
 
-import { rewriteQuery } from "@/lib/chat/rewrite";
+import { REWRITE_TIMEOUT_MS, rewriteQuery } from "@/lib/chat/rewrite";
 
 function ok(json: unknown, usage = { input_tokens: 40, output_tokens: 9 }) {
   return { output_text: JSON.stringify(json), usage };
@@ -73,7 +73,7 @@ test("a timeout returns the message unchanged without gift cards", async () => {
         new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")))),
     );
     const p = rewriteQuery({ message: "[email] wants wax", history: [], storeLocale: "en", signal: new AbortController().signal });
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(REWRITE_TIMEOUT_MS);
     expect(await p).toEqual({ query: "[email] wants wax", includeGiftCards: false, budget: null, sort: null, tokens: { input: 0, output: 0 } });
   } finally {
     vi.useRealTimers();

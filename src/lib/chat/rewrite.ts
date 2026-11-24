@@ -11,7 +11,8 @@ export type Rewrite = {
   tokens: { input: number; output: number };
 };
 
-const REWRITE_TIMEOUT_MS = 5000;
+// 8 s: the small model took 4.1–5.0 s on 2026-11-24, so 5 s often fell back to the untranslated message (D76).
+export const REWRITE_TIMEOUT_MS = 8000;
 const REWRITE_HISTORY = 6;
 
 const SCHEMA = {
