@@ -81,7 +81,7 @@ describe("askcart-ask.liquid", () => {
   it("renders a theme-styled button with the product id and the translated label", () => {
     expect(liquid).toMatch(/class="button button--secondary/);
     expect(liquid).toContain("data-askcart-ask");
-    expect(liquid).toContain('data-product="{{ product.id }}"');
+    expect(liquid).toContain('data-product="{{ product.id | escape }}"');
     expect(liquid).toContain("'ask_block.button' | t");
   });
 });
