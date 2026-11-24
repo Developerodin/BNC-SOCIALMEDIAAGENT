@@ -50,6 +50,13 @@
       "when": 1795502825025,
       "tag": "0006_stores_sync_error",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795503139186,
+      "tag": "0007_products_is_gift_card",
+      "breakpoints": true
     }
   ]
 }

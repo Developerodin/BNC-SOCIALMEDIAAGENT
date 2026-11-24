@@ -38,6 +38,7 @@ function product(over: Partial<import("@/lib/products").ShopifyProduct> = {}): i
     status: "ACTIVE",
     onlineStoreUrl: "https://shop.example.com/products/tee",
     publishedAt: "2026-01-01T00:00:00Z",
+    isGiftCard: false,
     imageUrl: null,
     updatedAt: "2026-01-02T00:00:00Z",
     metafields: [],
@@ -182,6 +183,9 @@ test("toShopifyProduct maps a PRODUCT_FIELDS node, null-safe on the image", () =
   expect(p.imageUrl).toBe("https://cdn/x.png");
   expect(p.onlineStoreUrl).toBeNull();
   expect(p.publishedAt).toBeNull();
+  expect(p.isGiftCard).toBe(false);
+  expect(products.toShopifyProduct({ ...node, isGiftCard: true }, []).isGiftCard).toBe(true);
+  expect(products.PRODUCT_FIELDS).toContain("isGiftCard");
   expect(products.PRODUCT_FIELDS).toContain("publishedAt");
   expect(p.metafields).toBe(m);
   expect(products.toShopifyProduct({ ...node, featuredMedia: null }, []).imageUrl).toBeNull();

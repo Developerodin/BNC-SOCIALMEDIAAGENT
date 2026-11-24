@@ -51,6 +51,8 @@ export const products = pgTable(
     imageUrl: text("image_url"),
     status: text("status").notNull(),
     published: boolean("published").notNull(),
+    // D74: gift cards are searched only when the shopper asks for one.
+    isGiftCard: boolean("is_gift_card").notNull().default(false),
     content: text("content").notNull(),
     contentHash: text("content_hash").notNull(),
     shopifyUpdatedAt: timestamp("shopify_updated_at", { withTimezone: true }).notNull(),

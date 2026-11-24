@@ -123,3 +123,15 @@ test("one long product fills at most 2 of the k slots; the rest go to other prod
   expect(new Set(hits.map((h) => h.productId)).size).toBe(3);
   for (let i = 1; i < hits.length; i++) expect(hits[i - 1].score).toBeGreaterThanOrEqual(hits[i].score);
 });
+
+test("D74: gift cards are left out of search unless includeGiftCards is set", async () => {
+  const gift = node("7", { title: "Gift card for hiking boots", description: "hiking boots gift card", isGiftCard: true });
+  const a = await seeded(boots("1"), gift);
+
+  const normal = await retrieval.search(a, "hiking boots gift", 10);
+  expect(normal.map((h) => h.productId)).not.toContain(gid("7"));
+  expect(normal.map((h) => h.productId)).toContain(gid("1"));
+
+  const asked = await retrieval.search(a, "hiking boots gift", 10, { includeGiftCards: true });
+  expect(asked.map((h) => h.productId)).toContain(gid("7"));
+});

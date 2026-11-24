@@ -1,6 +1,6 @@
 import { and, asc, cosineDistance, eq, notInArray, sql } from "drizzle-orm";
 import { forStore } from "@/db/client";
-import { chunks } from "@/db/schema";
+import { chunks, products } from "@/db/schema";
 import { embed } from "@/lib/embeddings";
 
 export type SearchHit = { chunkId: string; source: "product"; productId: string; content: string; score: number };
@@ -14,13 +14,14 @@ const OVERFETCH = 4;
  * with at most PER_PRODUCT chunks from any one product so one long product can't fill every slot.
  * With opts.productId (a GID or a numeric id), up to 2 of that product's nearest chunks not already among the hits
  * are appended after the top k, so a product page always has its own product in context.
+ * Gift cards are left out unless opts.includeGiftCards is set (D74); in M4 the chat model sets it when the shopper asks for one.
  * The query must already be masked (D41); this sends it to OpenAI as is.
  */
 export async function search(
   storeId: string,
   query: string,
   k = 8,
-  opts: { productId?: string } = {},
+  opts: { productId?: string; includeGiftCards?: boolean } = {},
 ): Promise<SearchHit[]> {
   if (!query.trim()) return [];
   const {
@@ -43,10 +44,14 @@ export async function search(
     // ponytail: the cap filters the k*OVERFETCH nearest chunks, so when those come from fewer than k/PER_PRODUCT
     // products the result has fewer than k hits. Upgrade path: a row_number() over (partition by product_id) window,
     // at the cost of the exact scan (an HNSW index can't serve it).
+    const giftCards = tx
+      .select({ id: products.shopifyId })
+      .from(products)
+      .where(and(eq(products.storeId, storeId), eq(products.isGiftCard, true)));
     const near = await tx
       .select(cols)
       .from(chunks)
-      .where(eq(chunks.storeId, storeId))
+      .where(and(eq(chunks.storeId, storeId), opts.includeGiftCards ? undefined : notInArray(chunks.productId, giftCards)))
       .orderBy(asc(distance))
       .limit(k * OVERFETCH);
     const perProduct = new Map<string, number>();

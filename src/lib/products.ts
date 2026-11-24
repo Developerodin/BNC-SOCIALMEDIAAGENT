@@ -17,6 +17,7 @@ export type ShopifyProduct = {
   onlineStoreUrl: string | null;
   /** Set when published to the Online Store. Unlike onlineStoreUrl, it is not null on password-protected stores. */
   publishedAt: string | null;
+  isGiftCard: boolean;
   imageUrl: string | null;
   updatedAt: string;
   metafields: { namespace: string; key: string; type: string; value: string }[];
@@ -29,7 +30,7 @@ export type ShopifyProduct = {
 
 /** GraphQL selection for one product (Admin API 2026-10), without metafields. */
 export const PRODUCT_FIELDS = `
-  id handle title description productType vendor tags status onlineStoreUrl publishedAt updatedAt
+  id handle title description productType vendor tags status onlineStoreUrl publishedAt updatedAt isGiftCard
   category { fullName }
   options { name values }
   featuredMedia { preview { image { url } } }
@@ -50,6 +51,7 @@ export function toShopifyProduct(node: any, metafields: ShopifyProduct["metafiel
     status: node.status,
     onlineStoreUrl: node.onlineStoreUrl ?? null,
     publishedAt: node.publishedAt ?? null,
+    isGiftCard: node.isGiftCard ?? false,
     imageUrl: node.featuredMedia?.preview?.image?.url ?? null,
     updatedAt: node.updatedAt,
     metafields,
@@ -164,6 +166,7 @@ export async function upsertProducts(storeId: string, ps: ShopifyProduct[], conn
       // ponytail: nothing fires when the scheduled time passes, so it flips to true only at the next products/update
       // webhook or resync (daily by default).
       published: p.publishedAt != null && new Date(p.publishedAt).getTime() <= Date.now(),
+      isGiftCard: p.isGiftCard,
       content,
       contentHash: createHash("sha256").update(content).digest("hex"),
       shopifyUpdatedAt: new Date(p.updatedAt),
@@ -184,6 +187,7 @@ export async function upsertProducts(storeId: string, ps: ShopifyProduct[], conn
             imageUrl: sql`excluded.image_url`,
             status: sql`excluded.status`,
             published: sql`excluded.published`,
+            isGiftCard: sql`excluded.is_gift_card`,
             content: sql`excluded.content`,
             contentHash: sql`excluded.content_hash`,
             shopifyUpdatedAt: sql`excluded.shopify_updated_at`,

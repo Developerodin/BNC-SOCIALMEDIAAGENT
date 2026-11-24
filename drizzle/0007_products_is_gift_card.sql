@@ -1,0 +1,1 @@
+ALTER TABLE "products" ADD COLUMN "is_gift_card" boolean DEFAULT false NOT NULL;
