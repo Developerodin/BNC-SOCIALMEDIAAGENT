@@ -130,7 +130,7 @@ function stockOf(v: VariantNode): Stock {
   return { kind: "in_stock" };
 }
 
-function isThrottled(e: unknown): boolean {
+export function isThrottled(e: unknown): boolean {
   if (e instanceof HttpThrottlingError) return true;
   if (!(e instanceof GraphqlQueryError)) return false;
   // shopify-api puts GraphQL errors (HTTP 200) under body.errors.graphQLErrors; accept a plain errors array too.

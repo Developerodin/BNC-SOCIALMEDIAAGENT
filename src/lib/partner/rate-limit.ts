@@ -1,0 +1,26 @@
+/** Requests allowed per secret per window. */
+export const PARTNER_LIMIT = 60;
+const WINDOW_MS = 60_000;
+
+const windows = new Map<string, { start: number; count: number }>();
+
+/**
+ * Fixed one-minute window per key (a hash of the secret). Returns the seconds to wait when over the limit, or 0.
+ * ponytail: the counts live in this process only, so N instances allow N × 60 per minute and a restart resets them.
+ * Fine for one partner on one instance; move it to Postgres or Redis with the M10 deployment work.
+ */
+export function rateLimit(key: string, now = Date.now()): number {
+  const w = windows.get(key);
+  if (!w || now - w.start >= WINDOW_MS) {
+    windows.set(key, { start: now, count: 1 });
+    return 0;
+  }
+  if (w.count >= PARTNER_LIMIT) return Math.max(1, Math.ceil((w.start + WINDOW_MS - now) / 1000));
+  w.count++;
+  return 0;
+}
+
+/** Tests only. */
+export function resetRateLimit(): void {
+  windows.clear();
+}
