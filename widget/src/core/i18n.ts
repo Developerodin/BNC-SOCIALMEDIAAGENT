@@ -39,6 +39,7 @@ const en = {
   helpful: "Helpful",
   not_helpful: "Not helpful",
   feedback_thanks: "Thanks for your feedback",
+  feedback_error: "Couldn't save",
 };
 export type Key = keyof typeof en;
 type Dict = Record<Key, string>;
@@ -81,6 +82,7 @@ const fr: Dict = {
   helpful: "Utile",
   not_helpful: "Pas utile",
   feedback_thanks: "Merci pour votre avis",
+  feedback_error: "Échec de l'enregistrement",
 };
 
 const de: Dict = {
@@ -121,6 +123,7 @@ const de: Dict = {
   helpful: "Hilfreich",
   not_helpful: "Nicht hilfreich",
   feedback_thanks: "Danke für dein Feedback",
+  feedback_error: "Speichern fehlgeschlagen",
 };
 
 const es: Dict = {
@@ -161,6 +164,7 @@ const es: Dict = {
   helpful: "Útil",
   not_helpful: "No es útil",
   feedback_thanks: "Gracias por tu opinión",
+  feedback_error: "No se pudo guardar",
 };
 
 const it: Dict = {
@@ -201,6 +205,7 @@ const it: Dict = {
   helpful: "Utile",
   not_helpful: "Non utile",
   feedback_thanks: "Grazie per il tuo feedback",
+  feedback_error: "Impossibile salvare",
 };
 
 const nl: Dict = {
@@ -241,6 +246,7 @@ const nl: Dict = {
   helpful: "Nuttig",
   not_helpful: "Niet nuttig",
   feedback_thanks: "Bedankt voor je feedback",
+  feedback_error: "Opslaan mislukt",
 };
 
 export const DICTS = { en: en as Dict, fr, de, es, it, nl };
