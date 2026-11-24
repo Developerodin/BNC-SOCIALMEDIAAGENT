@@ -134,7 +134,7 @@ OPENAI_MODEL_LARGE=<model>
 # shows "Assistant unavailable", set the one that fails to "low" (and restart: pm2 restart askcart --update-env).
 # OPENAI_REASONING_SMALL=low
 # OPENAI_REASONING_LARGE=low
-UCP_AGENT_PROFILE_URL=https://app.askcart.example/ucp-agent-profile.json   # turns on Shopify Catalog MCP tools
+UCP_AGENT_PROFILE_URL=https://app.askcart.example/ucp-agent-profile.json   # turns on Shopify Catalog MCP tools; also powers policy answers via ask_business (old policies tool is the fallback until 2027-01-15)
 # Legacy partner access only, if the Social Media Agent still uses it:
 # PARTNER_STORE_DOMAIN=...  PARTNER_API_SECRET=...
 ```

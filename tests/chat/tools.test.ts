@@ -49,6 +49,7 @@ test("store_policies passes the query and valid policy types, and wraps the sani
   expect(out.endsWith("\n</store_data>")).toBe(true);
   expect(out).toContain("30 days");
   expect(out.slice(13, -14)).not.toMatch(/\[\[|\]\]|<\/?store_data/);
+  expect(out).toMatch(/price or stock.*not authoritative/);
 });
 
 test("store_policies failing tells the model to point the shopper to the store", async () => {

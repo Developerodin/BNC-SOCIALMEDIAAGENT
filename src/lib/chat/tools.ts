@@ -105,7 +105,8 @@ export async function runTool(name: string, rawArgs: string, ctx: ToolContext): 
     );
     const text = await askPolicies(ctx.store.shopDomain, query, types, { storeId: ctx.store.id, signal: ctx.signal });
     if (text === null) return data("Store policies are unavailable right now. Suggest the shopper checks the store's policy pages or contacts the store.");
-    return data(text ? sanitizeData(text) : "The store has no policy or FAQ answer for this.");
+    // Policy answers can mention prices or stock; D37: never quote prices, stock only from LIVE lines.
+    return data(text ? `${sanitizeData(text)}\n(Any price or stock in this answer is not authoritative.)` : "The store has no policy or FAQ answer for this.");
   }
 
   if (name === "search_products") return data(await searchMore(query, ctx));

@@ -47,6 +47,7 @@ for (const [name, res] of failures) {
 }
 
 test("policies: a good reply is the tool's text, cut to 6000 characters", async () => {
+  vi.stubEnv("UCP_AGENT_PROFILE_URL", ""); // the old tool; with a profile ask_business is asked first
   fetchMock.mockImplementation(async () => rpc({ jsonrpc: "2.0", id: 1, result: { content: [{ text: "x".repeat(7000) }] } }));
   expect(await askPolicies("s.myshopify.com", "returns?", ["refund"], { storeId: "st" })).toHaveLength(6000);
   const body = JSON.parse(fetchMock.mock.calls[0][1].body);
