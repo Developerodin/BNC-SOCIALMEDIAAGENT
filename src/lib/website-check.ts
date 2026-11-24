@@ -28,6 +28,7 @@ export function normalizeHost(input: unknown): string | null {
   if (u.protocol !== "https:" && u.protocol !== "http:") return null;
   if (u.username || u.password || u.port) return null;
   const host = u.hostname.toLowerCase().replace(/\.$/, "");
+  if (/\.(local|internal|localhost)$/.test(host)) return null;
   return host.length <= 253 && HOST_RE.test(host) ? host : null;
 }
 
@@ -42,7 +43,7 @@ for (const [net, bits] of [
   ["198.51.100.0", 24], ["203.0.113.0", 24], ["224.0.0.0", 4], ["240.0.0.0", 4],
 ] as const) blocked4.addSubnet(net, bits, "ipv4");
 for (const [net, bits] of [
-  ["::", 128], ["::1", 128], ["::ffff:0:0", 96], ["64:ff9b::", 96], ["100::", 64], ["2001::", 32], ["2001:db8::", 32],
+  ["::", 96], ["::ffff:0:0", 96], ["64:ff9b:1::", 48], ["64:ff9b::", 96], ["100::", 64], ["2001::", 32], ["2001:db8::", 32],
   ["2002::", 16], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8],
 ] as const) blocked6.addSubnet(net, bits, "ipv6");
 
@@ -51,7 +52,10 @@ export function isPublicAddress(ip: string): boolean {
   return v === 4 ? !blocked4.check(ip, "ipv4") : v === 6 ? !blocked6.check(ip, "ipv6") : false;
 }
 
-const TIMEOUT_MS = 4000;
+// The per-request timeout below is an IDLE timeout (any byte resets it) and lookup() has none, so a server dripping a
+// byte every few seconds could hold us for days. This deadline bounds the whole check, DNS and every hop included.
+export const DEADLINE_MS = 9000;
+const IDLE_TIMEOUT_MS = 4000;
 const MAX_BYTES = 200 * 1024;
 const MAX_REDIRECTS = 2;
 
@@ -62,19 +66,27 @@ type Page = { status: number; headers: Record<string, string | string[] | undefi
  * the hostname kept for TLS (servername) and the Host header. The socket never re-resolves, so DNS rebinding between
  * the check and the connect can't redirect us inward. Never throws: null means unreachable or refused.
  */
-async function fetchPage(host: string): Promise<Page | null> {
+async function fetchPage(host: string, path: string, signal: AbortSignal): Promise<Page | null> {
   let address: string;
   try {
-    const all = await lookup(host, { all: true });
+    const aborted = new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(new Error("deadline")), { once: true }));
+    aborted.catch(() => {}); // only awaited through the race below
+    const all = await Promise.race([lookup(host, { all: true }), aborted]);
     if (!all.length || !all.every((a) => isPublicAddress(a.address))) return null;
     address = all[0].address;
   } catch {
     return null;
   }
+  if (signal.aborted) return null;
   return new Promise<Page | null>((resolve) => {
+    const onAbort = () => {
+      req.destroy();
+      resolve(null);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
     const req = request(
       {
-        host: address, servername: host, method: "GET", path: "/", timeout: TIMEOUT_MS, agent: false,
+        host: address, servername: host, method: "GET", path, timeout: IDLE_TIMEOUT_MS, agent: false,
         headers: { Host: host, "User-Agent": "AskCartSiteCheck/1.0", Accept: "text/html" }, // no cookies, no credentials
       },
       (res) => {
@@ -102,12 +114,13 @@ async function fetchPage(host: string): Promise<Page | null> {
   });
 }
 
-function shopifyShop(p: Page): { shopify: boolean; shop: string | null } {
-  const h = p.headers;
-  const poweredBy = String(h["powered-by"] ?? "");
-  const shop = /Shopify\.shop\s*=\s*["']([^"']+)["']/.exec(p.body)?.[1]?.toLowerCase() ?? null;
-  const shopify = !!(h["x-shopid"] || h["x-shopify-stage"] || /shopify/i.test(poweredBy) || p.body.includes("cdn.shopify.com") || shop);
-  return { shopify, shop };
+/**
+ * The store a page says it is (`Shopify.shop = "x.myshopify.com"`), or null. Only this names a store. Shopify headers and
+ * cdn.shopify.com also appear on headless/Hydrogen sites, Buy Buttons and Shopify-hosted images, so they prove nothing
+ * about whose storefront it is and must not decide "another store".
+ */
+function pageShop(p: Page): string | null {
+  return /Shopify\.shop\s*=\s*["']([^"']+)["']/.exec(p.body)?.[1]?.toLowerCase() ?? null;
 }
 
 /**
@@ -118,28 +131,37 @@ function shopifyShop(p: Page): { shopify: boolean; shop: string | null } {
  */
 export async function checkWebsite(host: string, shop: string, domains: string[]): Promise<WebsiteCheck> {
   if (domains.includes(host)) return { kind: "shopify_store", host, reachable: true };
-  let current = host;
-  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    const page = await fetchPage(current);
-    if (!page) return { kind: "other", host, reachable: false };
-    if (page.status >= 300 && page.status < 400 && page.location && hop < MAX_REDIRECTS) {
-      let next: string | null = null;
-      try {
-        const u = new URL(page.location, `https://${current}/`);
-        next = u.protocol === "https:" ? normalizeHost(u.origin) : null;
-      } catch {
-        // an unparsable Location: judge this page as it is
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), DEADLINE_MS);
+  try {
+    let current = host;
+    let path = "/";
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const page = await fetchPage(current, path, ctl.signal);
+      if (!page) return { kind: "other", host, reachable: false };
+      if (page.status >= 300 && page.status < 400 && page.location && hop < MAX_REDIRECTS) {
+        let next: string | null = null;
+        let nextPath = "/";
+        try {
+          const u = new URL(page.location, `https://${current}${path}`);
+          next = u.protocol === "https:" ? normalizeHost(u.origin) : null;
+          nextPath = u.pathname + u.search; // the target's own path: many sites redirect / to /en or /home
+        } catch {
+          // an unparsable Location: judge this page as it is
+        }
+        if (next) {
+          if (domains.includes(next)) return { kind: "shopify_store", host, reachable: true };
+          current = next;
+          path = nextPath;
+          continue;
+        }
       }
-      if (next) {
-        if (domains.includes(next)) return { kind: "shopify_store", host, reachable: true };
-        current = next;
-        continue;
-      }
+      const found = pageShop(page);
+      if (!found) return { kind: "other", host, reachable: true };
+      return { kind: found === shop ? "shopify_store" : "shopify_other_store", host, reachable: true };
     }
-    const found = shopifyShop(page);
-    if (!found.shopify) return { kind: "other", host, reachable: true };
-    // Shopify, and it says which store: that decides. If it doesn't say, our domains list (checked above) didn't have it.
-    return { kind: found.shop === shop ? "shopify_store" : "shopify_other_store", host, reachable: true };
+    return { kind: "other", host, reachable: false };
+  } finally {
+    clearTimeout(timer);
   }
-  return { kind: "other", host, reachable: false };
 }

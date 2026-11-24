@@ -15,26 +15,37 @@ vi.mock("@/lib/shopify/session", async (orig) => ({
   }),
 }));
 
-type Reply = { status?: number; headers?: Record<string, string>; body?: string };
+type Reply = { status?: number; headers?: Record<string, string>; body?: string; drip?: boolean };
 const dnsAnswers = new Map<string, string[]>();
 const replies = new Map<string, Reply | "error">();
 const lookup = vi.fn(async (host: string) => {
+  if (host === "slowdns.com") return new Promise<never>(() => {}); // never answers
   const a = dnsAnswers.get(host);
   if (!a) throw new Error("ENOTFOUND");
   return a.map((address) => ({ address, family: address.includes(":") ? 6 : 4 }));
 });
 vi.mock("node:dns/promises", () => ({ lookup: (h: string) => lookup(h) }));
-const connects: { host: string; servername: string; hostHeader: string }[] = [];
+const connects: { host: string; servername: string; hostHeader: string; path: string }[] = [];
+let destroyed = 0;
 vi.mock("node:https", () => ({
-  request: (opts: { host: string; servername: string; headers: Record<string, string> }, cb: (res: EventEmitter) => void) => {
+  request: (opts: { host: string; servername: string; path: string; headers: Record<string, string> }, cb: (res: EventEmitter) => void) => {
     const req = new EventEmitter() as EventEmitter & { end(): void; destroy(): void };
-    req.destroy = () => {};
+    let drip: ReturnType<typeof setInterval> | undefined;
+    req.destroy = () => {
+      destroyed++;
+      clearInterval(drip);
+    };
     req.end = () => {
-      connects.push({ host: opts.host, servername: opts.servername, hostHeader: opts.headers.Host });
+      connects.push({ host: opts.host, servername: opts.servername, hostHeader: opts.headers.Host, path: opts.path });
       const r = replies.get(opts.servername);
       if (!r || r === "error") return void queueMicrotask(() => req.emit("error", new Error("ECONNREFUSED")));
       const res = Object.assign(new EventEmitter(), { statusCode: r.status ?? 200, headers: r.headers ?? {}, destroy() {} });
       cb(res);
+      if (r.drip) {
+        // A hostile server: one byte every 3 s, never finishing. Each byte would reset an idle timeout.
+        drip = setInterval(() => res.emit("data", Buffer.from("x")), 3000);
+        return;
+      }
       queueMicrotask(() => {
         res.emit("data", Buffer.from(r.body ?? ""));
         res.emit("end");
@@ -98,7 +109,7 @@ test("normalises to a lowercase hostname", () => {
 test.each([
   "", "localhost", "http://localhost/", "127.0.0.1", "https://10.0.0.1/", "[::1]", "https://[::1]/", "2130706433", "0x7f.1",
   "brand.com:8443", "https://brand.com:444/", "https://user:pw@brand.com/", "ftp://brand.com", "file:///etc/passwd", "javascript:alert(1)",
-  "brand", "a b.com", "-brand.com", "brand.123", ".com",
+  "foo.local", "db.internal", "x.localhost", "brand", "a b.com", "-brand.com", "brand.123", ".com",
 ])("rejects %j with 400", async (input) => {
   expect((await post(input)).status).toBe(400);
   expect(lookup).not.toHaveBeenCalled();
@@ -119,7 +130,7 @@ test("a host in stores.domains answers with no network", async () => {
 });
 
 test.each(["10.1.2.3", "127.0.0.1", "169.254.169.254", "172.16.0.5", "192.168.1.1", "100.64.0.1", "0.0.0.0", "224.0.0.1", "240.0.0.1", "198.18.0.1",
-  "::1", "::", "fe80::1", "fc00::1", "fd12::1", "ff02::1", "::ffff:10.0.0.1", "::ffff:7f00:1", "64:ff9b::a00:1", "2002:a00:1::1"])(
+  "::1", "::", "::10.0.0.1", "::a00:1", "64:ff9b:1::a00:1", "fe80::1", "fc00::1", "fd12::1", "ff02::1", "::ffff:10.0.0.1", "::ffff:7f00:1", "64:ff9b::a00:1", "2002:a00:1::1"])(
   "refuses %s without connecting",
   async (ip) => {
     expect(lib.isPublicAddress(ip)).toBe(false);
@@ -146,7 +157,7 @@ test("connects to the vetted IP, keeping the hostname for TLS and Host", async (
   dnsAnswers.set("plain.com", ["93.184.216.34"]);
   replies.set("plain.com", { body: "<html>hello</html>" });
   await post("plain.com");
-  expect(connects).toEqual([{ host: "93.184.216.34", servername: "plain.com", hostHeader: "plain.com" }]);
+  expect(connects).toEqual([{ host: "93.184.216.34", servername: "plain.com", hostHeader: "plain.com", path: "/" }]);
 });
 
 test("a non-Shopify site gets the embed line and the chat link", async () => {
@@ -158,7 +169,7 @@ test("a non-Shopify site gets the embed line and the chat link", async () => {
   expect(body.chatLink).toBe("https://app.askcart.test/chat/mine.myshopify.com");
 });
 
-test("Shopify is detected from headers and from HTML, and the shop name decides whose it is", async () => {
+test("only a parsed Shopify.shop names a store; headers or cdn.shopify.com alone are just other", async () => {
   dnsAnswers.set("a.com", ["93.184.216.34"]);
   dnsAnswers.set("b.com", ["93.184.216.35"]);
   dnsAnswers.set("c.com", ["93.184.216.36"]);
@@ -166,12 +177,12 @@ test("Shopify is detected from headers and from HTML, and the shop name decides 
   replies.set("a.com", { headers: { "x-shopid": "1" }, body: 'Shopify.shop = "other.myshopify.com";' });
   replies.set("b.com", { headers: { "powered-by": "Shopify" } });
   replies.set("c.com", { body: '<script src="https://cdn.shopify.com/s/x.js"></script> Shopify.shop = "MINE.myshopify.com"' });
-  replies.set("d.com", { headers: { "x-shopify-stage": "production" } });
+  replies.set("d.com", { headers: { "x-shopify-stage": "production" }, body: '<img src="https://cdn.shopify.com/s/y.png">' });
   const kind = async (u: string) => (await (await post(u)).json()).kind;
   expect(await kind("a.com")).toBe("shopify_other_store");
-  expect(await kind("b.com")).toBe("shopify_other_store");
+  expect(await kind("b.com")).toBe("other");
   expect(await kind("c.com")).toBe("shopify_store");
-  expect(await kind("d.com")).toBe("shopify_other_store");
+  expect(await kind("d.com")).toBe("other");
 });
 
 test("redirects are followed twice at most, each hop vetted; one into a private address stops", async () => {
@@ -218,4 +229,53 @@ test("10 checks a minute per store, then 429 with Retry-After; another store is 
   embeddedStore = await newStore(admin);
   expect((await post("brand.com")).status).toBe(200);
   embeddedStore = store;
+});
+
+test("a redirect's path and query are carried to the next hop", async () => {
+  dnsAnswers.set("p.com", ["93.184.216.34"]);
+  replies.set("p.com", { status: 302, headers: { location: "/en/home?x=1" } });
+  await post("p.com");
+  expect(connects.map((c) => c.path)).toEqual(["/", "/en/home?x=1", "/en/home?x=1"]); // the mock keeps redirecting: 1 fetch + 2 redirects, then it stops
+});
+
+test("a server dripping bytes is cut off at the overall deadline, and so is a DNS lookup that never answers", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval"] });
+  try {
+    dnsAnswers.set("drip.com", ["93.184.216.34"]);
+    replies.set("drip.com", { drip: true });
+    // Straight at the library: the route's DB calls don't belong under fake timers.
+    const pending = lib.checkWebsite("drip.com", embeddedShop, []);
+    await vi.advanceTimersByTimeAsync(lib.DEADLINE_MS + 100);
+    expect(await pending).toMatchObject({ kind: "other", reachable: false });
+    expect(destroyed).toBeGreaterThan(0);
+
+    const slow = lib.checkWebsite("slowdns.com", embeddedShop, []);
+    await vi.advanceTimersByTimeAsync(lib.DEADLINE_MS + 100);
+    expect(await slow).toMatchObject({ kind: "other", reachable: false });
+    expect(connects.length).toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("without SHOPIFY_API_KEY there is no theme link", async () => {
+  const key = process.env.SHOPIFY_API_KEY;
+  delete process.env.SHOPIFY_API_KEY;
+  try {
+    expect(await (await post("brand.com")).json()).toMatchObject({ kind: "shopify_store", themeLink: null });
+  } finally {
+    process.env.SHOPIFY_API_KEY = key;
+  }
+});
+
+test("a body over 4 KB is refused before parsing", async () => {
+  expect((await post("brand.com" + " ".repeat(5000))).status).toBe(400);
+  const res = await route.POST(
+    new Request("http://x/api/app/website-check", {
+      method: "POST",
+      body: JSON.stringify({ url: "brand.com" }),
+      headers: { authorization: "Bearer t", "content-length": "99999" },
+    }),
+  );
+  expect(res.status).toBe(400);
 });

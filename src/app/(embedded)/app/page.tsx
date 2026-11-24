@@ -208,8 +208,14 @@ function ConnectWebsiteCard() {
         <>
           <s-text>{result.host} is your Shopify store. The chat is added through your theme.</s-text>
           {/* target _top: the theme editor can't open inside the admin iframe. */}
-          <s-button onClick={() => window.open(result.themeLink!, "_top")}>Turn on chat</s-button>
-          <s-text>In the theme editor, click Save to publish it.</s-text>
+          {result.themeLink ? (
+            <>
+              <s-button onClick={() => window.open(result.themeLink!, "_top")}>Turn on chat</s-button>
+              <s-text>In the theme editor, click Save to publish it.</s-text>
+            </>
+          ) : (
+            <s-text>We can&apos;t open the theme editor right now. In your theme editor, open App embeds and turn on AskCart.</s-text>
+          )}
         </>
       )}
       {result?.kind === "shopify_other_store" && (
@@ -218,7 +224,7 @@ function ConnectWebsiteCard() {
       {showOwn && (
         <>
           <s-text>
-            {result.reachable ? `${result.host} isn't a Shopify store we can see.` : `We couldn't check ${result.host}, so here are both ways to connect it.`}
+            {result.reachable ? `${result.host} doesn't look like a Shopify theme store (it may be a custom or headless site).` : `We couldn't check ${result.host}, so here are both ways to connect it.`}
           </s-text>
           {result.embedSnippet && (
             <>

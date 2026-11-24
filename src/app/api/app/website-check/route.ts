@@ -16,6 +16,32 @@ async function domainsOf(storeId: string): Promise<string[]> {
   return s?.domains ?? [];
 }
 
+const MAX_BODY = 4096;
+
+/** The JSON body, reading at most MAX_BODY bytes; null when it's larger, empty or not JSON. */
+async function readSmallJson(req: Request): Promise<{ url?: unknown } | null> {
+  if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY) return null;
+  const reader = req.body?.getReader();
+  if (!reader) return null;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > MAX_BODY) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(req: Request) {
   try {
     const { storeId } = await authenticateEmbedded(req);
@@ -34,7 +60,7 @@ export async function POST(req: Request) {
     const wait = rateLimit(`website-check:${storeId}`, Date.now(), CHECKS_PER_MINUTE);
     if (wait) return Response.json({ error: "rate_limited" }, { status: 429, headers: { "Retry-After": String(wait) } });
 
-    const body = await req.json().catch(() => null);
+    const body = await readSmallJson(req);
     const host = normalizeHost(body?.url);
     if (!host) return Response.json({ error: "invalid_url" }, { status: 400 });
 
@@ -45,7 +71,7 @@ export async function POST(req: Request) {
       // Shopify's app-embed deep link: <app api key>/<block file name without .liquid> (extensions/askcart/blocks/askcart-embed.liquid).
       // Built here so the client never sees env. The page opens it with target _top.
       themeLink:
-        result.kind === "shopify_store"
+        result.kind === "shopify_store" && process.env.SHOPIFY_API_KEY
           ? `https://${shop}/admin/themes/current/editor?context=apps&template=index&activateAppId=${process.env.SHOPIFY_API_KEY}/askcart-embed`
           : null,
       embedSnippet: result.kind === "other" && origin ? `<script src="${origin}/embed.js" data-shop="${shop}" defer></script>` : null,
