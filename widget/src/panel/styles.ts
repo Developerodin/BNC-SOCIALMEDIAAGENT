@@ -1,5 +1,6 @@
 // Panel CSS (Task 30). Everything lives in the shadow root; px only (themes set html { font-size: 62.5% }); the font is
 // inherited (UD7). --ac / --ac-fg are set on .panel from the checked accent and textOn() (UD17).
+// Input-like borders are #8a8a8a: 3.4:1 on white (WCAG 1.4.11). The textarea is 16px: iOS Safari zooms into smaller inputs.
 export const CSS =
   ":host{all:initial;font-family:inherit}" +
   ".panel{position:fixed;z-index:2147483001;display:flex;flex-direction:column;box-sizing:border-box;width:380px;height:600px;" +
@@ -28,7 +29,7 @@ export const CSS =
   ".log{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;overscroll-behavior:contain}" +
   ".welcome{color:#333;white-space:pre-wrap}" +
   ".sugg{display:flex;flex-wrap:wrap;gap:6px}" +
-  ".sugg button{padding:7px 12px;border:1px solid #ccc;border-radius:16px;background:#fff;text-align:left}" +
+  ".sugg button{padding:7px 12px;border:1px solid #8a8a8a;border-radius:16px;background:#fff;text-align:left}" +
   ".sugg button:hover{border-color:var(--ac)}" +
   ".msg{max-width:88%;white-space:pre-wrap;overflow-wrap:anywhere}" +
   ".msg.user{align-self:flex-end;padding:8px 12px;border-radius:14px 14px 4px 14px;background:var(--ac);color:var(--ac-fg)}" +
@@ -50,7 +51,7 @@ export const CSS =
   ".offline[hidden]{display:none}" +
   ".ft{flex:none;border-top:1px solid #e5e5e5;padding:10px 12px 8px}" +
   ".row{display:flex;align-items:flex-end;gap:8px}" +
-  "textarea{flex:1;resize:none;min-height:40px;max-height:120px;padding:9px 12px;border:1px solid #ccc;border-radius:12px;background:#fff;color:#111;font-size:15px;line-height:20px}" +
+  "textarea{flex:1;resize:none;min-height:40px;max-height:120px;padding:9px 12px;border:1px solid #8a8a8a;border-radius:12px;background:#fff;color:#111;font-size:16px;line-height:20px}" +
   "textarea:focus{border-color:var(--ac);outline:none;box-shadow:0 0 0 2px var(--ac)}" +
   ".send{width:40px;height:40px;border-radius:20px;background:var(--ac);color:var(--ac-fg)}" +
   ".send:disabled{opacity:.4;cursor:default}" +

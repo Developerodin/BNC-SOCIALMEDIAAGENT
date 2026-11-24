@@ -9,7 +9,12 @@ const el = (tag: string, cls: string, text?: string) => {
   return e;
 };
 
-export type Renderers = { renderCards: CardsRenderer; renderFeedback: FeedbackRenderer };
+/** renderCards also gets the answer's message id, so a cart add from a card is linked to that answer. Cards are only
+ * drawn once the id is known: at `done` for a streamed answer (UD12), or from history. */
+export type Renderers = {
+  renderCards: (...a: [...Parameters<CardsRenderer>, messageId?: string | null]) => void;
+  renderFeedback: FeedbackRenderer;
+};
 
 /** One assistant answer being streamed. */
 export type Answer = {
@@ -48,7 +53,7 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
     if (cards.length) {
       const box = el("div", "cards");
       wrap.append(box);
-      r.renderCards(box, cards, ctx);
+      r.renderCards(box, cards, ctx, id);
     }
     if (id && !cutOff) r.renderFeedback(wrap, id, rating, ctx);
     return add(wrap);
@@ -97,7 +102,7 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
         if (cards.length) {
           const box = el("div", "cards");
           wrap.append(box);
-          r.renderCards(box, cards, ctx);
+          r.renderCards(box, cards, ctx, messageId);
         }
         if (messageId) r.renderFeedback(wrap, messageId, null, ctx);
         if (!wrap.childElementCount) wrap.remove();

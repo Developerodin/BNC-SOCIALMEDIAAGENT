@@ -5,12 +5,14 @@
 //   - history fails (network, 5xx): the token is kept and the chat starts empty; the next message continues it,
 //   - history 401/404: the token is dropped (UD13),
 //   - unavailable / busy / offline after runSend's own retries: an error line with Retry, reusing the requestId (D81),
-//   - Delete chat fails (409 while a turn runs, network): the token is kept and the shopper is told.
+//   - Delete chat while an answer streams: the turn is aborted and settled first, then DELETE uses the token from its
+//     `meta` event (D84). 409 (the server hasn't released the turn yet) or a network error is retried after 0.5, 1 and
+//     2 s; after that the token is kept and the shopper is told.
 // Two tabs: each shows only what it sent until the next open reloads history. `// ponytail:` a `storage` listener
 // could sync tabs live; not needed for the beta.
 import type { PageContext, WidgetApi, WidgetConfig, WidgetCtx } from "../../../src/lib/widget-contract";
 import { translator } from "../core/i18n";
-import { safeHex, safeHttpsUrl, safeImageUrl, textOn } from "../core/format";
+import { resolveHttpsUrl, safeHex, safeImageUrl, textOn } from "../core/format";
 import { tokenStore, uiState } from "../core/storage";
 import { runSend } from "../core/turn";
 import { liveRegion, trapTab } from "./a11y";
@@ -40,6 +42,8 @@ const MAX = 2000; // the server's message limit
 const COUNT_FROM = 1800;
 const FULL_BELOW = 640; // UD4
 const DEFAULT_ACCENT = "#0A0A0A";
+const DELETE_RETRY_MS = [500, 1000, 2000]; // D84: the server may hold the aborted turn's lock for a moment
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 function button(cls: string, label: string, ic: Parameters<typeof icon>[0]): HTMLButtonElement {
   const b = document.createElement("button");
@@ -48,16 +52,6 @@ function button(cls: string, label: string, ic: Parameters<typeof icon>[0]): HTM
   b.setAttribute("aria-label", label);
   b.append(icon(ic));
   return b;
-}
-
-/** The privacy link: Liquid gives a relative path (shop.privacy_policy.url), so resolve it, then require https. */
-function privacyHref(u: string | null): string | null {
-  if (!u) return null;
-  try {
-    return safeHttpsUrl(new URL(u, location.href).href);
-  } catch {
-    return null;
-  }
 }
 
 export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: PageContext, opts: PanelOptions): Panel {
@@ -132,7 +126,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   const notice = document.createElement("p");
   notice.className = "notice";
   notice.textContent = `${t("ai_notice")} ${t("retention", { days: config.retentionDays })}`;
-  const privacy = privacyHref(page.privacyUrl);
+  const privacy = resolveHttpsUrl(page.privacyUrl); // Liquid gives shop.privacy_policy.url as a path
   if (privacy) {
     const a = document.createElement("a");
     a.href = privacy;
@@ -154,6 +148,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   let faqFor: string | null = null;
   let faqQs: string[] = [];
   let turn: AbortController | null = null;
+  let turnDone: Promise<void> | null = null; // settles when the running turn's runTurn has finished
   let sugg: HTMLElement | null = null;
   let locked = false;
   let prevOverflow = "";
@@ -256,7 +251,8 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
       api,
       { message, token: tokens.get(), requestId, productId, country: page.country, pageUrl: location.href, signal: ac.signal },
       (e) => {
-        if (e.kind === "text") answer.append(e.delta);
+        if (e.kind === "meta") tokens.set(e.token);
+        else if (e.kind === "text") answer.append(e.delta);
         else if (e.kind === "card") answer.card(e.card);
         else if (e.kind === "replace") answer.reset();
         else tokens.clear(); // reset: the token died, runSend resends without it
@@ -266,7 +262,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     if (turn === ac) turn = null;
     busy = false;
     const retry = () => {
-      if (!busy) void runTurn(message, requestId);
+      if (!busy) startTurn(message, requestId);
     };
     switch (outcome.kind) {
       case "done": {
@@ -306,7 +302,16 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     messages.clearErrors();
     messages.user(message);
     if (text === input.value) input.value = "";
-    void runTurn(message, crypto.randomUUID());
+    startTurn(message, crypto.randomUUID());
+  }
+
+  /** runTurn, with `turnDone` tracking it so Delete chat can wait for an aborted turn to settle. */
+  function startTurn(message: string, requestId: string) {
+    const p = runTurn(message, requestId);
+    const done: Promise<void> = p.finally(() => {
+      if (turnDone === done) turnDone = null;
+    });
+    turnDone = done;
   }
 
   // --- menu actions (C22) ---
@@ -318,10 +323,27 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
 
   async function deleteChat() {
     if (!window.confirm(t("delete_confirm"))) return;
+    // D84: a running turn is stopped first, so its token (from `meta`) is known and the server can release the turn.
+    // If it is aborted before `meta` arrived there is no token yet, and the chat is only cleared here.
+    turn?.abort();
+    await turnDone;
     const token = tokens.get();
-    if (token && !(await api.deleteConversation(token))) {
-      messages.error(t("delete_failed"));
-      return;
+    if (token) {
+      busy = true; // no new message into a conversation that is being deleted
+      update();
+      let ok = await api.deleteConversation(token);
+      // `// ponytail:` WidgetApi.deleteConversation only says ok or not, so a network error is retried like a 409.
+      for (const ms of DELETE_RETRY_MS) {
+        if (ok) break;
+        await (opts.wait ?? sleep)(ms);
+        ok = await api.deleteConversation(token);
+      }
+      busy = false;
+      update();
+      if (!ok) {
+        messages.error(t("delete_failed"));
+        return;
+      }
     }
     tokens.clear();
     resetChat();

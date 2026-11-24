@@ -3,24 +3,13 @@
 // an `askcart:open` event (UD5 block), or when the panel was open on the previous page (UD13).
 // Text only: every string goes through textContent, and the accent is checked before it reaches CSS.
 import type { PageContext, WidgetConfig } from "../../../src/lib/widget-contract";
-import { readUi, teaserShownThisVisit, writeUi } from "./state";
+import { safeHex, textOn } from "../core/format";
+import { uiState } from "../core/storage";
 
 type OpenArgs = { productId: string | null; focus?: boolean };
 type AskCartApi = { open(a: OpenArgs): void };
 
-const HEX = /^#[0-9a-fA-F]{6}$/;
 const DEFAULT_ACCENT = "#0A0A0A";
-
-// WCAG relative luminance: black or white text, whichever contrasts more with the accent (UD17).
-// ponytail: Task 25's core/format.ts also has textOn(); fold this into it once core lands, if the launcher size allows.
-function textOn(hex: string): string {
-  const lin = (i: number) => {
-    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  const l = 0.2126 * lin(1) + 0.7152 * lin(3) + 0.0722 * lin(5);
-  return (l + 0.05) / 0.05 > 1.05 / (l + 0.05) ? "#000" : "#fff";
-}
 
 const CSS =
   ":host{all:initial}" +
@@ -64,10 +53,10 @@ export function start(): (() => void) | undefined {
   }
   if (!cfg || !cfg.enabled || !cfg.launcher || !page || typeof page.shop !== "string") return;
   const d = root.dataset;
-  const shop = page.shop;
+  const ui = uiState(page.shop); // the same storage the panel writes (core/storage.ts)
   const left = cfg.launcher.side === "left";
   const offset = Math.min(200, Math.max(0, Number(cfg.launcher.offset) || 0));
-  const accent = HEX.test(cfg.accent) ? cfg.accent : DEFAULT_ACCENT;
+  const accent = safeHex(cfg.accent) ?? DEFAULT_ACCENT;
 
   // A custom tag name keeps theme selectors like `div { ... }` off the host. Task 30 mounts the panel in this shadow root.
   const host = document.createElement("askcart-host");
@@ -138,15 +127,14 @@ export function start(): (() => void) | undefined {
     clearTimeout(timer);
     teaser?.remove();
     teaser = null;
-    if (forever) writeUi(shop, { teaserSeen: true });
+    if (forever) ui.teaserSeen.set(true);
   }
 
-  const ui = readUi(shop);
   const t = cfg.teaser;
-  if (t && t.enabled && !ui.open && !ui.teaserSeen && !teaserShownThisVisit(shop, false)) {
+  if (t && t.enabled && !ui.open.get() && !ui.teaserSeen.get() && !ui.teaserShownThisVisit.get()) {
     const delay = Math.min(120, Math.max(0, Number(t.delaySec) || 0)) * 1000;
     timer = setTimeout(() => {
-      teaserShownThisVisit(shop, true);
+      ui.teaserShownThisVisit.set(true);
       teaser = document.createElement("div");
       teaser.className = "t";
       teaser.setAttribute("role", "status");
@@ -165,7 +153,7 @@ export function start(): (() => void) | undefined {
   }
 
   // --- reopen (UD13): only after the shopper used the chat, so this is the one page-view load we allow ---
-  if (ui.open) openChat({ productId: null, focus: false });
+  if (ui.open.get()) openChat({ productId: null, focus: false });
 
   return () => {
     clearTimeout(timer);

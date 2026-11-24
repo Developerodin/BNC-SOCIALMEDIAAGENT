@@ -4,7 +4,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "../../widget/src/widget";
 import type { Panel } from "../../widget/src/panel/panel";
-import type { CardsRenderer, FeedbackRenderer, HistoryItem, PageContext, WidgetApi, WidgetConfig } from "@/lib/widget-contract";
+import type { Renderers } from "../../widget/src/panel/messages";
+import type { FeedbackRenderer, HistoryItem, PageContext, WidgetApi, WidgetConfig } from "@/lib/widget-contract";
 import { ev, jsonResponse, sseResponse } from "./core/helpers";
 
 const SHOP = "demo.myshopify.com";
@@ -40,7 +41,7 @@ function mockApi(over: Partial<WidgetApi> = {}): WidgetApi & { [K in keyof Widge
 let host: HTMLElement;
 let launcher: HTMLButtonElement;
 let panel: Panel;
-let renderCards: ReturnType<typeof vi.fn<CardsRenderer>>;
+let renderCards: ReturnType<typeof vi.fn<Renderers["renderCards"]>>;
 let renderFeedback: ReturnType<typeof vi.fn<FeedbackRenderer>>;
 
 function setup(api: WidgetApi, cfg = config(), page = pageCtx()) {
@@ -78,7 +79,7 @@ beforeEach(() => {
   document.documentElement.style.overflow = "";
   localStorage.clear();
   sessionStorage.clear();
-  renderCards = vi.fn<CardsRenderer>((into, cards) => {
+  renderCards = vi.fn<Renderers["renderCards"]>((into, cards) => {
     const d = document.createElement("div");
     d.className = "stub-cards";
     d.textContent = String(cards.length);
@@ -159,6 +160,7 @@ describe("sending (D81)", () => {
     expect(assistantTexts()).toEqual(["Hello"]);
     expect(renderCards).toHaveBeenCalledTimes(1);
     expect(renderCards.mock.calls[0][1]).toEqual([card]);
+    expect(renderCards.mock.calls[0][3]).toBe("m1"); // cart adds from these cards are linked to the answer
     expect(renderFeedback).toHaveBeenCalledWith(expect.any(HTMLElement), "m1", null, expect.anything());
     expect(localStorage.getItem(TOKEN_KEY)).toBe("t1");
     expect(api.send.mock.calls[0][0]).toMatchObject({ message: "hello?", token: null, productId: null, country: "US" });
@@ -291,6 +293,7 @@ describe("history (UD13)", () => {
     expect(api.history).toHaveBeenCalledWith("tok");
     expect(bubbles()).toHaveLength(4);
     expect(renderCards).toHaveBeenCalledTimes(2);
+    expect(renderCards.mock.calls.map((c) => c[3])).toEqual(["a1", "a2"]);
     expect(renderFeedback).toHaveBeenCalledTimes(1); // not for the cut-off answer
     expect(renderFeedback.mock.calls[0].slice(1, 3)).toEqual(["a1", 1]);
     expect(q(".cut")!.textContent).toBe("This answer was cut off.");
@@ -386,6 +389,93 @@ describe("menu (C22)", () => {
     expect(q(".err")!.textContent).toBe("Couldn't delete the chat. Please try again.");
   });
 
+  // A first answer that sends meta, then hangs until the request is aborted (as fetch errors the body on abort).
+  function metaThenHang(token: string) {
+    return vi.fn(async (args: Parameters<WidgetApi["send"]>[0]) => {
+      const enc = new TextEncoder();
+      return new Response(
+        new ReadableStream({
+          start(c) {
+            c.enqueue(enc.encode(ev("meta", { conversationToken: token }) + ev("text", { delta: "Thinking" })));
+            args.signal?.addEventListener("abort", () => c.error(new DOMException("aborted", "AbortError")));
+          },
+        }),
+        { status: 200 },
+      );
+    });
+  }
+
+  it("D84: Delete chat during the first answer aborts it, then deletes the conversation named by meta", async () => {
+    vi.stubGlobal("confirm", () => true);
+    const order: string[] = [];
+    const api = mockApi({ send: metaThenHang("tmeta") });
+    api.deleteConversation.mockImplementation(async () => {
+      order.push(`delete:${(api.send.mock.calls[0][0] as { signal: AbortSignal }).signal.aborted}`);
+      return true;
+    });
+    await setup(api).open();
+    await type("hi");
+    expect(localStorage.getItem(TOKEN_KEY)).toBe("tmeta"); // saved as soon as meta arrived
+    expect(assistantTexts()).toEqual(["Thinking"]);
+    await openMenu();
+    item("Delete chat").click();
+    await flush();
+    expect(api.deleteConversation).toHaveBeenCalledWith("tmeta");
+    expect(order).toEqual(["delete:true"]); // the turn was aborted first
+    expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(bubbles()).toHaveLength(0);
+    expect(q(".err")).toBeNull();
+    expect(sendBtn().disabled).toBe(true); // empty input; but not stuck busy:
+    input().value = "again";
+    input().dispatchEvent(new Event("input"));
+    expect(sendBtn().disabled).toBe(false);
+  });
+
+  it("D84: a 409 (the server still holds the turn) is retried with backoff, then the 204 deletes", async () => {
+    localStorage.setItem(TOKEN_KEY, "tok");
+    vi.stubGlobal("confirm", () => true);
+    const statuses = [409, 204];
+    const fetchMock = vi.fn<typeof fetch>(async (url, init) =>
+      String(url).includes("/history")
+        ? jsonResponse(200, { messages: [] })
+        : init?.method === "DELETE"
+          ? new Response(statuses[0] === 409 ? JSON.stringify({ error: "turn_in_progress" }) : null, { status: statuses.shift()! })
+          : jsonResponse(500, {}),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const waits: number[] = [];
+    host = document.createElement("div");
+    document.body.append(host);
+    panel = mount(host, config(), pageCtx(), { wait: async (ms) => void waits.push(ms) });
+    await panel.open();
+    q<HTMLButtonElement>("button.menu")!.click();
+    item("Delete chat").click();
+    await flush();
+    expect(fetchMock.mock.calls.filter(([, i]) => i?.method === "DELETE")).toHaveLength(2);
+    expect(waits).toEqual([500]);
+    expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(q(".err")).toBeNull();
+  });
+
+  it("D84: a delete that keeps failing gives up after 0.5, 1 and 2 s and says so", async () => {
+    localStorage.setItem(TOKEN_KEY, "tok");
+    vi.stubGlobal("confirm", () => true);
+    const waits: number[] = [];
+    const api = mockApi({ deleteConversation: vi.fn(async () => false) });
+    host = document.createElement("askcart-host");
+    host.attachShadow({ mode: "open" });
+    document.body.append(host);
+    panel = mount(host, config(), pageCtx(), { api, renderCards, renderFeedback, wait: async (ms) => void waits.push(ms) });
+    await panel.open();
+    await openMenu();
+    item("Delete chat").click();
+    await flush();
+    expect(api.deleteConversation).toHaveBeenCalledTimes(4);
+    expect(waits).toEqual([500, 1000, 2000]);
+    expect(localStorage.getItem(TOKEN_KEY)).toBe("tok");
+    expect(q(".err")!.textContent).toBe("Couldn't delete the chat. Please try again.");
+  });
+
   it("New chat only drops the token locally", async () => {
     localStorage.setItem(TOKEN_KEY, "tok");
     const api = mockApi({ history: vi.fn(async () => [{ id: "u", role: "user", content: "x", status: "ok", cards: [], rating: null }] as HistoryItem[]) });
@@ -476,6 +566,15 @@ describe("a11y (UD17)", () => {
   it("a bad accent never reaches CSS", async () => {
     await setup(mockApi(), config({ accent: "red;}x{" })).open();
     expect(q(".panel")!.style.getPropertyValue("--ac")).toBe("#0A0A0A");
+  });
+
+  it("input and suggestion borders reach 3:1 on white, and the textarea is 16 px so iOS doesn't zoom", async () => {
+    await setup(mockApi()).open();
+    const css = sh().querySelector("style")!.textContent!;
+    expect(css).not.toMatch(/#ccc|#c9c9c9/i);
+    expect(css).toMatch(/textarea\{[^}]*font-size:16px/);
+    expect(css).toMatch(/\.sugg button\{[^}]*border:1px solid #8a8a8a/);
+    expect(css).toMatch(/\.ac-card__select\{[^}]*border:1px solid #8a8a8a/);
   });
 
   it("reduced motion turns the animations off in the stylesheet", async () => {

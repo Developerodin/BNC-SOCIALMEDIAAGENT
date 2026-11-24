@@ -54,7 +54,7 @@ function uiField(key: string, field: "open" | "teaserSeen"): Flag {
 }
 
 /**
- * UI state, shared with the launcher (widget/src/launcher/state.ts: same keys and JSON shape, keep them identical):
+ * UI state, read and written by both the launcher (widget/src/launcher/launcher.ts) and the panel:
  * `open` (reopen the panel on the next page, UD13) and `teaserSeen` (C28: never show the teaser again once the chat was
  * opened or the teaser closed), both in askcart:<shop>:ui as JSON { open, teaserSeen }; and `teaserShownThisVisit`
  * (C28: once per visit), "1" in sessionStorage under askcart:<shop>:teaserShown.

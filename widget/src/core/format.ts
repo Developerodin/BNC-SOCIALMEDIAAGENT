@@ -35,6 +35,17 @@ export function safeHttpsUrl(u: unknown): string | null {
   }
 }
 
+/** A URL that may be relative to the page (Liquid gives paths like /cart or the privacy policy's url), resolved against
+ * `base`, then held to safeHttpsUrl. */
+export function resolveHttpsUrl(u: string | null, base: string = location.href): string | null {
+  if (!u) return null;
+  try {
+    return safeHttpsUrl(new URL(u, base).href);
+  } catch {
+    return null;
+  }
+}
+
 /** An https: image on cdn.shopify.com only, or null. */
 export function safeImageUrl(u: unknown): string | null {
   const href = safeHttpsUrl(u);
@@ -47,7 +58,7 @@ export function safeHex(c: unknown): string | null {
 }
 
 /** UD17: black or white text, whichever has the higher WCAG contrast on the accent. Expects #rrggbb (see safeHex).
- * Same rule as the launcher's copy in widget/src/launcher/launcher.ts (white on a tie). */
+ * The launcher uses this one too (white on a tie). */
 export function textOn(accentHex: string): "#000000" | "#ffffff" {
   const ch = (i: number) => {
     const v = parseInt(accentHex.slice(i, i + 2), 16) / 255;

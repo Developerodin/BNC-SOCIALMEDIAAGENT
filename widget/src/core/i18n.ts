@@ -43,6 +43,7 @@ const en = {
   delete_failed: "Couldn't delete the chat. Please try again.",
   price_on_product: "See price on the product page",
   cart_rate_limited: "Please try again in a moment.",
+  rate_answer: "Rate this answer",
 };
 export type Key = keyof typeof en;
 type Dict = Record<Key, string>;
@@ -89,6 +90,7 @@ const fr: Dict = {
   delete_failed: "Impossible de supprimer la conversation. Veuillez réessayer.",
   price_on_product: "Voir le prix sur la page du produit",
   cart_rate_limited: "Veuillez réessayer dans un instant.",
+  rate_answer: "Évaluer cette réponse",
 };
 
 const de: Dict = {
@@ -133,6 +135,7 @@ const de: Dict = {
   delete_failed: "Der Chat konnte nicht gelöscht werden. Bitte versuch es noch einmal.",
   price_on_product: "Preis auf der Produktseite ansehen",
   cart_rate_limited: "Bitte versuch es gleich noch einmal.",
+  rate_answer: "Bewerte diese Antwort",
 };
 
 const es: Dict = {
@@ -177,6 +180,7 @@ const es: Dict = {
   delete_failed: "No se pudo eliminar el chat. Inténtalo de nuevo.",
   price_on_product: "Ver el precio en la página del producto",
   cart_rate_limited: "Inténtalo de nuevo en un momento.",
+  rate_answer: "Valora esta respuesta",
 };
 
 const it: Dict = {
@@ -221,6 +225,7 @@ const it: Dict = {
   delete_failed: "Impossibile eliminare la chat. Riprova.",
   price_on_product: "Vedi il prezzo nella pagina del prodotto",
   cart_rate_limited: "Riprova tra un momento.",
+  rate_answer: "Valuta questa risposta",
 };
 
 const nl: Dict = {
@@ -265,6 +270,7 @@ const nl: Dict = {
   delete_failed: "De chat kon niet worden verwijderd. Probeer het opnieuw.",
   price_on_product: "Bekijk de prijs op de productpagina",
   cart_rate_limited: "Probeer het zo meteen opnieuw.",
+  rate_answer: "Beoordeel dit antwoord",
 };
 
 export const DICTS = { en: en as Dict, fr, de, es, it, nl };

@@ -54,7 +54,7 @@ describe("uiState", () => {
     expect(uiState("f.myshopify.com").open.get()).toBe(true);
     expect(uiState("f.myshopify.com").teaserSeen.get()).toBe(true);
     expect(sessionStorage.getItem("askcart:f.myshopify.com:teaserShown")).toBe("1");
-    // the launcher's key and shape (widget/src/launcher/state.ts)
+    // the stored key and JSON shape
     expect(JSON.parse(localStorage.getItem("askcart:f.myshopify.com:ui")!)).toEqual({ open: true, teaserSeen: true });
     expect(uiState("g.myshopify.com").open.get()).toBe(false);
     ui.open.set(false);

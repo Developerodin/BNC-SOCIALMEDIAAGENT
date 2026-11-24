@@ -106,7 +106,7 @@ describe("launcher (UD1, UD2)", () => {
   it("uses text colour picked for contrast on the accent (UD17)", () => {
     mountRoot(config({ accent: "#FFE600" }));
     start();
-    expect(button().style.getPropertyValue("--ac-fg")).toBe("#000");
+    expect(button().style.getPropertyValue("--ac-fg")).toBe("#000000"); // core/format's textOn
   });
 
   it("a bad accent falls back to the default rather than reaching CSS", () => {

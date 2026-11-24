@@ -3,18 +3,10 @@
 // images through safeImageUrl (cdn.shopify.com only), otherwise there is no link and a placeholder.
 import type { Card, CardsRenderer, WidgetCtx } from "../../src/lib/widget-contract";
 import { addToCart } from "./cart";
-import { formatPrice, safeHttpsUrl, safeImageUrl, stockLabel } from "./core/format";
-import { tokenStore } from "./core/storage";
+import { formatPrice, resolveHttpsUrl, safeHttpsUrl, safeImageUrl, stockLabel } from "./core/format";
+import { tokenStore, uiState } from "./core/storage";
 
 type Variant = Card["variants"][number];
-type T = WidgetCtx["t"];
-
-// `// ponytail:` these two strings aren't in core/i18n.ts yet (another task owns it), so English is the fallback until
-// the keys are added there; t() returns the key itself when it's missing.
-const tr = (t: T, key: string, fallback: string) => {
-  const s = t(key);
-  return s === key ? fallback : s;
-};
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -30,21 +22,19 @@ function link(href: string, cls: string, text: string): HTMLAnchorElement {
   return a;
 }
 
-/** The cart page as an absolute https URL on this storefront, or null. */
-function cartHref(cartUrl: string): string | null {
-  try {
-    return safeHttpsUrl(new URL(cartUrl, location.href).href);
-  } catch {
-    return null;
-  }
-}
-
 const optionValue = (v: Variant, name: string) => v.options.find((o) => o.name === name)?.value;
 
-function cardEl(card: Card, ctx: WidgetCtx): HTMLElement {
+function cardEl(card: Card, ctx: WidgetCtx, messageId: string | null): HTMLElement {
   const { t, page } = ctx;
   const root = el("div", "ac-card");
   const url = safeHttpsUrl(card.url);
+  // The shopper chose this product: don't reopen the panel over its page (on a phone it covers the whole page). Set
+  // before the navigation; other links (View cart, the theme's own) keep the UD13 reopen.
+  const productLink = (href: string, cls: string, text: string) => {
+    const a = link(href, cls, text);
+    a.addEventListener("click", () => uiState(page.shop).open.set(false));
+    return a;
+  };
 
   const img = safeImageUrl(card.imageUrl);
   if (img) {
@@ -61,7 +51,7 @@ function cardEl(card: Card, ctx: WidgetCtx): HTMLElement {
 
   const body = el("div", "ac-card__body");
   root.append(body);
-  body.append(url ? link(url, "ac-card__title", card.title) : el("span", "ac-card__title", card.title));
+  body.append(url ? productLink(url, "ac-card__title", card.title) : el("span", "ac-card__title", card.title));
 
   // C11 (b) fallback card: title, image and link only.
   if (card.price === null) return root;
@@ -74,7 +64,7 @@ function cardEl(card: Card, ctx: WidgetCtx): HTMLElement {
   const setPrice = (price: string, compareAt: string | null) => {
     priceBox.replaceChildren();
     if (otherCurrency) {
-      priceBox.append(el("span", "ac-card__price-hint", tr(t, "price_on_product", "See price on the product page")));
+      priceBox.append(el("span", "ac-card__price-hint", t("price_on_product")));
       return;
     }
     const p = card.currency ? formatPrice(price, card.currency, page.locale) : null;
@@ -102,18 +92,19 @@ function cardEl(card: Card, ctx: WidgetCtx): HTMLElement {
 
   // D75, C12: subscriptions and products with more variants than we fetched go to the product page.
   if (card.action === "view_options" || card.moreVariants) {
-    if (url) body.append(link(url, "ac-card__options", t("view_options")));
+    if (url) body.append(productLink(url, "ac-card__options", t("view_options")));
     return root;
   }
   if (card.action !== "add" || card.variants.length === 0) return root;
 
-  body.append(addControls(card, ctx, setPrice, setStock));
+  body.append(addControls(card, ctx, messageId, setPrice, setStock));
   return root;
 }
 
 function addControls(
   card: Card,
   ctx: WidgetCtx,
+  messageId: string | null,
   setPrice: (price: string, compareAt: string | null) => void,
   setStock: (s: Card["stock"]) => void,
 ): HTMLElement {
@@ -200,19 +191,19 @@ function addControls(
       // UD11: "Added · View cart".
       status.className = "ac-card__status ac-card__added";
       status.append(t("added"));
-      const cart = cartHref(page.cartUrl);
+      const cart = resolveHttpsUrl(page.cartUrl);
       if (cart) status.append(" · ", link(cart, "ac-card__cart", t("view_cart")));
       ctx.announce(t("added"));
       const token = tokenStore(page.shop).get();
       // Fire and forget; the eventId is fixed per add, so a replayed log is counted once.
       if (token) {
-        void ctx.api.logCartAdd(token, { messageId: null, productId: card.id, variantId: variant.id, quantity, eventId: crypto.randomUUID() });
+        void ctx.api.logCartAdd(token, { messageId, productId: card.id, variantId: variant.id, quantity, eventId: crypto.randomUUID() });
       }
       return;
     }
     // 422: the store's own description, already in the store's language, shown as is.
     const msg =
-      res.message ?? (res.status === 429 ? tr(t, "cart_rate_limited", "Please try again in a moment.") : t("cart_error"));
+      res.message ?? (res.status === 429 ? t("cart_rate_limited") : t("cart_error"));
     status.className = "ac-card__status ac-card__error";
     status.textContent = msg;
     ctx.announce(msg);
@@ -221,12 +212,15 @@ function addControls(
   return box;
 }
 
-/** UD9, UD12: one card full width, two or more in a scroll-snap carousel with arrows, keyboard and "n of m" labels. */
-export const renderCards: CardsRenderer = (into, cards, ctx) => {
+/**
+ * UD9, UD12: one card full width, two or more in a scroll-snap carousel with arrows, keyboard and "n of m" labels.
+ * `messageId` is the answer the cards came with; a cart add logs it (null for an answer the server sent without one).
+ */
+export function renderCards(into: HTMLElement, cards: Card[], ctx: WidgetCtx, messageId: string | null = null): void {
   if (cards.length === 0) return;
   const wrap = el("div", `ac-cards ${cards.length === 1 ? "ac-cards--single" : "ac-cards--carousel"}`);
   if (cards.length === 1) {
-    wrap.append(cardEl(cards[0], ctx));
+    wrap.append(cardEl(cards[0], ctx, messageId));
     into.append(wrap);
     return;
   }
@@ -235,14 +229,17 @@ export const renderCards: CardsRenderer = (into, cards, ctx) => {
   track.tabIndex = 0;
   cards.forEach((c, i) => {
     const li = el("li", "ac-cards__slide");
-    const card = cardEl(c, ctx);
+    const card = cardEl(c, ctx, messageId);
+    card.setAttribute("role", "group");
+    card.setAttribute("aria-roledescription", "slide");
     card.setAttribute("aria-label", `${i + 1} / ${cards.length}`);
     li.append(card);
     track.append(li);
   });
   const step = (dir: 1 | -1) => {
     const w = (track.firstElementChild as HTMLElement | null)?.offsetWidth || track.clientWidth;
-    track.scrollBy?.({ left: dir * w, behavior: "smooth" });
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    track.scrollBy?.({ left: dir * w, behavior: reduced ? "auto" : "smooth" });
   };
   track.addEventListener("keydown", (e) => {
     if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
@@ -259,7 +256,10 @@ export const renderCards: CardsRenderer = (into, cards, ctx) => {
   };
   wrap.append(nav(-1, ctx.t("previous"), "‹"), track, nav(1, ctx.t("next"), "›"));
   into.append(wrap);
-};
+}
+// Compile-time check that it still fits the shared seam.
+const _contract: CardsRenderer = renderCards;
+void _contract;
 
 /** Card styles for the panel's shadow root (Task 30 owns styles.ts and includes this). px only (Global Constraints). */
 export const CARDS_CSS = `
@@ -278,7 +278,7 @@ a.ac-card__title:hover{text-decoration:underline}
 .ac-card__badge{align-self:flex-start;padding:2px 8px;border-radius:10px;background:#eee;font-size:12px}
 .ac-card__actions{display:flex;flex-direction:column;gap:6px;margin-top:auto}
 .ac-card__picker{display:flex;flex-direction:column;gap:2px;font-size:12px}
-.ac-card__select{font:inherit;font-size:13px;padding:4px;border:1px solid #c9c9c9;border-radius:6px}
+.ac-card__select{font:inherit;font-size:13px;padding:4px;border:1px solid #8a8a8a;border-radius:6px}
 .ac-card__add{font:inherit;font-size:13px;padding:8px;border:0;border-radius:8px;cursor:pointer;background:var(--ac-accent,#111);color:var(--ac-on-accent,#fff)}
 .ac-card__add:disabled{opacity:.5;cursor:default}
 .ac-card__options{font-weight:600;color:inherit}

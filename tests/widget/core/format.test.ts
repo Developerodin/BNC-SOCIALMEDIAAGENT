@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
-import { formatPrice, safeHex, safeHttpsUrl, safeImageUrl, stockLabel, textOn } from "../../../widget/src/core/format";
+import { formatPrice, resolveHttpsUrl, safeHex, safeHttpsUrl, safeImageUrl, stockLabel, textOn } from "../../../widget/src/core/format";
 import { translator } from "../../../widget/src/core/i18n";
 
 const t = translator("en");
@@ -44,5 +44,14 @@ describe("format", () => {
     expect(textOn("#FFE600")).toBe("#000000");
     expect(safeHex("#12abEF")).toBe("#12abEF");
     expect(safeHex("red;background:url(x)")).toBeNull();
+  });
+
+  it("resolves a storefront-relative path against the page, then requires https", () => {
+    expect(resolveHttpsUrl("/cart", "https://a.example/products/x")).toBe("https://a.example/cart");
+    expect(resolveHttpsUrl("https://b.example/p", "https://a.example/")).toBe("https://b.example/p");
+    expect(resolveHttpsUrl("javascript:alert(1)", "https://a.example/")).toBeNull();
+    expect(resolveHttpsUrl("/cart", "http://a.example/")).toBeNull();
+    expect(resolveHttpsUrl(null, "https://a.example/")).toBeNull();
+    expect(resolveHttpsUrl("", "https://a.example/")).toBeNull();
   });
 });

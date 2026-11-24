@@ -41,6 +41,7 @@ export function renderFeedback(into: HTMLElement, messageId: string | null, rati
   const group = document.createElement("div");
   group.className = "askcart-feedback";
   group.setAttribute("role", "group");
+  group.setAttribute("aria-label", ctx.t("rate_answer"));
 
   const buttons = ([1, -1] as const).map((value) => {
     const btn = document.createElement("button");

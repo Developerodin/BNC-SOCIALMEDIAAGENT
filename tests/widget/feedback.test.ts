@@ -58,6 +58,8 @@ describe("renderFeedback (UD14, C27)", () => {
     expect(down.getAttribute("aria-label")).toBe("Not helpful");
     expect(pressed(up)).toBe("false");
     expect(pressed(down)).toBe("false");
+    expect(up.parentElement!.getAttribute("role")).toBe("group");
+    expect(up.parentElement!.getAttribute("aria-label")).toBe("Rate this answer");
   });
 
   it("uses the storefront locale for the labels", () => {

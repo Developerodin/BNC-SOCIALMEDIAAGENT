@@ -41,10 +41,10 @@ function ctx(over: Partial<PageContext> = {}): WidgetCtx {
     config, page: { ...page, ...over }, api: { logCartAdd } as unknown as WidgetApi, t: translator("en"), announce,
   };
 }
-function render(cards: Card[], c = ctx()) {
+function render(cards: Card[], c = ctx(), messageId?: string | null) {
   const into = document.createElement("div");
   document.body.append(into);
-  renderCards(into, cards, c);
+  renderCards(into, cards, c, messageId);
   return into;
 }
 const addButton = (el: HTMLElement) =>
@@ -77,8 +77,28 @@ describe("layout (UD9, UD12)", () => {
     expect(el.querySelector(".ac-cards--carousel")).not.toBeNull();
     const slides = [...el.querySelectorAll(".ac-card")];
     expect(slides.map((s) => s.getAttribute("aria-label"))).toEqual(["1 / 3", "2 / 3", "3 / 3"]);
+    for (const s of slides) {
+      expect(s.getAttribute("role")).toBe("group");
+      expect(s.getAttribute("aria-roledescription")).toBe("slide");
+    }
     expect(el.querySelector('button[aria-label="Next product"]')).not.toBeNull();
     expect(el.querySelector('button[aria-label="Previous product"]')).not.toBeNull();
+  });
+
+  it("the arrows scroll smoothly, or instantly when the shopper prefers reduced motion", () => {
+    const behaviours: (string | undefined)[] = [];
+    const spy = vi.spyOn(HTMLElement.prototype, "scrollBy").mockImplementation(function (o?: ScrollToOptions | number) {
+      behaviours.push(typeof o === "object" ? o.behavior : undefined);
+    } as never);
+    const three = [card(), card({ id: "gid://shopify/Product/2" }), card({ id: "gid://shopify/Product/3" })];
+    const next = (el: HTMLElement) => el.querySelector<HTMLButtonElement>('button[aria-label="Next product"]')!.click();
+    next(render(three));
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (q: string) => ({ matches: q.includes("prefers-reduced-motion"), media: q }) as MediaQueryList,
+    );
+    next(render(three));
+    spy.mockRestore();
+    expect(behaviours).toEqual(["smooth", "auto"]);
   });
 
   it("no cards → nothing", () => {
@@ -212,6 +232,14 @@ describe("Review Focus 6: add to cart", () => {
     expect(announce).toHaveBeenCalledWith("Added");
   });
 
+  it("the cart event names the answer the card came with", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, {}));
+    const el = render([card()], ctx(), "msg-42");
+    addButton(el)!.click();
+    await flush();
+    expect(logCartAdd.mock.calls[0][1]).toMatchObject({ messageId: "msg-42", variantId: "123" });
+  });
+
   it("adds the picked variant", async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, {}));
     const el = render([card({ variants: [variant("11", [["Size", "S"]]), variant("22", [["Size", "M"]])] })]);
@@ -263,5 +291,38 @@ describe("Review Focus 6: add to cart", () => {
     await flush();
     expect(el.querySelector(".ac-card__added")).not.toBeNull();
     expect(logCartAdd).not.toHaveBeenCalled();
+  });
+});
+
+describe("UD13: the panel doesn't reopen over a product the shopper chose", () => {
+  const UI = `askcart:${SHOP}:ui`;
+  const stay = (e: Event) => e.preventDefault(); // keep happy-dom on this page
+  beforeEach(() => {
+    localStorage.setItem(UI, JSON.stringify({ open: true, teaserSeen: true }));
+    document.addEventListener("click", stay);
+  });
+  afterEach(() => {
+    document.removeEventListener("click", stay);
+    localStorage.removeItem(UI);
+  });
+  const ui = () => JSON.parse(localStorage.getItem(UI)!);
+
+  it("the product title link closes it for the next page", () => {
+    render([card()]).querySelector<HTMLAnchorElement>("a.ac-card__title")!.click();
+    expect(ui()).toEqual({ open: false, teaserSeen: true });
+  });
+
+  it("the View options link closes it for the next page", () => {
+    render([card({ action: "view_options" })]).querySelector<HTMLAnchorElement>("a.ac-card__options")!.click();
+    expect(ui().open).toBe(false);
+  });
+
+  it("View cart keeps today's reopen", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, {}));
+    const el = render([card()]);
+    addButton(el)!.click();
+    await flush();
+    el.querySelector<HTMLAnchorElement>("a.ac-card__cart")!.click();
+    expect(ui().open).toBe(true);
   });
 });

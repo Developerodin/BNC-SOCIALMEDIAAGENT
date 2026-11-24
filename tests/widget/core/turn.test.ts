@@ -44,6 +44,20 @@ describe("runSend", () => {
     expect(events).toEqual([{ kind: "text", delta: "Hel" }, { kind: "text", delta: "lo" }, { kind: "card", card: CARD }]);
   });
 
+  it("D84: a meta event hands the conversation token over before any text", async () => {
+    fetchMock.mockResolvedValueOnce(
+      sseResponse([ev("meta", { conversationToken: "tokM" }), ev("text", { delta: "Hi" }), ev("done", { conversationToken: "tokM", messageId: "m1" })]),
+    );
+    expect(await run(null)).toEqual({ kind: "done", token: "tokM", messageId: "m1" });
+    expect(events).toEqual([{ kind: "meta", token: "tokM" }, { kind: "text", delta: "Hi" }]);
+  });
+
+  it("a meta event with no string token is ignored", async () => {
+    fetchMock.mockResolvedValueOnce(sseResponse([ev("meta", { conversationToken: 5 }), ev("done", { conversationToken: "t", messageId: null })]));
+    await run(null);
+    expect(events).toEqual([]);
+  });
+
   it("a done without a message id (before Task 22, or a replay) gives a null id", async () => {
     fetchMock.mockResolvedValueOnce(sseResponse([ev("text", { delta: "a" }), ev("done", { conversationToken: "tok2" })]));
     expect(await run()).toEqual({ kind: "done", token: "tok2", messageId: null });

@@ -5,10 +5,17 @@
 //   - 409 (a turn is running): wait 2 s and retry, up to 30 s in total, then `busy`,
 //   - 401/404 with a token: `reset` (the UI drops the token) and resend once without a token,
 //   - 413: `too_long`; an `error` event: `unavailable` with the token it carries; anything else: `unavailable`.
+// The server's first event is `meta` { conversationToken } (D84): passed on at once, so a Delete chat during the very
+// first answer knows which conversation to delete.
 import type { Card, WidgetApi } from "../../../src/lib/widget-contract";
 import { parseSse } from "./sse";
 
-export type TurnEvent = { kind: "text"; delta: string } | { kind: "card"; card: Card } | { kind: "replace" } | { kind: "reset" };
+export type TurnEvent =
+  | { kind: "meta"; token: string }
+  | { kind: "text"; delta: string }
+  | { kind: "card"; card: Card }
+  | { kind: "replace" }
+  | { kind: "reset" };
 
 export type TurnOutcome =
   | { kind: "done"; token: string; messageId: string | null }
@@ -77,7 +84,9 @@ export async function runSend(
     try {
       for await (const { event, data } of parseSse(res.body)) {
         const d = (data ?? {}) as Record<string, unknown>;
-        if (event === "text" && typeof d.delta === "string") {
+        if (event === "meta") {
+          if (typeof d.conversationToken === "string") on({ kind: "meta", token: d.conversationToken });
+        } else if (event === "text" && typeof d.delta === "string") {
           shown = true;
           on({ kind: "text", delta: d.delta });
         } else if (event === "product") {
