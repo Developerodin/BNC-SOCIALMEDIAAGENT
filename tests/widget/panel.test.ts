@@ -770,3 +770,62 @@ describe("inline (the hosted page)", () => {
     expect(q(".panel")!.hidden).toBe(false);
   });
 });
+
+describe("expanded mode", () => {
+  const btn = () => q<HTMLButtonElement>("button.wide-btn")!;
+  const UI_KEY = `askcart:${SHOP}:ui`;
+
+  it("toggles the wide class, aria-pressed and label, and persists the choice", async () => {
+    await setup(mockApi()).open();
+    expect(btn().hidden).toBe(false);
+    expect(btn().getAttribute("aria-pressed")).toBe("false");
+    expect(btn().getAttribute("aria-label")).toBe("Expand");
+    btn().click();
+    expect(q(".panel")!.classList.contains("wide")).toBe(true);
+    expect(btn().getAttribute("aria-pressed")).toBe("true");
+    expect(btn().getAttribute("aria-label")).toBe("Collapse");
+    expect(JSON.parse(localStorage.getItem(UI_KEY)!).wide).toBe(true);
+    btn().click();
+    expect(q(".panel")!.classList.contains("wide")).toBe(false);
+    expect(JSON.parse(localStorage.getItem(UI_KEY)!).wide).toBe(false);
+  });
+
+  it("restores the saved choice when the panel opens, and Escape still closes", async () => {
+    localStorage.setItem(UI_KEY, JSON.stringify({ wide: true }));
+    await setup(mockApi()).open();
+    expect(q(".panel")!.classList.contains("wide")).toBe(true);
+    expect(btn().getAttribute("aria-pressed")).toBe("true");
+    input().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+    expect(q(".panel")!.hidden).toBe(true);
+  });
+
+  it("is hidden on a narrow screen (already a full sheet) and never applies there", async () => {
+    localStorage.setItem(UI_KEY, JSON.stringify({ wide: true }));
+    const w = window.innerWidth;
+    window.innerWidth = 400;
+    try {
+      await setup(mockApi()).open();
+      expect(btn().hidden).toBe(true);
+      expect(q(".panel")!.classList.contains("wide")).toBe(false);
+    } finally {
+      window.innerWidth = w;
+    }
+  });
+
+  it("is hidden on the hosted page", async () => {
+    host = document.createElement("askcart-host");
+    host.attachShadow({ mode: "open" });
+    document.body.append(host);
+    panel = mount(host, config(), pageCtx({ hosted: true }), { api: mockApi(), renderCards, renderFeedback, inline: true });
+    await panel.open();
+    expect(btn().hidden).toBe(true);
+  });
+
+  it("has Expand/Collapse labels in every locale", async () => {
+    const { DICTS } = await import("../../widget/src/core/i18n");
+    for (const d of Object.values(DICTS) as Record<string, string>[]) {
+      expect(d.expand).toBeTruthy();
+      expect(d.collapse).toBeTruthy();
+    }
+  });
+});

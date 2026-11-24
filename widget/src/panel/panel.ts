@@ -122,7 +122,9 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     { label: t("delete_chat"), run: () => void deleteChat() },
   ]);
   const closeBtn = button("ib close", t("close"), "close");
-  hd.append(av, who, menu.el, closeBtn);
+  const wideBtn = button("ib wide-btn", t("expand"), "expand");
+  wideBtn.setAttribute("aria-pressed", "false");
+  hd.append(av, who, menu.el, wideBtn, closeBtn);
 
   const offline = document.createElement("div");
   offline.className = "offline";
@@ -196,6 +198,12 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     panel.classList.toggle("full", full);
     back.hidden = !full || !!opts.inline;
     closeBtn.hidden = full;
+    wideBtn.hidden = full; // a full-screen sheet is already as large as it gets
+    const wide = !full && ui.wide.get();
+    panel.classList.toggle("wide", wide);
+    wideBtn.setAttribute("aria-pressed", String(wide));
+    wideBtn.setAttribute("aria-label", t(wide ? "collapse" : "expand"));
+    wideBtn.replaceChildren(icon(wide ? "collapse" : "expand"));
     lockScroll(full && !panel.hidden);
   }
 
@@ -401,6 +409,10 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   send.addEventListener("click", () => submit(input.value));
   closeBtn.addEventListener("click", () => close());
   back.addEventListener("click", () => close());
+  wideBtn.addEventListener("click", () => {
+    ui.wide.set(!ui.wide.get());
+    layout();
+  });
   panel.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       e.stopPropagation();

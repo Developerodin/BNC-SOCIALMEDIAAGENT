@@ -7,13 +7,15 @@ export const FULL_BELOW = 640;
 export const CSS =
   ":host{all:initial;font-family:inherit}" +
   ".panel{position:fixed;z-index:2147483001;display:flex;flex-direction:column;box-sizing:border-box;width:380px;height:600px;" +
-  "max-height:calc(100vh - var(--off) - 80px);bottom:calc(var(--off) + 68px);right:20px;background:#fff;color:#111;border-radius:16px;" +
+  "max-height:calc(100vh - var(--off) - 80px);transition:width .2s ease,height .2s ease;bottom:calc(var(--off) + 68px);right:20px;background:#fff;color:#111;border-radius:16px;" +
   "box-shadow:0 12px 40px rgba(0,0,0,.18),0 2px 8px rgba(0,0,0,.08);overflow:hidden;font:inherit;font-size:15px;line-height:21px;text-align:left;" +
   "letter-spacing:normal;text-transform:none;animation:in .2s ease-out}" +
   ".panel[hidden]{display:none}" +
   ":where(.panel) *{box-sizing:border-box;font:inherit;color:inherit;margin:0}" +
   ".panel.left{right:auto;left:20px}" +
   ".panel.full{inset:0;width:100%;height:100vh;height:100dvh;max-height:none;border-radius:0}" +
+  ".panel.wide{width:min(760px,92vw);height:min(88vh,900px)}" + // expanded: still anchored to the launcher's side
+  ".panel.wide .ac-cards__slide{flex-basis:calc((100% - 20px) / 3)}" + // three cards per row instead of cramped one-and-a-bit
   ".panel.inline{max-width:760px;margin:0 auto}" + // a wide window: keep the chat readable
   "@keyframes in{from{opacity:0;transform:translateY(12px)}}" +
   ".hd{display:flex;align-items:center;gap:10px;padding:12px 8px 12px 14px;background:var(--ac);color:var(--ac-fg);flex:none}" +
@@ -69,4 +71,4 @@ export const CSS =
   ".notice{font-size:12px;line-height:16px;color:#666;padding-top:6px}" +
   ".notice a{color:inherit;text-decoration:underline}" +
   ".sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}" +
-  "@media (prefers-reduced-motion:reduce){.panel,.typing span{animation:none}.sugg button{transition:none}}";
+  "@media (prefers-reduced-motion:reduce){.panel,.typing span{animation:none}.panel{transition:none}.sugg button{transition:none}}";

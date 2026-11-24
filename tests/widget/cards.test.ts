@@ -339,4 +339,27 @@ describe("UD13: the panel doesn't reopen over a product the shopper chose", () =
     el.querySelector<HTMLAnchorElement>("a.ac-card__cart")!.click();
     expect(ui().open).toBe(true);
   });
+
+  it("the picker placeholder reads 'Choose <option>' and a hint says what to pick first", () => {
+    const el = render([card({ variants: [variant("1", [["Color", "Red"]]), variant("2", [["Color", "Blue"]])] })]);
+    const select = el.querySelector("select") as HTMLSelectElement;
+    expect(select.options[0].textContent).toBe("Choose Color");
+    expect(el.querySelector(".ac-card__hint")?.textContent).toBe("Choose Color first");
+    expect(addButton(el)?.getAttribute("aria-describedby")).toBe(el.querySelector(".ac-card__hint")!.id);
+    select.value = "Red";
+    select.dispatchEvent(new Event("change"));
+    expect(el.querySelector(".ac-card__hint")?.textContent).toBe("");
+  });
+
+  it("preselects an option that has a single available value", () => {
+    const el = render([card({ variants: [
+      variant("1", [["Size", "S"], ["Color", "Red"]]),
+      variant("2", [["Size", "M"], ["Color", "Red"]]),
+      variant("3", [["Size", "L"], ["Color", "Blue"]], false),
+    ] })]);
+    const [size, color] = [...el.querySelectorAll("select")] as HTMLSelectElement[];
+    expect(color.value).toBe("Red");
+    expect(size.value).toBe("");
+    expect(addButton(el)?.disabled).toBe(true);
+  });
 });

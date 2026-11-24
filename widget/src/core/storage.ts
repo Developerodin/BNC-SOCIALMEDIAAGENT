@@ -41,7 +41,7 @@ export function tokenStore(shop: string) {
   };
 }
 
-function uiField(key: string, field: "open" | "teaserSeen"): Flag {
+function uiField(key: string, field: "open" | "teaserSeen" | "wide"): Flag {
   const all = (): Record<string, unknown> => {
     try {
       const v = JSON.parse(read("localStorage", key) || "{}");
@@ -64,6 +64,7 @@ export function uiState(shop: string) {
   return {
     open: uiField(key, "open"),
     teaserSeen: uiField(key, "teaserSeen"),
+    wide: uiField(key, "wide"), // the shopper chose the expanded panel (desktop only)
     teaserShownThisVisit: flag("sessionStorage", `askcart:${shop}:teaserShown`),
   };
 }

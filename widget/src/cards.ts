@@ -120,14 +120,17 @@ function addControls(
   const names = variants.length > 1 ? variants[0].options.map((o) => o.name) : [];
   const selected = new Map<string, string>(names.map((n) => [n, ""]));
   const available = variants.filter((v) => v.available);
-  // Preselected when there's a single (default) variant or a single available one.
-  if (available.length === 1) for (const n of names) selected.set(n, optionValue(available[0], n) ?? "");
+  // Preselected when an option has only one value among the available variants (a single available variant fills all).
+  for (const n of names) {
+    const vals = new Set(available.map((v) => optionValue(v, n) ?? ""));
+    if (vals.size === 1) selected.set(n, [...vals][0]);
+  }
 
   const selects: HTMLSelectElement[] = names.map((name) => {
     const label = el("label", "ac-card__picker");
     label.append(el("span", "ac-card__picker-name", name));
     const select = el("select", "ac-card__select");
-    const placeholder = el("option", undefined, `${t("option")}: ${name}`);
+    const placeholder = el("option", undefined, t("choose", { option: name }));
     placeholder.value = "";
     select.append(placeholder);
     for (const value of new Set(variants.map((v) => optionValue(v, name) ?? ""))) {
@@ -156,7 +159,9 @@ function addControls(
   button.type = "button";
   const status = el("p", "ac-card__status");
   status.setAttribute("aria-live", "polite");
-  box.append(button, status);
+  const hint = el("p", "ac-card__hint");
+  hint.id = `ac-hint-${Math.random().toString(36).slice(2, 8)}`;
+  box.append(button, status, hint);
 
   let busy = false;
   let chosen: Variant | null = null;
@@ -182,6 +187,11 @@ function addControls(
       setStock(chosen.stock);
     }
     button.disabled = busy || !chosen;
+    // Say why Add to cart is greyed: name the first option still to pick.
+    const todo = names.find((n) => !selected.get(n));
+    hint.textContent = todo ? t("choose_first", { option: todo }) : "";
+    if (todo) button.setAttribute("aria-describedby", hint.id);
+    else button.removeAttribute("aria-describedby");
   }
   update();
 
@@ -336,6 +346,8 @@ a.ac-card__title:hover{text-decoration:underline}
 .ac-card__options{display:block;text-align:center;font-weight:600;color:inherit;padding:9px 12px;border:1px solid #8a8a8a;border-radius:10px;text-decoration:none}
 .ac-card__options:hover{background:#f4f4f4}
 .ac-card__status{margin:0;font-size:12px}
+.ac-card__hint{margin:0;font-size:12px;color:#6b6b6b}
+.ac-card__hint:empty{display:none}
 .ac-card__error{color:#b00020}
 @media (prefers-reduced-motion:reduce){.ac-cards__track{scroll-behavior:auto}}
 `;
