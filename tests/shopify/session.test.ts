@@ -122,3 +122,33 @@ test("a fresh token exchange clears the reconnect flag, and only that reason", a
   expect((await admin`select sync_error from stores`)[0].sync_error).toBe("Bulk operations are not enabled");
   expect(exchange).toHaveBeenCalledTimes(3);
 });
+
+test("valid tokens with a leftover reconnect flag clear it and resume the sync, without an exchange", async () => {
+  const { RECONNECT_NEEDED } = await import("@/lib/shopify/tokens");
+  const exchange = vi.spyOn(api.shopify.auth, "tokenExchange").mockResolvedValue(exchanged());
+  const auth = `Bearer ${idToken(process.env.SHOPIFY_API_SECRET!)}`;
+  const { storeId } = await session.authenticateEmbedded(req(auth));
+  await admin`delete from pgboss.job where name = 'store-sync' and singleton_key = ${storeId}`;
+  await admin`update stores set sync_error = ${RECONNECT_NEEDED} where id = ${storeId}`;
+
+  await session.authenticateEmbedded(req(auth));
+  expect(exchange).toHaveBeenCalledTimes(1);
+  expect((await admin`select sync_error from stores`)[0].sync_error).toBeNull();
+  expect(await admin`select id from pgboss.job where name = 'store-sync' and singleton_key = ${storeId}`).toHaveLength(1);
+
+  // Another reason is left alone, and nothing is queued for it.
+  await admin`delete from pgboss.job where name = 'store-sync' and singleton_key = ${storeId}`;
+  await admin`update stores set sync_error = 'other' where id = ${storeId}`;
+  await session.authenticateEmbedded(req(auth));
+  expect((await admin`select sync_error from stores`)[0].sync_error).toBe("other");
+  expect(await admin`select id from pgboss.job where name = 'store-sync' and singleton_key = ${storeId}`).toHaveLength(0);
+});
+
+test("an access token inside the refresh window with an expired refresh token is exchanged", async () => {
+  const exchange = vi.spyOn(api.shopify.auth, "tokenExchange").mockResolvedValue(exchanged());
+  const auth = `Bearer ${idToken(process.env.SHOPIFY_API_SECRET!)}`;
+  await session.authenticateEmbedded(req(auth));
+  await admin`update store_tokens set access_expires_at = now() + interval '2 minutes', refresh_expires_at = now() - interval '1 hour'`;
+  await session.authenticateEmbedded(req(auth));
+  expect(exchange).toHaveBeenCalledTimes(2);
+});

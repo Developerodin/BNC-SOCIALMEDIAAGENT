@@ -316,7 +316,9 @@ test("startSync fails at once, without retrying, when bulk operations are access
   const s = await store(storeId);
   expect(s.sync_status).toBe("failed");
   expect(s.sync_error).toBe(sync.BULK_ACCESS_DENIED);
-  expect(log.mock.calls[0][1]).toMatchObject({ storeId, reason: sync.BULK_ACCESS_DENIED });
+  // The merchant sees a neutral message; the developer's log carries Shopify's text under a stable tag.
+  expect(sync.BULK_ACCESS_DENIED).not.toMatch(/Dev Dashboard|Access requests/);
+  expect(log.mock.calls[0][1]).toMatchObject({ storeId, reason: sync.BULK_ACCESS_DENIED, tag: "[bulk-access-denied]", error: ACCESS_DENIED });
 });
 
 test("startSync still throws other errors so the job is retried", async () => {

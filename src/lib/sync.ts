@@ -29,9 +29,11 @@ export async function enqueueSync(storeId: string): Promise<boolean> {
   return (await enqueue("store-sync", { storeId }, { singletonKey: storeId })) !== null;
 }
 
-/** stores.sync_error when Shopify refuses bulkOperationRunQuery to this app. Retrying can't fix it; the developer must. */
-export const BULK_ACCESS_DENIED =
-  "Bulk operations are not enabled for this app. Enable them in the Dev Dashboard → Settings → Access requests.";
+/**
+ * stores.sync_error when Shopify refuses bulkOperationRunQuery to this app. Retrying can't fix it, and neither can the
+ * merchant (it means bulk access or a scope is missing), so they get a neutral message; the developer gets the log.
+ */
+export const BULK_ACCESS_DENIED = "Product sync is temporarily unavailable. We've been notified and are fixing it.";
 
 const HOUR_MS = 3600_000;
 export type ResyncFrequency = "daily" | "weekly" | "off";
@@ -108,9 +110,9 @@ export async function startSync({ storeId }: { storeId: string }): Promise<void>
   try {
     ({ bulkOperationRunQuery: r } = await adminGraphql<{ bulkOperationRunQuery: typeof r }>(storeId, s.shop, RUN, { query: BULK_QUERY }));
   } catch (e) {
-    // A GraphQL error, not a userError: the app lacks bulk access. Permanent, so fail now instead of retrying.
+    // A GraphQL error, not a userError: the app lacks bulk access or a scope. Permanent, so fail now instead of retrying.
     if (e instanceof Error && e.message.includes("Access denied for bulkOperationRunQuery")) {
-      return failSync(storeId, { queue: "store-sync", error: e.message }, BULK_ACCESS_DENIED);
+      return failSync(storeId, { queue: "store-sync", tag: "[bulk-access-denied]", error: e.message }, BULK_ACCESS_DENIED);
     }
     throw e;
   }

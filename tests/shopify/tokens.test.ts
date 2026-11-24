@@ -2,6 +2,21 @@ import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import postgres from "postgres";
 import { randomUUID } from "node:crypto";
 
+// Lets a test run code just before getAccessToken's next store transaction, to interleave a token exchange deterministically.
+let beforeNextForStore: (() => Promise<unknown>) | null = null;
+vi.mock("@/db/client", async (orig) => {
+  const m = await orig<typeof import("@/db/client")>();
+  return {
+    ...m,
+    forStore: (async (...args: Parameters<typeof m.forStore>) => {
+      const hook = beforeNextForStore;
+      beforeNextForStore = null;
+      if (hook) await hook();
+      return m.forStore(...args);
+    }) as typeof m.forStore,
+  };
+});
+
 let admin: ReturnType<typeof postgres>;
 let tokens: typeof import("@/lib/shopify/tokens");
 let client: typeof import("@/db/client");
@@ -65,4 +80,18 @@ test("an expired refresh token marks the store as needing a reconnect", async ()
   await admin`update stores set sync_error = null where id = ${A}`;
   await expect(tokens.getAccessToken(A, vi.fn())).rejects.toBeInstanceOf(tokens.ReconnectNeededError);
   expect((await admin`select sync_error from stores where id = ${A}`)[0].sync_error).toBe(tokens.RECONNECT_NEEDED);
+});
+
+test("a token exchange that lands after the failed read keeps the store from being flagged", async () => {
+  await admin`update stores set sync_error = null where id = ${A}`;
+  await admin`update store_tokens set access_expires_at = now() - interval '1 hour', refresh_expires_at = now() - interval '1 hour' where store_id = ${A}`;
+  const exchange = () =>
+    tokens.saveTokens(A, { accessToken: "x", accessExpiresAt: future(3_600_000), refreshToken: "rx", refreshExpiresAt: future(86_400_000) });
+  // First store transaction: the read that finds both tokens expired. Arm the hook for the one after it (the flag write).
+  beforeNextForStore = async () => {
+    beforeNextForStore = exchange;
+  };
+  await expect(tokens.getAccessToken(A, vi.fn())).rejects.toBeInstanceOf(tokens.ReconnectNeededError);
+  expect((await admin`select sync_error from stores where id = ${A}`)[0].sync_error).toBeNull();
+  expect(await tokens.getAccessToken(A, vi.fn())).toBe("x");
 });

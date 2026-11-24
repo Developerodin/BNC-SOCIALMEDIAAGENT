@@ -14,6 +14,13 @@ export type RefreshFn = (p: { shop: string; refreshToken: string }) => Promise<T
 
 const REFRESH_WINDOW_MS = 5 * 60_000;
 
+/** True while getAccessToken can serve these tokens: the access token has over REFRESH_WINDOW_MS left, or it can be refreshed. */
+export function tokensUsable(t: typeof storeTokens.$inferSelect, now = Date.now()): boolean {
+  const accessFresh = !t.accessExpiresAt || t.accessExpiresAt.getTime() - now > REFRESH_WINDOW_MS;
+  const refreshOk = !!t.refreshTokenEnc && !!t.refreshExpiresAt && t.refreshExpiresAt.getTime() > now;
+  return accessFresh || refreshOk;
+}
+
 /** stores.sync_error for a store whose access and refresh tokens have both expired. Opening the app clears it (session.ts). */
 export const RECONNECT_NEEDED = "Reconnect needed: open the app in Shopify admin";
 
@@ -61,9 +68,24 @@ export async function getAccessToken(storeId: string, refresh: RefreshFn = defau
     return await readOrRefresh(storeId, refresh);
   } catch (e) {
     // Marked outside the token transaction, which the throw rolls back.
-    if (e instanceof ReconnectNeededError) await db.update(stores).set({ syncError: RECONNECT_NEEDED }).where(eq(stores.id, storeId));
+    if (e instanceof ReconnectNeededError) await markReconnectNeeded(storeId);
     throw e;
   }
+}
+
+/**
+ * Sets RECONNECT_NEEDED only if the tokens are still unusable. A token exchange (session.ts) may have saved fresh tokens
+ * and run its clear since the read failed; flagging then would leave a store with valid tokens skipped by every job.
+ * The row locks order this against the exchange: whichever commits second sees the other's write. Locked stores first,
+ * then store_tokens, the exchange's order (upsertStore, then saveTokens), so the two can't deadlock.
+ */
+function markReconnectNeeded(storeId: string): Promise<void> {
+  return forStore(storeId, async (tx) => {
+    await tx.select({ id: stores.id }).from(stores).where(eq(stores.id, storeId)).for("update");
+    const [t] = await tx.select().from(storeTokens).where(eq(storeTokens.storeId, storeId)).for("update");
+    if (!t || tokensUsable(t)) return;
+    await tx.update(stores).set({ syncError: RECONNECT_NEEDED }).where(eq(stores.id, storeId));
+  });
 }
 
 function readOrRefresh(storeId: string, refresh: RefreshFn): Promise<string> {

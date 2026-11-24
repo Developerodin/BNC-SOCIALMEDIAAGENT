@@ -48,18 +48,20 @@ export default function AppHome() {
   // When Resync was clicked. The worker sets 'running' later than the POST returns, so for GRACE_MS a non-running server status is not trusted.
   const [requestedAt, setRequestedAt] = useState<number | null>(null);
   const [now, setNow] = useState(0); // advanced by each load and click, so render stays pure
-  const [refused, setRefused] = useState(false); // the last Resync found a sync already queued
+  // Set when the last Resync found a sync already queued: the status and lastSyncAt seen then. Polling continues while set,
+  // and it clears when either changes (the queued sync started, finished or failed), so the message can't outlive that sync.
+  const [refused, setRefused] = useState<Pick<SyncState, "status" | "lastSyncAt"> | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<SyncState | null> => {
     const res = await authed("/api/app/sync");
-    if (!res.ok) return;
+    if (!res.ok) return null;
     const next: SyncState = await res.json();
-    if (next.status === "running") {
-      setRequestedAt(null); // the server owns the state from here
-      setRefused(false); // the queued sync has started
-    }
+    if (next.status === "running") setRequestedAt(null); // the server owns the state from here
+    // The queued sync has started, or started and ended between two polls.
+    setRefused((r) => (r && (next.status === "running" || next.status !== r.status || next.lastSyncAt !== r.lastSyncAt) ? null : r));
     setNow(Date.now());
     setServer(next);
+    return next;
   }, []);
 
   useEffect(() => {
@@ -73,22 +75,28 @@ export default function AppHome() {
   const sync: SyncState | null = server && pending && server.status !== "running" ? { ...server, status: "running", itemsRead: 0 } : server;
   const running = sync?.status === "running";
 
-  // C4: poll every 5 s while a sync is running or requested.
+  // C4: poll every 5 s while a sync is running, requested, or refused as already queued.
+  const polling = running || refused !== null;
   useEffect(() => {
-    if (!running) return;
+    if (!polling) return;
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
-  }, [running, load]);
+  }, [polling, load]);
 
   async function resync() {
     const t = Date.now();
     setNow(t);
     setRequestedAt(t);
-    setRefused(false);
+    setRefused(null);
     try {
       const res = await authed("/api/app/sync", { method: "POST" });
       if (res.ok) return; // keep polling; do not load() now, the job has not started yet
-      if (res.status === 409) setRefused(true);
+      if (res.status === 409) {
+        setRequestedAt(null);
+        const s = (await load()) ?? server;
+        if (s) setRefused({ status: s.status, lastSyncAt: s.lastSyncAt });
+        return;
+      }
     } catch {
       // idToken or fetch threw: fall through to clear the optimistic state
     }

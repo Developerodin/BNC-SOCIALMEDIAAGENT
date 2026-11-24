@@ -6,7 +6,7 @@ import { upsertStore } from "@/lib/stores";
 import { enqueueSync } from "@/lib/sync";
 import { adminGraphql } from "./admin";
 import { shopify } from "./api";
-import { RECONNECT_NEEDED, saveTokens } from "./tokens";
+import { RECONNECT_NEEDED, saveTokens, tokensUsable } from "./tokens";
 
 const unauthorized = () => new Response(null, { status: 401 });
 
@@ -15,11 +15,7 @@ async function hasValidTokens(shop: string, conn: Conn = db): Promise<string | n
   const [s] = await conn.select({ id: stores.id, active: stores.active }).from(stores).where(eq(stores.shopDomain, shop));
   if (!s?.active) return null;
   const [t] = await forStore(s.id, (tx) => tx.select().from(storeTokens).where(eq(storeTokens.storeId, s.id)), conn);
-  if (!t) return null;
-  const now = Date.now();
-  const accessOk = !t.accessExpiresAt || t.accessExpiresAt.getTime() > now;
-  const refreshOk = !!t.refreshTokenEnc && !!t.refreshExpiresAt && t.refreshExpiresAt.getTime() > now;
-  return accessOk || refreshOk ? s.id : null;
+  return t && tokensUsable(t) ? s.id : null;
 }
 
 /** Verifies the App Bridge id token; exchanges it for an expiring offline token when the store has none usable. Throws Response(401). */
@@ -34,7 +30,17 @@ export async function authenticateEmbedded(req: Request): Promise<{ storeId: str
   }
 
   const existing = await hasValidTokens(shop);
-  if (existing) return { storeId: existing, shop };
+  if (existing) {
+    // Backstop: a store flagged while its tokens are valid would be skipped by every job, and no exchange would run to
+    // clear it. Clear it here and resume the sync it skipped. The conditional update lets one request win the enqueue.
+    const cleared = await db
+      .update(stores)
+      .set({ syncError: null })
+      .where(and(eq(stores.id, existing), eq(stores.syncError, RECONNECT_NEEDED)))
+      .returning({ id: stores.id });
+    if (cleared.length) await enqueueSync(existing);
+    return { storeId: existing, shop };
+  }
 
   // Serialise exchanges per shop so concurrent first loads can't store a superseded token.
   // All writes run on the lock's own connection, so waiters holding pool slots can't starve the holder.
