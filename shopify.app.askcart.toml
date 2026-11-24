@@ -1,0 +1,38 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "49efb27b160b20c4d86a144573616c3b"
+application_url = "https://example.com"
+embedded = true
+name = "AskCart"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_products,read_inventory,read_orders,read_all_orders"
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [ "https://example.com/api/auth" ]
+
+[webhooks]
+# Matches ApiVersion.October26 in src/lib/shopify/api.ts; bump both together.
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled"]
+  uri = "/api/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
+  topics = ["bulk_operations/finish"]
+  uri = "/api/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
+  topics = ["products/create", "products/update", "products/delete", "shop/update"]
+  uri = "/api/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = ["customers/data_request","customers/redact","shop/redact"]
+  uri = "/api/webhooks/shopify"
+
+[build]
+include_config_on_deploy = true
+automatically_update_urls_on_dev = true
