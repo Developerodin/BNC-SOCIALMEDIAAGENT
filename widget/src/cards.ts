@@ -2,6 +2,7 @@
 // option names and the store's cart messages are data, never markup (Review Focus 1). Links go through safeHttpsUrl and
 // images through safeImageUrl (cdn.shopify.com only), otherwise there is no link and a placeholder.
 import type { Card, CardsRenderer, WidgetCtx } from "../../src/lib/widget-contract";
+import { requestAdd } from "./bridge";
 import { addToCart } from "./cart";
 import { formatPrice, resolveHttpsUrl, safeHttpsUrl, safeImageUrl, stockLabel } from "./core/format";
 import { tokenStore, uiState } from "./core/storage";
@@ -146,7 +147,10 @@ function addControls(
   });
 
   const hosted = page.hosted === true;
-  const addLabel = t(hosted ? "buy_on_store" : "add_to_cart");
+  // Cart bridge (docs/embed.md): on the hosted page inside a store's embed, Add to cart asks the store page to add it.
+  const origins = page.parentOrigins ?? [];
+  let bridged = hosted && page.bridge === true && origins.length > 0;
+  let addLabel = t(hosted && !bridged ? "buy_on_store" : "add_to_cart");
   const button = el("button", "ac-card__add", addLabel);
   button.type = "button";
   const status = el("p", "ac-card__status");
@@ -180,10 +184,12 @@ function addControls(
   }
   update();
 
-  button.addEventListener("click", async () => {
+  button.addEventListener("click", async (ev) => {
     const variant = chosen;
     if (busy || !variant) return; // the disabled button plus this guard: a double click adds once
-    if (hosted) {
+    // Only a real click starts a cart add through the bridge: never a script, never model output.
+    if (hosted && bridged && !ev.isTrusted) return;
+    if (hosted && !bridged) {
       // No storefront cart here: open the product on the store with this variant selected.
       const href = resolveHttpsUrl(card.url);
       if (href && /^\d+$/.test(variant.id)) {
@@ -199,7 +205,22 @@ function addControls(
     status.replaceChildren();
     status.className = "ac-card__status";
     const quantity = 1;
-    const res = await addToCart(page, variant.id, quantity);
+    let cartHref = hosted ? null : resolveHttpsUrl(page.cartUrl);
+    let res: Awaited<ReturnType<typeof addToCart>>;
+    if (hosted) {
+      const reply = await requestAdd(origins, variant.id, quantity);
+      if (!reply) {
+        // Nobody valid answered (not a Shopify page, or an old embed.js): this chat has no cart, so go back to the product link.
+        bridged = false;
+        addLabel = t("buy_on_store");
+        busy = false;
+        button.textContent = addLabel;
+        update();
+        return; // not an error to show: the button itself has changed
+      }
+      cartHref = resolveHttpsUrl(reply.origin + "/cart"); // origin was matched against parentOrigins in bridge.ts
+      res = reply.res;
+    } else res = await addToCart(page, variant.id, quantity);
     busy = false;
     button.textContent = addLabel;
     update();
@@ -208,8 +229,11 @@ function addControls(
       // UD11: "Added · View cart".
       status.className = "ac-card__status ac-card__added";
       status.append(t("added"));
-      const cart = resolveHttpsUrl(page.cartUrl);
-      if (cart) status.append(" · ", link(cart, "ac-card__cart", t("view_cart")));
+      if (cartHref) {
+        const a = link(cartHref, "ac-card__cart", t("view_cart"));
+        if (hosted) a.target = "_top"; // leave the iframe: the cart is the store's page
+        status.append(" · ", a);
+      }
       ctx.announce(t("added"));
       const token = tokenStore(page.shop).get();
       // Fire and forget; the eventId is fixed per add, so a replayed log is counted once.

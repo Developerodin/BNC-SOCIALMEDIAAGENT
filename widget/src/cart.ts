@@ -4,6 +4,8 @@
 // recognise it reloads the whole page mid-chat.
 import type { PageContext } from "../../src/lib/widget-contract";
 
+// Only the add url is needed, so the embed's bridge (embed.ts) can reuse this on a storefront without a full PageContext.
+export type CartTarget = Pick<PageContext, "cartAddUrl">;
 export type CartResult = { ok: true } | { ok: false; status: number; message: string | null };
 
 type UpdateCart = ((input: { lines: { merchandiseId: string; quantity: number }[] }) => Promise<unknown>) & {
@@ -19,7 +21,7 @@ function themeUpdateCart(): UpdateCart | null {
   }
 }
 
-async function viaAjax(page: PageContext, variantId: string, quantity: number): Promise<CartResult> {
+async function viaAjax(page: CartTarget, variantId: string, quantity: number): Promise<CartResult> {
   let res: Response;
   try {
     res = await fetch(page.cartAddUrl + ".js", {
@@ -48,7 +50,7 @@ async function viaAjax(page: PageContext, variantId: string, quantity: number): 
  * A rejected `updateCart` means the action couldn't run at all (Shopify's docs: network failure, malformed payload, not
  * ready yet), so nothing was added and the plain add is tried. A `userErrors` answer means the cart refused it: no retry.
  */
-export async function addToCart(page: PageContext, variantId: string, quantity: number): Promise<CartResult> {
+export async function addToCart(page: CartTarget, variantId: string, quantity: number): Promise<CartResult> {
   if (!/^\d+$/.test(variantId)) return { ok: false, status: 0, message: null }; // D30: numeric ids only
   let result: CartResult | null = null;
   const updateCart = themeUpdateCart();

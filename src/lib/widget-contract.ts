@@ -32,6 +32,10 @@ export type PageContext = {
   loggedIn?: boolean;
   /** Only on the hosted chat page (/chat/<shop>): there is no storefront cart, so a card opens the product on the store. */
   hosted?: boolean;
+  /** Hosted page only: the embedding storefront said it can add to the cart (a hint; the card falls back if nobody answers). */
+  bridge?: boolean;
+  /** Hosted page only: the store's own https origins, the only parents the cart bridge talks to. */
+  parentOrigins?: string[];
 };
 
 /** The SSE `product` payload. */

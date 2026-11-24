@@ -22,7 +22,7 @@ function safeJson(v: unknown): string {
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-export async function GET(_req: Request, ctx: { params: Promise<{ shop: string }> }) {
+export async function GET(req: Request, ctx: { params: Promise<{ shop: string }> }) {
   const { shop } = await ctx.params;
   if (!SHOP.test(shop)) return new Response("Unknown store", NOT_FOUND);
   const [store] = await db
@@ -41,17 +41,26 @@ export async function GET(_req: Request, ctx: { params: Promise<{ shop: string }
   // not script, so `script-src 'self'` only allows our bundle.
   const ancestors = [...new Set([...allowed, ...store.domains])].map((h) => `https://${h}`).join(" ");
 
+  // Hints from embed.js on a Shopify storefront (cart bridge, docs/embed.md). Anyone can put anything in a URL, so each is
+  // validated on its own and only used for suggestions and for asking the parent page; none of it grants anything.
+  const q = new URL(req.url).searchParams;
+  const country = /^[A-Z]{2}$/.test(q.get("country") ?? "") ? q.get("country") : null;
+  const productId = /^\d{1,20}$/.test(q.get("product") ?? "") ? q.get("product") : null;
+  const bridge = q.get("bridge") === "1";
+
   const page: PageContext = {
     shop,
     locale: store.primaryLocale ?? "en",
-    country: null,
+    country,
     currency: store.currencyCode,
-    productId: null,
+    productId,
     cartAddUrl: "", // unused: `hosted` sends Add to cart to the store's product page
     cartUrl: "",
     privacyUrl: null,
     designMode: false,
     hosted: true,
+    // The bridge only talks to the store's own origins (never the embedDomains: those sites aren't Shopify and never answer).
+    ...(bridge && { bridge, parentOrigins: [...new Set([shop, ...store.domains])].map((h) => `https://${h}`) }),
   };
   const html = `<!doctype html>
 <html lang="${escapeHtml(page.locale.slice(0, 2))}">

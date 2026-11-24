@@ -146,7 +146,7 @@ describe("embed.js", () => {
     btn.click();
     btn.click();
     expect(focus).toHaveBeenCalledTimes(1);
-    const send = (data: string, source: unknown) => window.dispatchEvent(Object.assign(new Event("message"), { data, source }));
+    const send = (data: string, source: unknown) => window.dispatchEvent(Object.assign(new Event("message"), { data, source, origin: "https://askcart.example.com" }));
     send("askcart:close", window); // not from the iframe
     expect(frame.hidden).toBe(false);
     send("askcart:close", frame.contentWindow);

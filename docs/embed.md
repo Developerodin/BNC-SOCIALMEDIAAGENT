@@ -39,11 +39,24 @@ bio or a QR code.
 If the chat is turned off in your AskCart settings, the store isn't connected, or no site is allowed yet, both the
 embed's panel and the link show "not found".
 
+## Add to cart on a Shopify storefront (cart bridge)
+
+When `embed.js` runs on one of your own Shopify pages (for example a theme where you pasted the snippet instead of
+enabling the app embed), the chat can add to the real cart. The chat frame asks the page by `postMessage`; the page
+adds the item with the theme's own cart code and answers. The card then shows **Added to cart** and a **View cart**
+link. Both sides check who they are talking to: the page only accepts messages from AskCart's own frame (origin and
+window), and only a strict `{variantId, qty 1-10}` request from a real click; the reply goes to AskCart's origin
+only. The chat frame only talks to your store's own domains. The page also tells the chat the visitor's country and
+the product being viewed, as hints only.
+
+If nothing answers within about 4 seconds (not a Shopify page, or a store domain AskCart doesn't know), the button
+falls back to **Buy on the store**.
+
 ## Limits
 
-- **No cart sync.** Outside your Shopify theme the chat can't put items in your cart. The product card's button reads
-  **Buy on the store** and opens the product page on your Shopify store in a new tab, with the chosen variant
-  selected. The visitor adds it to the cart there.
+- **No cart sync on other sites.** Outside a Shopify storefront the chat can't put items in your cart. The product
+  card's button reads **Buy on the store** and opens the product page on your Shopify store in a new tab, with the
+  chosen variant selected. The visitor adds it to the cart there.
 - **A separate chat history.** The conversation is kept in the visitor's browser for that website (or for the link),
   and isn't shared with your Shopify storefront chat.
 - **Button colour.** The embed button is dark by default; the chat inside uses your accent colour.

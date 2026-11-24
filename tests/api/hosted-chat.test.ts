@@ -67,6 +67,34 @@ test("an active store gets the chat page with its config and the hosted script",
   expect(data.page).toMatchObject({ shop, locale: "fr", hosted: true });
 });
 
+const pageOf = async (qs: string) => {
+  const res = await page.GET(new Request(`http://localhost/chat/${shop}${qs}`), { params: Promise.resolve({ shop }) });
+  const html = await res.text();
+  return JSON.parse(html.match(/<script type="application\/json" id="askcart-data">(.*)<\/script>/)![1]).page;
+};
+
+test("bridge hints are validated and the parent origins are the store's own domains only", async () => {
+  const p = await pageOf("?bridge=1&country=FR&product=4567");
+  expect(p).toMatchObject({ country: "FR", productId: "4567", bridge: true, hosted: true });
+  expect(p.parentOrigins).toEqual([`https://${shop}`, "https://shop-a.example.com"]); // not blog.example.org (an embedDomain)
+});
+
+test.each(["?country=fr", "?country=FRA", "?country=F%3Cb", "?product=12a", `?product=${"1".repeat(21)}`, "?product=-1", "?bridge=0", "?bridge=true"])(
+  "a bad hint %s is dropped",
+  async (qs) => {
+    const p = await pageOf(qs);
+    expect(p).toMatchObject({ country: null, productId: null });
+    expect(p.bridge).toBeUndefined();
+    expect(p.parentOrigins).toBeUndefined();
+  },
+);
+
+test("no hints, no bridge: the page context is as before", async () => {
+  const p = await pageOf("");
+  expect(p).toMatchObject({ country: null, productId: null, hosted: true });
+  expect(p.bridge).toBeUndefined();
+});
+
 test("store text can't break out of the title or the inline JSON", async () => {
   const html = await (await chat(shop)).text();
   expect(html).toContain("<title>Tom&#39;s &#60;b&#62;&#34;Shop&#34;&#60;/b&#62;</title>");

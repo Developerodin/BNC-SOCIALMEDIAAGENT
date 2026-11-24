@@ -3,8 +3,33 @@
 // A launcher button; the first click loads the hosted chat page (/chat/<shop>) in an iframe panel. Nothing is requested
 // before a click, and no dependencies. Text goes through textContent only; `data-shop` is checked before it reaches a URL.
 // The merchant must have allowed this site first (the page refuses to be framed elsewhere).
+import { addToCart } from "./cart";
+
 const s = document.currentScript as HTMLScriptElement | null;
 const shop = s?.dataset.shop ?? "";
+
+type ShopifyGlobals = { country?: unknown; routes?: { root?: unknown } };
+const storefront = () => (window as { Shopify?: ShopifyGlobals }).Shopify;
+
+/**
+ * Cart bridge, store-page side (docs/embed.md). Only on a Shopify storefront; elsewhere it never answers, so the chat
+ * falls back to "Buy on the store". The caller has already checked origin and source. Strict schema, nothing else is read.
+ */
+async function answerAdd(frame: HTMLIFrameElement, appOrigin: string, data: unknown) {
+  const shopify = storefront();
+  const d = data as { type?: unknown; id?: unknown; variantId?: unknown; qty?: unknown } | null;
+  if (!shopify || typeof shopify.routes?.root !== "string") return;
+  if (!d || typeof d !== "object" || d.type !== "askcart:add") return;
+  if (typeof d.id !== "string" || d.id.length < 1 || d.id.length > 64) return;
+  if (typeof d.variantId !== "string" || !/^\d{1,20}$/.test(d.variantId)) return;
+  if (typeof d.qty !== "number" || !Number.isInteger(d.qty) || d.qty < 1 || d.qty > 10) return;
+  // The same cart code the theme widget uses (cart.ts): updateCart / cart:updated, 422 messages from the store.
+  const res = await addToCart({ cartAddUrl: shopify.routes.root + "cart/add" }, d.variantId, d.qty);
+  const reply: { type: string; id: string; ok: boolean; message?: string } = { type: "askcart:added", id: d.id, ok: res.ok };
+  if (!res.ok && res.message) reply.message = res.message;
+  // Always the app's own origin, never "*": the cart outcome isn't for anyone else.
+  frame.contentWindow?.postMessage(reply, appOrigin);
+}
 
 function start(s: HTMLScriptElement) {
   if (document.getElementById("askcart-embed")) return;
@@ -31,7 +56,16 @@ function start(s: HTMLScriptElement) {
     if (!frame) {
       frame = document.createElement("iframe");
       frame.title = label;
-      frame.src = new URL("/chat/" + shop, s.src).href;
+      const url = new URL("/chat/" + shop, s.src);
+      // Hints for the hosted page (it treats them as untrusted): only on a Shopify storefront, and only well-formed values.
+      const shopify = storefront();
+      if (shopify) {
+        url.searchParams.set("bridge", "1");
+        if (typeof shopify.country === "string" && /^[A-Z]{2}$/.test(shopify.country)) url.searchParams.set("country", shopify.country);
+        const pid = String((window as { ShopifyAnalytics?: { meta?: { product?: { id?: unknown } } } }).ShopifyAnalytics?.meta?.product?.id ?? "");
+        if (/^\d{1,20}$/.test(pid)) url.searchParams.set("product", pid);
+      }
+      frame.src = url.href;
       host.append(frame);
     } else frame.hidden = !frame.hidden;
     const open = !frame.hidden;
@@ -42,8 +76,12 @@ function start(s: HTMLScriptElement) {
   }
   btn.addEventListener("click", toggle);
   // Escape inside the iframe never reaches this page, so the hosted page (hosted.ts) tells us.
+  // Both checks matter: the origin proves it's our app, the source proves it's this iframe and not another window of it.
+  const appOrigin = new URL(s.src).origin;
   window.addEventListener("message", (e) => {
-    if (frame && !frame.hidden && e.source === frame.contentWindow && e.data === "askcart:close") toggle();
+    if (!frame || frame.hidden || e.source !== frame.contentWindow || e.origin !== appOrigin) return;
+    if (e.data === "askcart:close") toggle();
+    else void answerAdd(frame, appOrigin, e.data);
   });
   host.append(style, btn);
   document.body.append(host);
