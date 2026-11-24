@@ -77,6 +77,15 @@ describe("store-page side (embed.js)", () => {
     expect(posted).toHaveBeenCalledWith({ type: "askcart:added", id: "n1", ok: true }, APP);
   });
 
+  it("acks at once, before the cart call finishes, to the app origin only", async () => {
+    fetchMock.mockReturnValue(new Promise(() => {})); // a cart call that never returns
+    boot();
+    send(valid);
+    await flush();
+    expect(posted).toHaveBeenCalledTimes(1);
+    expect(posted).toHaveBeenCalledWith({ type: "askcart:received", id: "n1" }, APP);
+  });
+
   it("relays the store's 422 message", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ description: "Sold out" }), { status: 422 }));
     boot();
@@ -165,6 +174,10 @@ describe("hosted page side (cards)", () => {
     window.dispatchEvent(Object.assign(new Event("message"), {
       source: o.source ?? window, origin: o.origin ?? STORE, data: { type: "askcart:added", id, ok: o.ok ?? true, message: o.message },
     }));
+  const ack = (id: unknown, o: { source?: unknown; origin?: string } = {}) =>
+    window.dispatchEvent(Object.assign(new Event("message"), {
+      source: o.source ?? window, origin: o.origin ?? STORE, data: { type: "askcart:received", id },
+    }));
   const sentId = () => (post.mock.calls[0][0] as { id: string }).id;
 
   it("a trusted click posts the request to the store origin and shows Added + View cart on success", async () => {
@@ -201,33 +214,92 @@ describe("hosted page side (cards)", () => {
   it.each([
     ["source", { source: {} }],
     ["origin", { origin: "https://evil.example" }],
-  ])("ignores a reply with the wrong %s, then times out into Buy on the store", async (_n, o) => {
+  ])("ignores a reply or ack with the wrong %s, then falls back to Buy on the store", async (_n, o) => {
     const { btn, status } = setup();
     click(btn);
+    ack(sentId(), o);
     reply(sentId(), o);
-    await vi.advanceTimersByTimeAsync(3000);
-    expect(btn.disabled).toBe(true); // still waiting
-    expect(status.textContent).toBe("");
     await vi.advanceTimersByTimeAsync(1500);
+    expect(btn.disabled).toBe(true); // still waiting for an ack
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(status.textContent).toBe("");
     expect(btn.textContent).toBe("Buy on the store");
   });
 
-  it("ignores a reply with another id", async () => {
+  it("ignores a reply or ack with another id", async () => {
     const { btn, status } = setup();
     click(btn);
+    ack("other");
     reply("other");
-    await vi.advanceTimersByTimeAsync(4100);
+    await vi.advanceTimersByTimeAsync(2100);
     expect(status.textContent).toBe("");
     expect(btn.textContent).toBe("Buy on the store");
   });
 
-  it("after a timeout the card opens the product instead", async () => {
+  it("no ack: falls back for the next click only, then the bridge is tried again", async () => {
     const { btn } = setup();
     click(btn);
-    await vi.advanceTimersByTimeAsync(4100);
-    click(btn);
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(btn.textContent).toBe("Buy on the store");
+    click(btn); // the fallback: the product link, no bridge call
     expect(open).toHaveBeenCalledWith(`${STORE}/products/tee?variant=11`, "_blank", "noopener,noreferrer");
     expect(post).toHaveBeenCalledTimes(1);
+    expect(btn.textContent).toBe("Add to cart");
+    click(btn); // retry
+    expect(post).toHaveBeenCalledTimes(2);
+    ack((post.mock.calls[1][0] as { id: string }).id);
+    reply((post.mock.calls[1][0] as { id: string }).id);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(btn.nextElementSibling!.textContent).toContain("Added");
+  });
+
+  describe("a slow cart (acked)", () => {
+    let log: ReturnType<typeof vi.fn>;
+    function setupLogged() {
+      localStorage.setItem("askcart:demo.myshopify.com:token", "tok");
+      log = vi.fn().mockResolvedValue(undefined);
+      const into = document.createElement("div");
+      const ctx: WidgetCtx = { config: { stockThreshold: 5 } as WidgetConfig, page: { ...base, ...bridged }, api: { logCartAdd: log } as unknown as WidgetApi, t: translator("en"), announce: () => {} };
+      renderCards(into, [card], ctx, "m1");
+      return { btn: into.querySelector<HTMLButtonElement>("button.ac-card__add")!, status: into.querySelector(".ac-card__status")! };
+    }
+    afterEach(() => localStorage.clear());
+
+    it("a final reply after 10 s is still a success, logged once", async () => {
+      const { btn, status } = setupLogged();
+      click(btn);
+      ack(sentId());
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(btn.textContent).toBe("Adding…");
+      reply(sentId());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(status.textContent).toContain("Added");
+      expect(log).toHaveBeenCalledTimes(1);
+    });
+
+    it("an ack with no final reply shows Check your cart with the cart link, logs once, and a late reply changes nothing", async () => {
+      const { btn, status } = setupLogged();
+      click(btn);
+      ack(sentId());
+      await vi.advanceTimersByTimeAsync(15100);
+      expect(status.textContent).toContain("Check your cart");
+      expect(status.querySelector<HTMLAnchorElement>("a")!.href).toBe(`${STORE}/cart`);
+      expect(btn.textContent).toBe("Add to cart"); // not flipped to Buy on the store
+      expect(log).toHaveBeenCalledTimes(1);
+      reply(sentId());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(log).toHaveBeenCalledTimes(1);
+    });
+
+    it("a failed final reply after an ack is not logged", async () => {
+      const { btn, status } = setupLogged();
+      click(btn);
+      ack(sentId());
+      reply(sentId(), { ok: false, message: "Sold out" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(status.textContent).toBe("Sold out");
+      expect(log).not.toHaveBeenCalled();
+    });
   });
 
   it("without the bridge hint the hosted card is unchanged", () => {

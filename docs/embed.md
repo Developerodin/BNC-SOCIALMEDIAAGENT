@@ -49,8 +49,14 @@ window), and only a strict `{variantId, qty 1-10}` request from a real click; th
 only. The chat frame only talks to your store's own domains. The page also tells the chat the visitor's country and
 the product being viewed, as hints only.
 
-If nothing answers within about 4 seconds (not a Shopify page, or a store domain AskCart doesn't know), the button
-falls back to **Buy on the store**.
+The page confirms receipt at once. If nothing confirms within about 2 seconds (not a Shopify page, or a store domain
+AskCart doesn't know), the button shows **Buy on the store** for the next click, then offers Add to cart again. If the
+page confirmed but the store's cart is very slow (over 15 seconds), the card says **Check your cart** with a View cart
+link instead of guessing.
+
+The address that serves `/chat/<store>` (the `<askcart-host>` in the snippet) must not redirect to another host, such
+as apex to `www`. The bridge and the panel's close button compare the exact origin of the frame, so after a redirect
+they silently stop working. Use the final address in the snippet.
 
 ## Limits
 

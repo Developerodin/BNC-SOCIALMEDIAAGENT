@@ -23,6 +23,8 @@ async function answerAdd(frame: HTMLIFrameElement, appOrigin: string, data: unkn
   if (typeof d.id !== "string" || d.id.length < 1 || d.id.length > 64) return;
   if (typeof d.variantId !== "string" || !/^\d{1,20}$/.test(d.variantId)) return;
   if (typeof d.qty !== "number" || !Number.isInteger(d.qty) || d.qty < 1 || d.qty > 10) return;
+  // Ack first: a slow theme cart can take longer than the chat's reply timeout, and the chat needs to know a Shopify page is there.
+  frame.contentWindow?.postMessage({ type: "askcart:received", id: d.id }, appOrigin);
   // The same cart code the theme widget uses (cart.ts): updateCart / cart:updated, 422 messages from the store.
   const res = await addToCart({ cartAddUrl: shopify.routes.root + "cart/add" }, d.variantId, d.qty);
   const reply: { type: string; id: string; ok: boolean; message?: string } = { type: "askcart:added", id: d.id, ok: res.ok };

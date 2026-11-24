@@ -149,7 +149,8 @@ function addControls(
   const hosted = page.hosted === true;
   // Cart bridge (docs/embed.md): on the hosted page inside a store's embed, Add to cart asks the store page to add it.
   const origins = page.parentOrigins ?? [];
-  let bridged = hosted && page.bridge === true && origins.length > 0;
+  const bridged = hosted && page.bridge === true && origins.length > 0;
+  let fellBack = false; // one unanswered add shows "Buy on the store" for the next click only; the bridge is tried again after
   let addLabel = t(hosted && !bridged ? "buy_on_store" : "add_to_cart");
   const button = el("button", "ac-card__add", addLabel);
   button.type = "button";
@@ -189,7 +190,12 @@ function addControls(
     if (busy || !variant) return; // the disabled button plus this guard: a double click adds once
     // Only a real click starts a cart add through the bridge: never a script, never model output.
     if (hosted && bridged && !ev.isTrusted) return;
-    if (hosted && !bridged) {
+    if (hosted && (!bridged || fellBack)) {
+      if (fellBack) {
+        fellBack = false;
+        addLabel = t("add_to_cart");
+        button.textContent = addLabel;
+      }
       // No storefront cart here: open the product on the store with this variant selected.
       const href = resolveHttpsUrl(card.url);
       if (href && /^\d+$/.test(variant.id)) {
@@ -207,11 +213,12 @@ function addControls(
     const quantity = 1;
     let cartHref = hosted ? null : resolveHttpsUrl(page.cartUrl);
     let res: Awaited<ReturnType<typeof addToCart>>;
+    let unconfirmed = false; // acked but no final answer (slow cart): say "Check your cart", don't claim success or failure
     if (hosted) {
       const reply = await requestAdd(origins, variant.id, quantity);
       if (!reply) {
-        // Nobody valid answered (not a Shopify page, or an old embed.js): this chat has no cart, so go back to the product link.
-        bridged = false;
+        // Never acked (not a Shopify page, or an old embed.js): offer the product link for the next click.
+        fellBack = true;
         addLabel = t("buy_on_store");
         busy = false;
         button.textContent = addLabel;
@@ -219,7 +226,8 @@ function addControls(
         return; // not an error to show: the button itself has changed
       }
       cartHref = resolveHttpsUrl(reply.origin + "/cart"); // origin was matched against parentOrigins in bridge.ts
-      res = reply.res;
+      unconfirmed = reply.kind === "unconfirmed";
+      res = reply.kind === "done" ? reply.res : { ok: true };
     } else res = await addToCart(page, variant.id, quantity);
     busy = false;
     button.textContent = addLabel;
@@ -228,15 +236,16 @@ function addControls(
     if (res.ok) {
       // UD11: "Added · View cart".
       status.className = "ac-card__status ac-card__added";
-      status.append(t("added"));
+      status.append(t(unconfirmed ? "check_cart" : "added"));
       if (cartHref) {
         const a = link(cartHref, "ac-card__cart", t("view_cart"));
         if (hosted) a.target = "_top"; // leave the iframe: the cart is the store's page
         status.append(" · ", a);
       }
-      ctx.announce(t("added"));
+      ctx.announce(t(unconfirmed ? "check_cart" : "added"));
       const token = tokenStore(page.shop).get();
-      // Fire and forget; the eventId is fixed per add, so a replayed log is counted once.
+      // Fire and forget; the eventId is fixed per add, so a replayed log is counted once. An acked add is logged here, at
+      // the end of this one click: the bridge listener is gone by now, so a late reply can't log it a second time.
       if (token) {
         void ctx.api.logCartAdd(token, { messageId, productId: card.id, variantId: variant.id, quantity, eventId: crypto.randomUUID() });
       }

@@ -3,7 +3,13 @@
 // trust: the parent only answers on a Shopify storefront, and every reply is checked for source, origin and nonce.
 import type { CartResult } from "./cart";
 
-export const BRIDGE_TIMEOUT_MS = 4000;
+export const ACK_TIMEOUT_MS = 2000; // a Shopify page acks at once; silence means "no bridge here"
+export const DONE_TIMEOUT_MS = 15000; // after an ack the cart call is running: a slow theme cart gets this long
+
+export type BridgeResult =
+  | { kind: "done"; res: CartResult; origin: string }
+  | { kind: "unconfirmed"; origin: string } // acked, but no final answer: the add may or may not have happened
+  | null; // never acked: not a Shopify page, or an old embed.js
 
 /**
  * Where to post. A message with a targetOrigin that doesn't match is dropped by the browser, so one post can't reach
@@ -21,11 +27,12 @@ function targets(allowed: string[]): string[] {
   return known ? [known] : allowed;
 }
 
-/** Resolves with the parent's answer and its origin, or null when nobody valid answered in time (fall back to "Buy on the store"). */
-export function requestAdd(allowed: string[], variantId: string, qty: number): Promise<{ res: CartResult; origin: string } | null> {
+export function requestAdd(allowed: string[], variantId: string, qty: number): Promise<BridgeResult> {
   const id = crypto.randomUUID();
   return new Promise((resolve) => {
-    const done = (v: { res: CartResult; origin: string } | null) => {
+    let ackOrigin = "";
+    let timer: ReturnType<typeof setTimeout>;
+    const done = (v: BridgeResult) => {
       clearTimeout(timer);
       window.removeEventListener("message", onMessage);
       resolve(v);
@@ -33,11 +40,19 @@ export function requestAdd(allowed: string[], variantId: string, qty: number): P
     const onMessage = (e: MessageEvent) => {
       const d = e.data as { type?: unknown; id?: unknown; ok?: unknown; message?: unknown } | null;
       if (e.source !== window.parent || !allowed.includes(e.origin)) return;
-      if (!d || typeof d !== "object" || d.type !== "askcart:added" || d.id !== id || typeof d.ok !== "boolean") return;
+      if (!d || typeof d !== "object" || d.id !== id) return;
+      if (d.type === "askcart:received") {
+        if (ackOrigin) return;
+        ackOrigin = e.origin;
+        clearTimeout(timer);
+        timer = setTimeout(() => done({ kind: "unconfirmed", origin: ackOrigin }), DONE_TIMEOUT_MS);
+        return;
+      }
+      if (d.type !== "askcart:added" || typeof d.ok !== "boolean") return;
       const message = typeof d.message === "string" && d.message.trim() ? d.message.slice(0, 300) : null;
-      done({ res: d.ok ? { ok: true } : { ok: false, status: message ? 422 : 0, message }, origin: e.origin });
+      done({ kind: "done", res: d.ok ? { ok: true } : { ok: false, status: message ? 422 : 0, message }, origin: e.origin });
     };
-    const timer = setTimeout(() => done(null), BRIDGE_TIMEOUT_MS);
+    timer = setTimeout(() => done(null), ACK_TIMEOUT_MS);
     window.addEventListener("message", onMessage);
     for (const origin of targets(allowed)) window.parent.postMessage({ type: "askcart:add", id, variantId, qty }, origin);
   });
