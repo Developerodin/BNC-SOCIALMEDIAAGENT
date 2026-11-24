@@ -213,6 +213,33 @@ export async function readHistory(
   });
 }
 
+/**
+ * DELETE /api/chat/conversation (D84, "Clear chat"): deletes the conversation; its messages go with it through the composite
+ * FK's cascade. Same token rules as readHistory: a bad or other-store token → 401. A conversation already gone → ok
+ * (idempotent). A conversation whose turn is running (busy_until in the future, D81) → 409 and nothing is deleted, so a
+ * streaming turn never saves its answer into a deleted conversation. The delete and a concurrent claim lock the same row,
+ * so one waits for the other and then sees its result: either the delete skips the now-busy row (409), or the claim finds
+ * no row and openTurn answers 404.
+ */
+export async function deleteConversation(storeId: string, token: string): Promise<{ ok: true } | { ok: false; status: 401 | 409 }> {
+  const conversationId = verifyToken(storeId, token);
+  if (!conversationId) return { ok: false, status: 401 };
+  return forStore(storeId, async (tx) => {
+    const deleted = await tx
+      .delete(conversations)
+      .where(
+        and(
+          eq(conversations.storeId, storeId),
+          eq(conversations.id, conversationId),
+          or(isNull(conversations.busyUntil), lt(conversations.busyUntil, sql`now()`)),
+        ),
+      )
+      .returning({ id: conversations.id });
+    if (deleted.length > 0 || !(await conversationExists(tx, storeId, conversationId))) return { ok: true as const };
+    return { ok: false as const, status: 409 as const };
+  });
+}
+
 /** C14 / UD10: a count is shown only below the threshold, so the card and the model's LIVE line agree. */
 function capStock(s: Stock, threshold: number): Stock {
   return s.kind === "count" && s.n >= threshold ? { kind: "in_stock" } : s;
