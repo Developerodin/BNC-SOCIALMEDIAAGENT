@@ -4,6 +4,14 @@ The AskCart shopping assistant also works on a website that isn't your Shopify t
 site), and as a plain link. The chat is the same one your store shows: same answers, same products, same look and
 settings.
 
+## Allow your website first
+
+Embedding is **off** until you allow the site: only listed sites can show your chat, so nobody else can use it (and
+your AI usage) from their page. Add each site's hostname (for example `www.my-blog.com`, no `https://`, no port) with
+`POST /api/app/embed-domains` (`{"host": "www.my-blog.com"}`; `DELETE` removes one, `GET` lists them; up to 10). A
+settings screen for this is coming. Your store's own domains are always allowed, so the link form below works for
+anyone as soon as one site is listed. Until then, `/chat/<store>` shows "not found".
+
 ## Add it to any website
 
 Paste this once, before `</body>`:
@@ -25,8 +33,8 @@ panel (full screen on a phone); the button turns into a close button.
 `https://<askcart-host>/chat/my-store.myshopify.com` opens the chat as a full page. Use it in a newsletter, a social
 bio or a QR code.
 
-If the chat is turned off in your AskCart settings, or the store isn't connected, both the embed's panel and the
-link show "not found".
+If the chat is turned off in your AskCart settings, the store isn't connected, or no site is allowed yet, both the
+embed's panel and the link show "not found".
 
 ## Limits
 

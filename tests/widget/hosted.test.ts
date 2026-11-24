@@ -94,16 +94,18 @@ describe("embed.js", () => {
     bundle: true, write: false, format: "iife", platform: "browser",
   }).outputFiles[0].text;
 
-  function run(attrs: Record<string, string>) {
+  function run(attrs: Record<string, string>, noBody = false) {
     const s = document.createElement("script");
     for (const [k, v] of Object.entries(attrs)) s.setAttribute(k, v);
     document.body.append(s);
     Object.defineProperty(s, "src", { value: "https://askcart.example.com/embed.js" }); // happy-dom won't load a real src
     Object.defineProperty(document, "currentScript", { value: s, configurable: true });
+    if (noBody) Object.defineProperty(document, "body", { value: null, configurable: true });
     try {
       (0, eval)(code);
     } finally {
       delete (document as { currentScript?: unknown }).currentScript;
+      if (noBody) delete (document as { body?: unknown }).body;
     }
   }
 
@@ -120,7 +122,8 @@ describe("embed.js", () => {
     const frame = document.querySelector("iframe")!;
     expect(frame.src).toBe("https://askcart.example.com/chat/demo.myshopify.com");
     expect(btn.getAttribute("aria-expanded")).toBe("true");
-    expect(btn.getAttribute("aria-label")).toBe("Close");
+    expect(btn.textContent).toBe("\u00d7");
+    expect(btn.getAttribute("aria-label")).toBe("Ask us"); // the name stays in the site's language; aria-expanded says open
     btn.click();
     expect(frame.hidden).toBe(true);
     expect(btn.textContent).toBe("Ask us");
@@ -132,6 +135,35 @@ describe("embed.js", () => {
   it.each(["", "evil.com", "a.myshopify.com/../x", "a.myshopify.com.evil.com"])("a bad data-shop %j adds nothing", (shop) => {
     run({ "data-shop": shop });
     expect(document.getElementById("askcart-embed")).toBeNull();
+  });
+
+  it("the iframe takes focus on open, and the hosted page's Escape message closes it", () => {
+    run({ "data-shop": "demo.myshopify.com" });
+    const btn = document.querySelector<HTMLButtonElement>("#askcart-embed button")!;
+    btn.click();
+    const frame = document.querySelector("iframe")!;
+    const focus = vi.spyOn(frame, "focus");
+    btn.click();
+    btn.click();
+    expect(focus).toHaveBeenCalledTimes(1);
+    const send = (data: string, source: unknown) => window.dispatchEvent(Object.assign(new Event("message"), { data, source }));
+    send("askcart:close", window); // not from the iframe
+    expect(frame.hidden).toBe(false);
+    send("askcart:close", frame.contentWindow);
+    expect(frame.hidden).toBe(true);
+  });
+
+  it("a bad data-shop is explained in the console", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    run({ "data-shop": "evil.com" });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("data-shop"));
+  });
+
+  it("waits for the body when the script runs in the head", () => {
+    run({ "data-shop": "demo.myshopify.com" }, true);
+    expect(document.getElementById("askcart-embed")).toBeNull();
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    expect(document.getElementById("askcart-embed")).not.toBeNull();
   });
 
   it("a second copy of the script adds no second launcher", () => {

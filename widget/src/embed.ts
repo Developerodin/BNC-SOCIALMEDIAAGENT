@@ -2,10 +2,12 @@
 //   <script src="https://<askcart-host>/embed.js" data-shop="my-store.myshopify.com" defer></script>
 // A launcher button; the first click loads the hosted chat page (/chat/<shop>) in an iframe panel. Nothing is requested
 // before a click, and no dependencies. Text goes through textContent only; `data-shop` is checked before it reaches a URL.
+// The merchant must have allowed this site first (the page refuses to be framed elsewhere).
 const s = document.currentScript as HTMLScriptElement | null;
 const shop = s?.dataset.shop ?? "";
 
-if (s && /^[a-z0-9-]+\.myshopify\.com$/.test(shop) && !document.getElementById("askcart-embed")) {
+function start(s: HTMLScriptElement) {
+  if (document.getElementById("askcart-embed")) return;
   const label = s.dataset.label || "Chat";
   const host = document.createElement("div");
   host.id = "askcart-embed";
@@ -22,9 +24,10 @@ if (s && /^[a-z0-9-]+\.myshopify\.com$/.test(shop) && !document.getElementById("
   const btn = document.createElement("button");
   btn.type = "button";
   btn.textContent = label;
+  btn.setAttribute("aria-label", label); // the state is aria-expanded, so the name needs no translated "Close"
   btn.setAttribute("aria-expanded", "false");
   let frame: HTMLIFrameElement | null = null;
-  btn.addEventListener("click", () => {
+  function toggle() {
     if (!frame) {
       frame = document.createElement("iframe");
       frame.title = label;
@@ -34,8 +37,19 @@ if (s && /^[a-z0-9-]+\.myshopify\.com$/.test(shop) && !document.getElementById("
     const open = !frame.hidden;
     btn.textContent = open ? "×" : label;
     btn.setAttribute("aria-expanded", String(open));
-    btn.setAttribute("aria-label", open ? "Close" : label);
+    if (open) frame.focus(); // keyboard and screen-reader users land in the chat
+    else btn.focus();
+  }
+  btn.addEventListener("click", toggle);
+  // Escape inside the iframe never reaches this page, so the hosted page (hosted.ts) tells us.
+  window.addEventListener("message", (e) => {
+    if (frame && !frame.hidden && e.source === frame.contentWindow && e.data === "askcart:close") toggle();
   });
   host.append(style, btn);
   document.body.append(host);
 }
+
+if (!s || !/^[a-z0-9-]+\.myshopify\.com$/.test(shop)) {
+  console.warn("AskCart: data-shop must be your store's .myshopify.com domain.");
+} else if (document.body) start(s);
+else document.addEventListener("DOMContentLoaded", () => start(s), { once: true });

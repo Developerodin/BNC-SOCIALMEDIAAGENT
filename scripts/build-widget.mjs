@@ -3,7 +3,7 @@
 //   node scripts/build-widget.mjs           one build, fails when a file is over its gzip budget
 //   node scripts/build-widget.mjs --watch   rebuilds on change, budgets only warn
 import * as esbuild from "esbuild";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import path from "node:path";
 
@@ -26,7 +26,9 @@ const entries = [
 function report() {
   let over = false;
   for (const e of entries) {
-    const buf = readFileSync(path.join(e.dir ?? assets, `${e.out}.js`));
+    const file = path.join(e.dir ?? assets, `${e.out}.js`);
+    if (!existsSync(file)) continue; // --watch: the other output directory's first build hasn't finished yet
+    const buf = readFileSync(file);
     const gz = gzipSync(buf, { level: 9 }).length;
     const bad = gz > e.budget;
     over ||= bad;

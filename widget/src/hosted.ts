@@ -9,6 +9,9 @@ try {
   const host = document.createElement("askcart-host");
   document.body.append(host);
   void mount(host, data.config, data.page, { inline: true }).open({ focus: false });
+  // Inside the embed's iframe, Escape asks the embedding page to close the panel (capture: the panel stops Escape itself).
+  // A constant string, so "*" leaks nothing; as a plain page, parent is this window and nobody listens.
+  window.addEventListener("keydown", (e) => e.key === "Escape" && window.parent !== window && window.parent.postMessage("askcart:close", "*"), true);
 } catch (e) {
   console.warn("AskCart: the chat could not start.", e);
 }

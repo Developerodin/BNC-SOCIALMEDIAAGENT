@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import postgres from "postgres";
 import { NextRequest } from "next/server";
 import { newStore } from "../helpers/seed";
+import { sha256Hex } from "@/lib/partner/secrets";
 
 // The hosted chat page (GET /chat/<shop>) and the one CORS addition that goes with it: our own https origin
 // (SHOPIFY_APP_URL, https://test.example.com in vitest.config.ts) is allowed for any active store. Exercised through
@@ -32,7 +33,7 @@ beforeAll(async () => {
   rl = await import("@/lib/partner/rate-limit");
   admin = postgres(process.env.DATABASE_ADMIN_URL!, { max: 1 });
   storeId = await newStore(admin);
-  const [s] = await admin`update stores set domains = ${["shop-a.example.com"]}, name = ${'Tom\'s <b>"Shop"</b>'}, primary_locale = 'fr' where id = ${storeId} returning shop_domain`;
+  const [s] = await admin`update stores set domains = ${["shop-a.example.com"]}, name = ${'Tom\'s <b>"Shop"</b>'}, primary_locale = 'fr', settings = ${admin.json({ embedDomains: ["blog.example.org"] })} where id = ${storeId} returning shop_domain`;
   shop = s.shop_domain;
 });
 beforeEach(() => {
@@ -43,6 +44,13 @@ afterAll(async () => {
   await admin.end();
   await client.sql.end();
 });
+
+/** A new active store with these settings and domains; returns its shop domain. */
+async function storeWith(settings: object, domains: string[] = []): Promise<string> {
+  const id = await newStore(admin);
+  const [s] = await admin`update stores set settings = ${admin.json(settings as never)}, domains = ${domains} where id = ${id} returning shop_domain`;
+  return s.shop_domain;
+}
 
 // --- the page ---
 
@@ -90,10 +98,22 @@ test("without an https app URL the page says it isn't configured (503)", async (
   expect((await chat(shop)).status).toBe(503);
 });
 
-test("the proxy lets any site frame /chat/ and keeps every other path unframable", () => {
+test("frame-ancestors lists the allowed sites and the store's own domains, nothing else", async () => {
+  const csp = (await chat(shop)).headers.get("content-security-policy")!;
+  expect(csp).toBe("frame-ancestors https://blog.example.org https://shop-a.example.com; script-src 'self'; object-src 'none'; base-uri 'none'");
+});
+
+test("with no allowed site the page is a 404 (embedding is off by default)", async () => {
+  expect((await chat(await storeWith({}, ["shop-b.example.com"]))).status).toBe(404);
+  expect((await chat(await storeWith({ embedDomains: [] }))).status).toBe(404);
+});
+
+test("the proxy leaves /chat/ to the route and keeps every other path unframable", () => {
   const csp = (p: string) => proxy.proxy(new NextRequest(`http://localhost${p}`)).headers.get("content-security-policy");
-  expect(csp(`/chat/${shop}`)).toBe("frame-ancestors *");
   expect(csp("/dash")).toBe("frame-ancestors 'none'");
+  const matcher = new RegExp("^" + proxy.config.matcher[0] + "$");
+  expect(matcher.test(`/chat/${shop}`)).toBe(false);
+  expect(matcher.test("/dash")).toBe(true);
 });
 
 // --- CORS ---
@@ -106,9 +126,23 @@ test("our own origin is allowed for any active store, and echoed back", async ()
 });
 
 test("a same-origin GET (no Origin header, Sec-Fetch-Site same-origin) is allowed; cross-site or bare is not", async () => {
-  expect((await faqReq({ "sec-fetch-site": "same-origin" })).status).toBe(200);
-  expect((await faqReq({ "sec-fetch-site": "cross-site" })).status).toBe(403);
+  expect((await faqReq({ "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors" })).status).toBe(200);
+  expect((await faqReq({ "sec-fetch-site": "cross-site", "sec-fetch-mode": "cors" })).status).toBe(403);
   expect((await faqReq({})).status).toBe(403);
+});
+
+test("our own origin is refused for an active store with no allowed embedding site, even with domains listed", async () => {
+  const empty = await storeWith({}, ["shop-c.example.com"]);
+  expect((await faqReq({ origin: OWN }, empty)).status).toBe(403);
+  expect((await faqReq({ "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors" }, empty)).status).toBe(403);
+  expect((await faqReq({ origin: "https://shop-c.example.com" }, empty)).status).toBe(200); // its own site still works
+  const none = await newStore(admin);
+  const [{ shop_domain }] = await admin`select shop_domain from stores where id = ${none}`;
+  expect((await faqReq({ origin: OWN }, shop_domain)).status).toBe(403);
+});
+
+test("Sec-Fetch-Site alone is not enough: Sec-Fetch-Mode must come with it", async () => {
+  expect((await faqReq({ "sec-fetch-site": "same-origin" })).status).toBe(403);
 });
 
 test("our own origin does not get an unknown or inactive store", async () => {
@@ -134,12 +168,21 @@ test("with no https app URL the own-origin path is off (the Sec-Fetch-Site path 
   vi.stubEnv("SHOPIFY_APP_URL", "");
   vi.stubEnv("APP_URL", "");
   expect((await faqReq({ origin: OWN })).status).toBe(403);
-  expect((await faqReq({ "sec-fetch-site": "same-origin" })).status).toBe(403);
+  expect((await faqReq({ "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors" })).status).toBe(403);
   expect((await faqReq({ origin: SITE })).status).toBe(200);
 });
 
-test("the mobile key path is untouched: a key with no Origin is checked, a wrong key is refused", async () => {
-  expect((await faqReq({ "x-askcart-app-key": "ackm_wrong" })).status).toBe(403);
+test("the mobile key path is untouched: a wrong key is refused, a valid one works, and it is still rate limited", async () => {
+  const key = "ackm_test-key";
+  const mobile = await storeWith({});
+  await admin`update stores set mobile_key_hash = ${sha256Hex(key)} where shop_domain = ${mobile}`;
+  expect((await faqReq({ "x-askcart-app-key": "ackm_wrong" }, mobile)).status).toBe(403);
+  // A browser-style header next to the key changes nothing: no Origin, so the key path is taken (embedding is off here).
+  expect((await faqReq({ "x-askcart-app-key": key, "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors" }, mobile)).status).toBe(200);
+  const ip = { "x-askcart-app-key": key, "x-forwarded-for": "9.9.9.9" };
+  let last = 200;
+  for (let i = 0; i < cors.MOBILE_IP_LIMIT + 1; i++) last = (await faqReq(ip, mobile)).status;
+  expect(last).toBe(429);
 });
 
 test("preflight: our own origin gets 204 with the origin echoed, a stranger still 403", async () => {

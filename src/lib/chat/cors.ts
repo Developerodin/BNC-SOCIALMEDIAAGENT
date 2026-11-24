@@ -4,12 +4,14 @@ import { stores } from "@/db/schema";
 import { MOBILE_KEY_HEADER } from "@/lib/chat/mobile-key";
 import { rateLimit } from "@/lib/partner/rate-limit";
 import { safeEqualHex, sha256Hex } from "@/lib/partner/secrets";
+import { embedDomains } from "@/lib/embed-domains";
 import { appOrigin } from "@/lib/widget-config";
 
 // CORS for the storefront chat (Review Focus 3). An Origin is allowed only when it is exactly
 // https://<host> for a host in the store's domains (stores.domains, lowercased by refreshShopInfo).
 // No Origin, or any other Origin, is refused before any OpenAI or Shopify call. The one addition: our own https origin
-// (the hosted chat page, /chat/<shop>, which the embed shows in an iframe) is allowed for any active store.
+// (the hosted chat page, /chat/<shop>, which the embed shows in an iframe) is allowed for a store whose merchant has
+// allowed at least one embedding site (settings.embedDomains); embedding is off until then.
 
 const SHOP = /^[a-z0-9-]+\.myshopify\.com$/;
 
@@ -20,14 +22,14 @@ function hostOf(origin: string | null): string | null {
 }
 
 /** The CORS headers for an allowed Origin, or null when the request must get a 403. */
-export function corsFor(req: Request, store: { domains: string[] }): Record<string, string> | null {
+export function corsFor(req: Request, store: { domains: string[]; settings?: unknown }): Record<string, string> | null {
   const origin = req.headers.get("origin");
-  const own = appOrigin();
+  const own = embedDomains(store.settings).length > 0 ? appOrigin() : null;
   if (own) {
     if (origin?.toLowerCase() === own) return { "Access-Control-Allow-Origin": origin, Vary: "Origin" };
     // A same-origin GET carries no Origin header. Sec-Fetch-Site is set by the browser and page scripts can't forge it;
     // a non-browser client could, but it can equally send any Origin, so this opens nothing new.
-    if (!origin && req.headers.get("sec-fetch-site") === "same-origin") return {};
+    if (!origin && req.headers.get("sec-fetch-site") === "same-origin" && req.headers.has("sec-fetch-mode")) return {};
   }
   const host = hostOf(origin);
   if (!host || !store.domains.includes(host)) return null;
