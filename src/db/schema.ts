@@ -188,3 +188,122 @@ export const faqs = pgTable(
     check("faqs_answer_len_chk", sql`char_length(${t.answer}) <= 2000`),
   ],
 );
+
+// --- Partner connect (plan 2026-11-24, Task P1) ---
+
+// A registered portal (C36: only ours, seeded by scripts/partner-client.mjs). No store_id, so no RLS; app_user may only SELECT.
+export const partnerClients = pgTable("partner_clients", {
+  clientId: text("client_id").primaryKey(),
+  name: text("name").notNull(),
+  // sha256 hex of the client secret; the secret itself is never stored.
+  secretHash: text("secret_hash").notNull(),
+  // Exact strings, matched without normalisation.
+  redirectUris: text("redirect_uris").array().notNull(),
+  allowedScopes: text("allowed_scopes").array().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  disabledAt: timestamp("disabled_at", { withTimezone: true }),
+});
+
+export type PartnerConnectStatus = "pending" | "approved" | "denied" | "exchanged" | "expired";
+
+// One portal-initiated connect attempt. Keyed by shop domain (the store may not be installed yet), so no store_id and no RLS:
+// every app query on it must filter by the shop the session token proves (P5).
+export const partnerConnectRequests = pgTable(
+  "partner_connect_requests",
+  {
+    // Goes in the consent deep link; 122 random bits.
+    id: uuid("id").primaryKey().defaultRandom(),
+    clientId: text("client_id").notNull().references(() => partnerClients.clientId),
+    shopDomain: text("shop_domain").notNull(),
+    redirectUri: text("redirect_uri").notNull(),
+    state: text("state").notNull(),
+    codeChallenge: text("code_challenge").notNull(),
+    scopes: text("scopes").array().notNull(),
+    status: text("status").$type<PartnerConnectStatus>().notNull(),
+    // now() + 10 minutes, set by the DB clock.
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    // sha256 hex of the authorization code; the code itself is never stored.
+    codeHash: text("code_hash").unique(),
+    codeExpiresAt: timestamp("code_expires_at", { withTimezone: true }),
+    approvedByUserId: text("approved_by_user_id"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    exchangedAt: timestamp("exchanged_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("partner_connect_requests_shop_domain_idx").on(t.shopDomain),
+    index("partner_connect_requests_expires_at_idx").on(t.expiresAt),
+    check("partner_connect_requests_status_chk", sql`${t.status} in ('pending', 'approved', 'denied', 'exchanged', 'expired')`),
+  ],
+);
+
+export type PartnerRevokedReason = "portal" | "app_uninstalled" | "code_replay" | "refresh_replay" | "reconnect" | "merchant";
+
+// The merchant's approval: one store, one client, a scope set. The unit of revocation (revoked_at kills every token of it).
+export const partnerGrants = pgTable(
+  "partner_grants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    storeId: uuid("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
+    // Denormalised for logs and the M7 list.
+    shopDomain: text("shop_domain").notNull(),
+    clientId: text("client_id").notNull().references(() => partnerClients.clientId),
+    scopes: text("scopes").array().notNull(),
+    // One grant per code: a second exchange of the same code can't create a second grant.
+    connectRequestId: uuid("connect_request_id").unique(),
+    // Shopify staff user id; no email.
+    grantedByUserId: text("granted_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedReason: text("revoked_reason").$type<PartnerRevokedReason>(),
+  },
+  (t) => [
+    // Named: the generated name is over Postgres' 63-character limit.
+    foreignKey({
+      name: "partner_grants_connect_request_fk",
+      columns: [t.connectRequestId],
+      foreignColumns: [partnerConnectRequests.id],
+    }).onDelete("set null"),
+    // C33: a reconnect replaces the old grant, so at most one active grant per store and client. Revoke the old one
+    // before inserting the new one in the same transaction; a concurrent second exchange gets a unique violation (23505).
+    uniqueIndex("partner_grants_active_store_client_uq").on(t.storeId, t.clientId).where(sql`${t.revokedAt} is null`),
+    // Target of partner_tokens' (store_id, grant_id) FK, so a token can't carry another store's id.
+    unique("partner_grants_store_id_id_uq").on(t.storeId, t.id),
+    check(
+      "partner_grants_revoked_reason_chk",
+      sql`${t.revokedReason} in ('portal', 'app_uninstalled', 'code_replay', 'refresh_replay', 'reconnect', 'merchant')`,
+    ),
+  ],
+);
+
+// A bearer token under a grant. Valid = not expired, grant not revoked, store active (checked by the guard, P7).
+export const partnerTokens = pgTable(
+  "partner_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    grantId: uuid("grant_id").notNull(),
+    // Copy of the grant's store_id, for RLS; the composite FK keeps them equal.
+    storeId: uuid("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
+    // C32 (a) issues only 'access'; 'refresh' is there for the access + refresh switch.
+    kind: text("kind").$type<"access" | "refresh">().notNull(),
+    // sha256 hex of the token; the token itself is never stored.
+    tokenHash: text("token_hash").notNull().unique(),
+    // First 12 characters ('ack_' + 8), for logs and the M7 list.
+    tokenPrefix: text("token_prefix").notNull(),
+    // Null = valid until the grant is revoked (C32 (a)).
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    // Refresh rotation only: a used old refresh token is a theft signal and revokes the grant.
+    replacedAt: timestamp("replaced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  },
+  (t) => [
+    foreignKey({
+      name: "partner_tokens_grant_fk",
+      columns: [t.storeId, t.grantId],
+      foreignColumns: [partnerGrants.storeId, partnerGrants.id],
+    }).onDelete("cascade"),
+    index("partner_tokens_grant_id_idx").on(t.grantId),
+    check("partner_tokens_kind_chk", sql`${t.kind} in ('access', 'refresh')`),
+  ],
+);
