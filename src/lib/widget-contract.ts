@@ -28,6 +28,8 @@ export type PageContext = {
   cartUrl: string;
   privacyUrl: string | null;
   designMode: boolean;
+  /** Only on the hosted chat page (/chat/<shop>): there is no storefront cart, so a card opens the product on the store. */
+  hosted?: boolean;
 };
 
 /** The SSE `product` payload. */

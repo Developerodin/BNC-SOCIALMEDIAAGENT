@@ -47,3 +47,5 @@ next-env.d.ts
 
 # widget build output (npm run build:widget), served from the extension assets (C20)
 /extensions/askcart/assets/askcart-*.js
+/public/embed.js
+/public/askcart-hosted.js

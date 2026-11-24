@@ -8,7 +8,8 @@ import { gzipSync } from "node:zlib";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
-const outdir = path.join(root, "extensions/askcart/assets");
+const assets = path.join(root, "extensions/askcart/assets");
+const publicDir = path.join(root, "public"); // served by our own app: the embed and the hosted chat page (docs/embed.md)
 const watch = process.argv.includes("--watch");
 
 // Gzip budgets in bytes. Launcher and chat come from the M5 plan's Global Constraints; the block scripts use
@@ -18,12 +19,14 @@ const entries = [
   { in: "widget/src/widget.ts", out: "askcart-widget", budget: 30 * 1024 },
   { in: "widget/src/faq-block.ts", out: "askcart-faq", budget: 10 * 1024 },
   { in: "widget/src/ask-block.ts", out: "askcart-ask", budget: 10 * 1024 },
+  { in: "widget/src/embed.ts", out: "embed", dir: publicDir, budget: 4 * 1024 },
+  { in: "widget/src/hosted.ts", out: "askcart-hosted", dir: publicDir, budget: 30 * 1024 },
 ];
 
 function report() {
   let over = false;
   for (const e of entries) {
-    const buf = readFileSync(path.join(outdir, `${e.out}.js`));
+    const buf = readFileSync(path.join(e.dir ?? assets, `${e.out}.js`));
     const gz = gzipSync(buf, { level: 9 }).length;
     const bad = gz > e.budget;
     over ||= bad;
@@ -32,10 +35,12 @@ function report() {
   return over;
 }
 
-const options = {
+// One esbuild config per output directory (esbuild won't write outside its outdir).
+const dirs = [...new Set(entries.map((e) => e.dir ?? assets))];
+const optionsFor = (dir) => ({
   absWorkingDir: root,
-  entryPoints: entries.map((e) => ({ in: e.in, out: e.out })),
-  outdir,
+  entryPoints: entries.filter((e) => (e.dir ?? assets) === dir).map((e) => ({ in: e.in, out: e.out })),
+  outdir: dir,
   bundle: true,
   minify: true,
   format: "iife",
@@ -43,17 +48,19 @@ const options = {
   platform: "browser",
   legalComments: "none",
   logLevel: "warning",
-};
+});
 
 if (watch) {
-  const ctx = await esbuild.context({
-    ...options,
-    plugins: [{ name: "size", setup: (b) => b.onEnd((r) => { if (r.errors.length === 0) report(); }) }],
-  });
-  await ctx.watch();
+  for (const dir of dirs) {
+    const ctx = await esbuild.context({
+      ...optionsFor(dir),
+      plugins: [{ name: "size", setup: (b) => b.onEnd((r) => { if (r.errors.length === 0) report(); }) }],
+    });
+    await ctx.watch();
+  }
   console.log("Watching widget/src ...");
 } else {
-  await esbuild.build(options);
+  for (const dir of dirs) await esbuild.build(optionsFor(dir));
   if (report()) {
     console.error("A widget file is over its gzip budget.");
     process.exit(1);

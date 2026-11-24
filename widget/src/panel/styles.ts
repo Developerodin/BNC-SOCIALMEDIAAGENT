@@ -14,6 +14,7 @@ export const CSS =
   ":where(.panel) *{box-sizing:border-box;font:inherit;color:inherit;margin:0}" +
   ".panel.left{right:auto;left:20px}" +
   ".panel.full{inset:0;width:100%;height:100vh;height:100dvh;max-height:none;border-radius:0}" +
+  ".panel.inline{max-width:760px;margin:0 auto}" + // a wide window: keep the chat readable
   "@keyframes in{from{opacity:0;transform:translateY(12px)}}" +
   ".hd{display:flex;align-items:center;gap:8px;padding:10px 8px 10px 14px;background:var(--ac);color:var(--ac-fg);flex:none}" +
   ".hd .name{flex:1;font-weight:600;font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +

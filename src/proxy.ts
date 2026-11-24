@@ -10,7 +10,12 @@ export function proxy(req: NextRequest) {
   }
   const shop = searchParams.get("shop");
   const embedded = pathname === "/app" || pathname.startsWith("/app/");
-  const ancestors = embedded && shop && SHOP_RE.test(shop) ? `https://${shop} https://admin.shopify.com` : "'none'";
+  // The hosted chat page (/chat/<shop>) is made to be embedded by any site (docs/embed.md).
+  const ancestors = pathname.startsWith("/chat/")
+    ? "*"
+    : embedded && shop && SHOP_RE.test(shop)
+      ? `https://${shop} https://admin.shopify.com`
+      : "'none'";
   const res = NextResponse.next();
   res.headers.set("Content-Security-Policy", `frame-ancestors ${ancestors}`);
   return res;

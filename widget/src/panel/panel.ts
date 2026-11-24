@@ -26,6 +26,8 @@ export type PanelOptions = Renderers & {
   api: WidgetApi;
   /** Gets focus back when the panel closes (UD17). */
   launcher?: HTMLElement | null;
+  /** The hosted page: always open, fills the window, nothing to close (the embed's iframe has its own close button). */
+  inline?: boolean;
   /** Test seam for runSend's retry waits. */
   wait?: (ms: number) => Promise<void>;
 };
@@ -68,6 +70,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   const panel = document.createElement("div");
   panel.className = "panel";
   if (config.launcher?.side === "left") panel.classList.add("left");
+  if (opts.inline) panel.classList.add("inline");
   panel.hidden = true;
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-modal", "true");
@@ -170,9 +173,9 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   }
 
   function layout() {
-    const full = window.innerWidth < FULL_BELOW;
+    const full = opts.inline || window.innerWidth < FULL_BELOW;
     panel.classList.toggle("full", full);
-    back.hidden = !full;
+    back.hidden = !full || !!opts.inline;
     closeBtn.hidden = full;
     lockScroll(full && !panel.hidden);
   }
@@ -405,7 +408,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   }
 
   function close() {
-    if (panel.hidden) return;
+    if (panel.hidden || opts.inline) return;
     menu.hide();
     panel.hidden = true;
     lockScroll(false);

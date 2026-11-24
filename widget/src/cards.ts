@@ -34,6 +34,7 @@ function cardEl(card: Card, ctx: WidgetCtx, messageId: string | null): HTMLEleme
   // keep the UD13 reopen.
   const productLink = (href: string, cls: string, text: string) => {
     const a = link(href, cls, text);
+    if (page.hosted) a.target = "_blank"; // inside the embed iframe a same-tab link would replace the chat
     a.addEventListener("click", () => {
       if (window.innerWidth < FULL_BELOW) uiState(page.shop).open.set(false);
     });
@@ -144,7 +145,9 @@ function addControls(
     return select;
   });
 
-  const button = el("button", "ac-card__add", t("add_to_cart"));
+  const hosted = page.hosted === true;
+  const addLabel = t(hosted ? "buy_on_store" : "add_to_cart");
+  const button = el("button", "ac-card__add", addLabel);
   button.type = "button";
   const status = el("p", "ac-card__status");
   status.setAttribute("aria-live", "polite");
@@ -180,6 +183,16 @@ function addControls(
   button.addEventListener("click", async () => {
     const variant = chosen;
     if (busy || !variant) return; // the disabled button plus this guard: a double click adds once
+    if (hosted) {
+      // No storefront cart here: open the product on the store with this variant selected.
+      const href = resolveHttpsUrl(card.url);
+      if (href && /^\d+$/.test(variant.id)) {
+        const u = new URL(href);
+        u.searchParams.set("variant", variant.id);
+        window.open(u.href, "_blank", "noopener,noreferrer");
+      }
+      return;
+    }
     busy = true;
     button.disabled = true;
     button.textContent = t("adding");
@@ -188,7 +201,7 @@ function addControls(
     const quantity = 1;
     const res = await addToCart(page, variant.id, quantity);
     busy = false;
-    button.textContent = t("add_to_cart");
+    button.textContent = addLabel;
     update();
 
     if (res.ok) {

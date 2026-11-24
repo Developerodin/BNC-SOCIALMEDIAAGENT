@@ -684,3 +684,19 @@ describe("widget entry (window.AskCart)", () => {
     expect(sh().activeElement).toBe(launcher);
   });
 });
+
+describe("inline (the hosted page)", () => {
+  it("fills the window on a desktop, has no close or back button, and can't be closed", async () => {
+    host = document.createElement("askcart-host");
+    document.body.append(host);
+    panel = mount(host, config(), pageCtx({ hosted: true }), { api: mockApi(), renderCards, renderFeedback, inline: true });
+    await panel.open({ focus: false });
+    expect(q(".panel")!.classList.contains("full")).toBe(true);
+    expect(q(".panel")!.classList.contains("inline")).toBe(true);
+    expect(q<HTMLButtonElement>("button.close")!.hidden).toBe(true);
+    expect(q<HTMLButtonElement>("button.back")!.hidden).toBe(true);
+    panel.close();
+    input().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+    expect(q(".panel")!.hidden).toBe(false);
+  });
+});

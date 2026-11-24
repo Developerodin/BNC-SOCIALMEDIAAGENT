@@ -4,10 +4,12 @@ import { stores } from "@/db/schema";
 import { MOBILE_KEY_HEADER } from "@/lib/chat/mobile-key";
 import { rateLimit } from "@/lib/partner/rate-limit";
 import { safeEqualHex, sha256Hex } from "@/lib/partner/secrets";
+import { appOrigin } from "@/lib/widget-config";
 
 // CORS for the storefront chat (Review Focus 3). An Origin is allowed only when it is exactly
 // https://<host> for a host in the store's domains (stores.domains, lowercased by refreshShopInfo).
-// No Origin, or any other Origin, is refused before any OpenAI or Shopify call.
+// No Origin, or any other Origin, is refused before any OpenAI or Shopify call. The one addition: our own https origin
+// (the hosted chat page, /chat/<shop>, which the embed shows in an iframe) is allowed for any active store.
 
 const SHOP = /^[a-z0-9-]+\.myshopify\.com$/;
 
@@ -20,6 +22,13 @@ function hostOf(origin: string | null): string | null {
 /** The CORS headers for an allowed Origin, or null when the request must get a 403. */
 export function corsFor(req: Request, store: { domains: string[] }): Record<string, string> | null {
   const origin = req.headers.get("origin");
+  const own = appOrigin();
+  if (own) {
+    if (origin?.toLowerCase() === own) return { "Access-Control-Allow-Origin": origin, Vary: "Origin" };
+    // A same-origin GET carries no Origin header. Sec-Fetch-Site is set by the browser and page scripts can't forge it;
+    // a non-browser client could, but it can equally send any Origin, so this opens nothing new.
+    if (!origin && req.headers.get("sec-fetch-site") === "same-origin") return {};
+  }
   const host = hostOf(origin);
   if (!host || !store.domains.includes(host)) return null;
   return { "Access-Control-Allow-Origin": origin!, Vary: "Origin" };
@@ -97,8 +106,11 @@ export async function preflight(
   const origin = req.headers.get("origin");
   const host = hostOf(origin);
   if (!host) return new Response(null, { status: 403 });
-  const rows = await db.execute(sql`select 1 from stores where active and ${host} = any(domains) limit 1`);
-  if (rows.length === 0) return new Response(null, { status: 403 });
+  // Our hosted chat page needs no store lookup here: the route checks the shop.
+  if (origin!.toLowerCase() !== appOrigin()) {
+    const rows = await db.execute(sql`select 1 from stores where active and ${host} = any(domains) limit 1`);
+    if (rows.length === 0) return new Response(null, { status: 403 });
+  }
   return new Response(null, {
     status: 204,
     headers: {
