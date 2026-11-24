@@ -4,7 +4,7 @@
 
 const TIMEOUT_MS = 5000;
 /** Policy texts can be long (full terms of service); the model gets at most this many characters. */
-export const MAX_POLICY_CHARS = 6000;
+const MAX_POLICY_CHARS = 6000;
 
 export const POLICY_TYPES = ["refund", "shipping", "privacy", "terms_of_service", "terms_of_sale", "subscription", "legal_notice", "contact"] as const;
 export type PolicyType = (typeof POLICY_TYPES)[number];

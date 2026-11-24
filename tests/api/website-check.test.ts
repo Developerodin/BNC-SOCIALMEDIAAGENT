@@ -58,7 +58,7 @@ vi.mock("node:https", () => ({
 let admin: ReturnType<typeof postgres>;
 let route: typeof import("@/app/api/app/website-check/route");
 let lib: typeof import("@/lib/website-check");
-let rl: typeof import("@/lib/partner/rate-limit");
+let rl: typeof import("@/lib/rate-limit");
 let client: typeof import("@/db/client");
 let store: string;
 
@@ -71,7 +71,7 @@ beforeAll(async () => {
   process.env.SHOPIFY_APP_URL = "https://app.askcart.test";
   route = await import("@/app/api/app/website-check/route");
   lib = await import("@/lib/website-check");
-  rl = await import("@/lib/partner/rate-limit");
+  rl = await import("@/lib/rate-limit");
   client = await import("@/db/client");
   admin = postgres(process.env.DATABASE_ADMIN_URL!, { max: 1 });
   store = await newStore(admin);

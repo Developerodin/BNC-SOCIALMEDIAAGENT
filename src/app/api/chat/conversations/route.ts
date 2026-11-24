@@ -11,6 +11,12 @@ import { tokenFor, UUID } from "@/lib/chat/token";
 // `// ponytail:` ordered by creation, not last activity (no updated_at column); add one if "recently used first" is wanted.
 
 const TITLE_CHARS = 80;
+
+// Cut by code point, not UTF-16 unit, so an emoji at the boundary is not split into a lone surrogate.
+function titleOf(t: string): string {
+  const chars = Array.from(t);
+  return chars.length > TITLE_CHARS ? `${chars.slice(0, TITLE_CHARS).join("")}…` : t;
+}
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 
@@ -54,7 +60,7 @@ export async function GET(req: Request) {
     {
       conversations: page.map((r) => ({
         id: r.id,
-        title: r.title === null ? null : r.title.length > TITLE_CHARS ? `${r.title.slice(0, TITLE_CHARS)}…` : r.title,
+        title: r.title === null ? null : titleOf(r.title),
         createdAt: new Date(r.created_at).toISOString(),
         conversationToken: tokenFor(storeId, r.id),
       })),

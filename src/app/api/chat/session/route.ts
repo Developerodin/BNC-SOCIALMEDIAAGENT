@@ -1,4 +1,5 @@
 import { storeFor } from "@/lib/chat/cors";
+import { MOBILE_KEY_HEADER } from "@/lib/chat/mobile-key";
 import { mintSession } from "@/lib/chat/customer";
 import { verifyCustomerAccessToken } from "@/lib/shopify/storefront";
 
@@ -11,11 +12,13 @@ const MAX_TOKEN = 512;
 
 export async function POST(req: Request) {
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!body) return Response.json({ error: "unknown_shop" }, { status: 404 });
+  if (!body) return Response.json({ error: "invalid_body" }, { status: 400 });
+  const headers = { "Cache-Control": "no-store" };
+  // Always the app key: storeFor would also let a Sec-Fetch-Site or website-Origin caller through, and this route is a
+  // customer-token oracle, so only the key-checked, rate-limited app path may reach it.
+  if (req.headers.get("origin") || !req.headers.get(MOBILE_KEY_HEADER)) return new Response(null, { status: 403, headers });
   const found = await storeFor(req, body.shop);
   if (found instanceof Response) return found;
-  const headers = { "Cache-Control": "no-store" };
-  if (req.headers.get("origin")) return new Response(null, { status: 403, headers });
 
   const t = body.customerAccessToken;
   if (typeof t !== "string" || !t || t.length > MAX_TOKEN) return Response.json({ error: "invalid_customer" }, { status: 401, headers });

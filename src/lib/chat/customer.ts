@@ -14,7 +14,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 // hour (stateless); the customer's own conversations just stay reachable by that customer until it lapses.
 
 export const SESSION_TTL_MS = 3_600_000;
-export const CUSTOMER_HEADER = "x-askcart-customer";
+const CUSTOMER_HEADER = "x-askcart-customer";
 
 const GID_PREFIX = "gid://shopify/Customer/";
 const CUSTOMER_ID = /^\d{1,20}$/;

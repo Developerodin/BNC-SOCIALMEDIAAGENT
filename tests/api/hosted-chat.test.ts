@@ -14,7 +14,7 @@ let faq: typeof import("@/app/api/faq/route");
 let cors: typeof import("@/lib/chat/cors");
 let proxy: typeof import("@/proxy");
 let client: typeof import("@/db/client");
-let rl: typeof import("@/lib/partner/rate-limit");
+let rl: typeof import("@/lib/rate-limit");
 let shop: string;
 let storeId: string;
 const OWN = "https://test.example.com";
@@ -30,7 +30,7 @@ beforeAll(async () => {
   cors = await import("@/lib/chat/cors");
   proxy = await import("@/proxy");
   client = await import("@/db/client");
-  rl = await import("@/lib/partner/rate-limit");
+  rl = await import("@/lib/rate-limit");
   admin = postgres(process.env.DATABASE_ADMIN_URL!, { max: 1 });
   storeId = await newStore(admin);
   const [s] = await admin`update stores set domains = ${["shop-a.example.com"]}, name = ${'Tom\'s <b>"Shop"</b>'}, primary_locale = 'fr', settings = ${admin.json({ embedDomains: ["blog.example.org"] })} where id = ${storeId} returning shop_domain`;
@@ -129,6 +129,13 @@ test("a same-origin GET (no Origin header, Sec-Fetch-Site same-origin) is allowe
   expect((await faqReq({ "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors" })).status).toBe(200);
   expect((await faqReq({ "sec-fetch-site": "cross-site", "sec-fetch-mode": "cors" })).status).toBe(403);
   expect((await faqReq({})).status).toBe(403);
+});
+
+test("Sec-Fetch-Site is trusted for GET only: the same headers on a POST are refused", () => {
+  const h = { "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors" };
+  const store = { domains: [], settings: { embedDomains: ["partner.example.com"] } };
+  expect(cors.corsFor(new Request("http://x/api/chat", { method: "GET", headers: h }), store)).toEqual({});
+  expect(cors.corsFor(new Request("http://x/api/chat", { method: "POST", headers: h }), store)).toBeNull();
 });
 
 test("our own origin is refused for an active store with no allowed embedding site, even with domains listed", async () => {

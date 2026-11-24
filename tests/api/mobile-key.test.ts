@@ -18,7 +18,7 @@ let admin: ReturnType<typeof postgres>;
 let keyRoute: typeof import("@/app/api/app/mobile-key/route");
 let faqRoute: typeof import("@/app/api/faq/route");
 let cors: typeof import("@/lib/chat/cors");
-let rl: typeof import("@/lib/partner/rate-limit");
+let rl: typeof import("@/lib/rate-limit");
 let client: typeof import("@/db/client");
 let storeA: string;
 let storeB: string;
@@ -48,7 +48,7 @@ beforeAll(async () => {
   keyRoute = await import("@/app/api/app/mobile-key/route");
   faqRoute = await import("@/app/api/faq/route");
   cors = await import("@/lib/chat/cors");
-  rl = await import("@/lib/partner/rate-limit");
+  rl = await import("@/lib/rate-limit");
   client = await import("@/db/client");
   admin = postgres(process.env.DATABASE_ADMIN_URL!, { max: 1 });
   storeA = await newStore(admin);
@@ -132,4 +132,24 @@ test("per-store limit holds across IPs", async () => {
     expect((await faq(shopA, { key, ip: `10.${Math.floor(i / 250)}.${i % 250}.1` })).status).toBe(200);
   }
   expect((await faq(shopA, { key, ip: "9.9.9.9" })).status).toBe(429);
+});
+
+test("a website Origin is limited too: per IP with a 429 and Retry-After, and per store across IPs", async () => {
+  for (let i = 0; i < cors.WEB_IP_LIMIT; i++) expect((await faq(shopA, { origin: ORIGIN, ip: "1.1.1.1" })).status).toBe(200);
+  const over = await faq(shopA, { origin: ORIGIN, ip: "1.1.1.1" });
+  expect(over.status).toBe(429);
+  expect(await over.json()).toEqual({ error: "rate_limited" });
+  expect(Number(over.headers.get("retry-after"))).toBeGreaterThan(0);
+  expect((await faq(shopA, { origin: ORIGIN, ip: "2.2.2.2" })).status).toBe(200);
+
+  rl.resetRateLimit();
+  for (let i = 0; i < cors.WEB_STORE_LIMIT; i++) {
+    expect((await faq(shopA, { origin: ORIGIN, ip: `10.${Math.floor(i / 250)}.${i % 250}.1` })).status).toBe(200);
+  }
+  expect((await faq(shopA, { origin: ORIGIN, ip: "9.9.9.9" })).status).toBe(429);
+});
+
+test("a refused Origin costs nothing against the limits", async () => {
+  for (let i = 0; i < cors.WEB_IP_LIMIT + 5; i++) expect((await faq(shopA, { origin: "https://evil.example.com", ip: "1.1.1.1" })).status).toBe(403);
+  expect((await faq(shopA, { origin: ORIGIN, ip: "1.1.1.1" })).status).toBe(200);
 });

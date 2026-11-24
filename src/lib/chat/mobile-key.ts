@@ -6,7 +6,7 @@ import { sha256Hex } from "@/lib/partner/secrets";
 // it names the store and turns on the rate limits in cors.ts, and the merchant can replace or revoke it.
 
 export const MOBILE_KEY_HEADER = "x-askcart-app-key";
-export const MOBILE_KEY_PREFIX = "ackm_";
+const MOBILE_KEY_PREFIX = "ackm_";
 
 /** A new key (`ackm_` + 43 base64url chars). Store only `hash`; `prefix` (first 12 chars) is safe to show and log. */
 export function newMobileKey(): { key: string; hash: string; prefix: string } {

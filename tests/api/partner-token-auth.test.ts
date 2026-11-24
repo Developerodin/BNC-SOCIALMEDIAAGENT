@@ -17,7 +17,7 @@ let admin: ReturnType<typeof postgres>;
 let shopRoute: typeof import("@/app/api/partner/shop/route");
 let ordersRoute: typeof import("@/app/api/partner/orders/route");
 let productsRoute: typeof import("@/app/api/partner/products/route");
-let rl: typeof import("@/lib/partner/rate-limit");
+let rl: typeof import("@/lib/rate-limit");
 let client: typeof import("@/db/client");
 let storeA: string;
 let storeB: string;
@@ -28,7 +28,7 @@ beforeAll(async () => {
   shopRoute = await import("@/app/api/partner/shop/route");
   ordersRoute = await import("@/app/api/partner/orders/route");
   productsRoute = await import("@/app/api/partner/products/route");
-  rl = await import("@/lib/partner/rate-limit");
+  rl = await import("@/lib/rate-limit");
   client = await import("@/db/client");
   admin = postgres(process.env.DATABASE_ADMIN_URL!, { max: 1 });
   await admin`insert into partner_clients (client_id, name, secret_hash, redirect_uris, allowed_scopes)

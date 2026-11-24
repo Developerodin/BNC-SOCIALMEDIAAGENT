@@ -1,8 +1,9 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
+import { SHOP } from "@/lib/chat/cors";
 import { customerGid, mintSession } from "@/lib/chat/customer";
-import { rateLimit } from "@/lib/partner/rate-limit";
+import { rateLimit } from "@/lib/rate-limit";
 import { verifyProxy } from "@/lib/shopify/app-proxy";
 
 // GET /apps/askcart/session on the storefront → here (shopify.app.askcart.toml [app_proxy]). Shopify signs the request and
@@ -10,7 +11,6 @@ import { verifyProxy } from "@/lib/shopify/app-proxy";
 // Signed-out shoppers get 401 and keep chatting as guests. No CORS check: the browser calls the store's own domain.
 // Not cached: it is customer-specific (and a GET that reads req.url isn't prerendered, as in api/chat/history).
 
-const SHOP = /^[a-z0-9-]+\.myshopify\.com$/;
 // Per minute. The per-customer cap (keyed on the signature-verified id) stops one reloading shopper from using up the store's
 // allowance; the store cap is only a backstop. In-memory like cors.ts (N instances = N x).
 const PROXY_CUSTOMER_LIMIT = 10;

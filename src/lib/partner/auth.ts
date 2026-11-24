@@ -3,7 +3,7 @@ import { and, eq, isNull, lt, or, sql as dsql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { partnerGrants, partnerTokens, stores } from "@/db/schema";
 import { forTokenHash } from "./db";
-import { rateLimit } from "./rate-limit";
+import { rateLimit } from "@/lib/rate-limit";
 import type { PartnerScope } from "./scopes";
 import { ACCESS_PREFIX, REFRESH_PREFIX, sha256Hex, tokenKindOf } from "./secrets";
 

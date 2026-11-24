@@ -4,7 +4,7 @@ import { partnerClients, partnerConnectRequests, partnerGrants, partnerTokens, s
 import { partnerJson } from "@/lib/partner/auth";
 import { forTokenHash } from "@/lib/partner/db";
 import { fetchShop } from "@/lib/partner/queries";
-import { rateLimit } from "@/lib/partner/rate-limit";
+import { rateLimit } from "@/lib/rate-limit";
 import { GRANTABLE } from "@/lib/partner/scopes";
 import {
   ACCESS_TTL_MS,

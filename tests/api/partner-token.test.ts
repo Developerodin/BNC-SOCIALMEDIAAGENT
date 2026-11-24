@@ -11,7 +11,7 @@ let admin: ReturnType<typeof postgres>;
 let route: typeof import("@/app/api/partner/token/route");
 let lib: typeof import("@/app/api/partner/token/tokens");
 let secrets: typeof import("@/lib/partner/secrets");
-let rl: typeof import("@/lib/partner/rate-limit");
+let rl: typeof import("@/lib/rate-limit");
 let client: typeof import("@/db/client");
 
 type Client = { id: string; secret: string };
@@ -95,7 +95,7 @@ beforeAll(async () => {
   route = await import("@/app/api/partner/token/route");
   lib = await import("@/app/api/partner/token/tokens");
   secrets = await import("@/lib/partner/secrets");
-  rl = await import("@/lib/partner/rate-limit");
+  rl = await import("@/lib/rate-limit");
   client = await import("@/db/client");
   admin = postgres(process.env.DATABASE_ADMIN_URL!, { max: 1 });
   PORTAL = await newClient();

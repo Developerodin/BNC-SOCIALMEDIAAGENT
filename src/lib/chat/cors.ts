@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
 import { MOBILE_KEY_HEADER } from "@/lib/chat/mobile-key";
-import { rateLimit } from "@/lib/partner/rate-limit";
+import { rateLimit } from "@/lib/rate-limit";
 import { safeEqualHex, sha256Hex } from "@/lib/partner/secrets";
 import { embedDomains } from "@/lib/embed-domains";
 import { appOrigin } from "@/lib/widget-config";
@@ -13,7 +13,7 @@ import { appOrigin } from "@/lib/widget-config";
 // (the hosted chat page, /chat/<shop>, which the embed shows in an iframe) is allowed for a store whose merchant has
 // allowed at least one embedding site (settings.embedDomains); embedding is off until then.
 
-const SHOP = /^[a-z0-9-]+\.myshopify\.com$/;
+export const SHOP = /^[a-z0-9-]+\.myshopify\.com$/;
 
 function hostOf(origin: string | null): string | null {
   if (!origin) return null;
@@ -27,25 +27,30 @@ export function corsFor(req: Request, store: { domains: string[]; settings?: unk
   const own = embedDomains(store.settings).length > 0 ? appOrigin() : null;
   if (own) {
     if (origin?.toLowerCase() === own) return { "Access-Control-Allow-Origin": origin, Vary: "Origin" };
-    // A same-origin GET carries no Origin header. Sec-Fetch-Site is set by the browser and page scripts can't forge it;
-    // a non-browser client could, but it can equally send any Origin, so this opens nothing new.
-    if (!origin && req.headers.get("sec-fetch-site") === "same-origin" && req.headers.has("sec-fetch-mode")) return {};
+    // A same-origin GET carries no Origin header. Sec-Fetch-Site is set by the browser and page scripts can't forge it,
+    // but a non-browser client can send it, so it is trusted for GET only (a same-origin POST always carries an Origin):
+    // a forged GET reaches nothing a spoofed store Origin wouldn't, and the limits in storeFor still apply to it.
+    if (req.method === "GET" && !origin && req.headers.get("sec-fetch-site") === "same-origin" && req.headers.has("sec-fetch-mode")) return {};
   }
   const host = hostOf(origin);
   if (!host || !store.domains.includes(host)) return null;
   return { "Access-Control-Allow-Origin": origin!, Vary: "Origin" };
 }
 
-/** Mobile app key path: requests per minute from one client IP, and for the whole store across all its app users. */
+/** Requests per minute from one client IP, and for the whole store across all its callers. */
 export const MOBILE_IP_LIMIT = 30;
 export const MOBILE_STORE_LIMIT = 600;
+// Website and hosted-chat paths: a page makes several calls on load (history, conversations, chat), and shoppers behind
+// one NAT share an IP, so the per-IP number is higher than the app's. A turn can cost ~8 model calls, hence a limit at all.
+export const WEB_IP_LIMIT = 60;
+export const WEB_STORE_LIMIT = 600;
 
 /**
  * The caller's IP for the per-IP limit: the first X-Forwarded-For hop. `// ponytail:` only as trustworthy as the proxy
  * in front of us, which must overwrite the header (Vercel, Fly and most load balancers do); behind one that appends,
  * a client can rotate fake IPs and only the per-store limit holds. All callers without the header share one bucket.
  */
-function clientIp(req: Request): string {
+export function clientIp(req: Request): string {
   return req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
 }
 
@@ -56,17 +61,26 @@ function clientIp(req: Request): string {
  */
 function appKeyCheck(req: Request, key: string, store: { id: string; mobileKeyHash: string | null }): Response | null {
   if (!store.mobileKeyHash || !safeEqualHex(sha256Hex(key), store.mobileKeyHash)) return new Response(null, { status: 403 });
-  // ponytail: in-memory counters (see rate-limit.ts), so N instances allow N × the limits; move with the M10 deployment.
+  return limited(req, "mobile", store.id, MOBILE_IP_LIMIT, MOBILE_STORE_LIMIT);
+}
+
+/** 429 with Retry-After for a caller over a limit. */
+function tooMany(wait: number): Response {
+  return Response.json({ error: "rate_limited" }, { status: 429, headers: { "Retry-After": String(wait) } });
+}
+
+/** Per-IP then per-store limit under `kind` keys; the 429 Response, or null while within both. */
+function limited(req: Request, kind: "mobile" | "web", storeId: string, ipLimit: number, storeLimit: number): Response | null {
+  // ponytail: in-memory counters (see rate-limit.ts), so N instances allow N times the limits; move with the M10 deployment.
   const wait =
-    rateLimit(`mobile:ip:${store.id}:${clientIp(req)}`, Date.now(), MOBILE_IP_LIMIT) ||
-    rateLimit(`mobile:store:${store.id}`, Date.now(), MOBILE_STORE_LIMIT);
-  return wait ? Response.json({ error: "rate_limited" }, { status: 429, headers: { "Retry-After": String(wait) } }) : null;
+    rateLimit(`${kind}:ip:${storeId}:${clientIp(req)}`, Date.now(), ipLimit) || rateLimit(`${kind}:store:${storeId}`, Date.now(), storeLimit);
+  return wait ? tooMany(wait) : null;
 }
 
 /**
  * Steps 1 and 2 of every storefront chat route (Task 19): validate `shop` and load the active store (else 404), then
  * check the Origin against its domains (else 403). A request with no Origin may instead carry the store's mobile app
- * key (appKeyCheck). Returns the error Response, or the store and its CORS headers (none for the app).
+ * key (appKeyCheck). Every path is rate-limited (per IP and per store). Returns the error Response, or the store and its CORS headers (none for the app).
  */
 export async function storeFor(req: Request, shop: unknown) {
   if (typeof shop !== "string" || !SHOP.test(shop)) return Response.json({ error: "unknown_shop" }, { status: 404 });
@@ -93,7 +107,9 @@ export async function storeFor(req: Request, shop: unknown) {
   }
   const cors = corsFor(req, store);
   if (!cors) return new Response(null, { status: 403 });
-  return { store: rest, cors };
+  // The Origin is only a claim a script can spoof, so an allowed one is limited too (after the check: refused ones cost nothing).
+  const slow = limited(req, "web", store.id, WEB_IP_LIMIT, WEB_STORE_LIMIT);
+  return slow ?? { store: rest, cors };
 }
 
 /**

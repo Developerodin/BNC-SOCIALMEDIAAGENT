@@ -11,13 +11,13 @@ let storeId: string;
 let admin: ReturnType<typeof postgres>;
 let shopRoute: typeof import("@/app/api/partner/shop/route");
 let ordersRoute: typeof import("@/app/api/partner/orders/route");
-let rl: typeof import("@/lib/partner/rate-limit");
+let rl: typeof import("@/lib/rate-limit");
 let client: typeof import("@/db/client");
 
 beforeAll(async () => {
   shopRoute = await import("@/app/api/partner/shop/route");
   ordersRoute = await import("@/app/api/partner/orders/route");
-  rl = await import("@/lib/partner/rate-limit");
+  rl = await import("@/lib/rate-limit");
   client = await import("@/db/client");
   admin = postgres(process.env.DATABASE_ADMIN_URL!, { max: 1 });
   const [acc] = await admin`insert into accounts default values returning id`;

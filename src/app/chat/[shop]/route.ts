@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
+import { SHOP } from "@/lib/chat/cors";
 import { embedDomains } from "@/lib/embed-domains";
 import { appOrigin, buildWidgetConfig } from "@/lib/widget-config";
 import type { PageContext } from "@/lib/widget-contract";
@@ -11,8 +12,6 @@ import type { PageContext } from "@/lib/widget-contract";
 // Embedding is opt-in: with no allowed site in settings.embedDomains the page is a 404 too (so nobody can spend the merchant's
 // OpenAI budget from a site the merchant never approved), and `frame-ancestors` lists only those sites plus the store's own
 // domains (a Shopify theme page may frame it too). src/proxy.ts skips /chat/ so it doesn't overwrite this header.
-// Same rule as src/lib/chat/cors.ts for `shop`.
-const SHOP = /^[a-z0-9-]+\.myshopify\.com$/;
 
 const NOT_FOUND = { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } };
 

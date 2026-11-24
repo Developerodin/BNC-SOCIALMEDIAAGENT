@@ -12,7 +12,7 @@ let admin: ReturnType<typeof postgres>;
 let orders: typeof import("@/app/api/partner/orders/route");
 let products: typeof import("@/app/api/partner/products/route");
 let shop: typeof import("@/app/api/partner/shop/route");
-let rl: typeof import("@/lib/partner/rate-limit");
+let rl: typeof import("@/lib/rate-limit");
 let client: typeof import("@/db/client");
 let tokens: typeof import("@/lib/shopify/tokens");
 
@@ -20,7 +20,7 @@ beforeAll(async () => {
   orders = await import("@/app/api/partner/orders/route");
   products = await import("@/app/api/partner/products/route");
   shop = await import("@/app/api/partner/shop/route");
-  rl = await import("@/lib/partner/rate-limit");
+  rl = await import("@/lib/rate-limit");
   client = await import("@/db/client");
   tokens = await import("@/lib/shopify/tokens");
   admin = postgres(process.env.DATABASE_ADMIN_URL!, { max: 1 });
