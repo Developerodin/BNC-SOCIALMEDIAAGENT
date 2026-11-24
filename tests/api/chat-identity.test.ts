@@ -9,6 +9,8 @@ import { sha256Hex } from "@/lib/partner/secrets";
 // Shopify is mocked (fetch for the Storefront API, adminGraphql for storefrontAccessTokenCreate); nothing calls OpenAI.
 
 const adminGraphql = vi.fn();
+// The CREATE mutation calls only: a mint also lists and deletes our older tokens (best effort), which are not mints.
+const creates = () => adminGraphql.mock.calls.filter((c) => String(c[2]).includes("storefrontAccessTokenCreate(")).length;
 vi.mock("@/lib/shopify/admin", () => ({ adminGraphql: (...a: unknown[]) => adminGraphql(...a) }));
 
 let admin: ReturnType<typeof postgres>;
@@ -21,7 +23,7 @@ let listRoute: typeof import("@/app/api/chat/conversations/route");
 let historyRoute: typeof import("@/app/api/chat/history/route");
 let deleteRoute: typeof import("@/app/api/chat/conversation/route");
 let proxyRoute: typeof import("@/app/api/proxy/session/route");
-let rl: typeof import("@/lib/partner/rate-limit");
+let rl: typeof import("@/lib/rate-limit");
 let storeId: string;
 let shop: string;
 let store: Parameters<typeof import("@/lib/chat/turn").openTurn>[0];
@@ -65,7 +67,7 @@ beforeAll(async () => {
   historyRoute = await import("@/app/api/chat/history/route");
   deleteRoute = await import("@/app/api/chat/conversation/route");
   proxyRoute = await import("@/app/api/proxy/session/route");
-  rl = await import("@/lib/partner/rate-limit");
+  rl = await import("@/lib/rate-limit");
   admin = postgres(process.env.DATABASE_ADMIN_URL!, { max: 1 });
   storeId = await newStore(admin);
   const [s] = await admin`update stores set mobile_key_hash = ${sha256Hex(APP_KEY)} where id = ${storeId} returning shop_domain`;
@@ -101,14 +103,14 @@ test("session: a valid customer token gets a session for that customer; the stor
   const { sessionToken, expiresAt } = await res.json();
   expect(cust.verifySession(storeId, sessionToken)).toBe(ALICE);
   expect(expiresAt).toBeGreaterThan(Date.now());
-  expect(adminGraphql).toHaveBeenCalledTimes(1);
+  expect(creates()).toBe(1);
   const [row] = await admin`select storefront_token_enc from store_tokens where store_id = ${storeId}`;
   expect(row.storefront_token_enc).toBeTruthy();
   expect(row.storefront_token_enc).not.toContain("sf-secret");
 
   // Second sign-in reuses the cached token: no new Admin call, and the Storefront call carries it.
   expect((await post({ shop, customerAccessToken: "cat-2" })).status).toBe(200);
-  expect(adminGraphql).toHaveBeenCalledTimes(1);
+  expect(creates()).toBe(1);
   const init = f.mock.calls.at(-1)![1]!;
   expect((init.headers as Record<string, string>)["X-Shopify-Storefront-Access-Token"]).toBe("sf-secret");
 });
@@ -134,7 +136,7 @@ test("session: a revoked storefront token is recreated once; a store still refus
     .mockResolvedValueOnce(new Response(JSON.stringify({ data: { customer: { id: ALICE } } })));
   vi.stubGlobal("fetch", f);
   expect((await post({ shop, customerAccessToken: "c" })).status).toBe(200);
-  expect(adminGraphql).toHaveBeenCalledTimes(1);
+  expect(creates()).toBe(1);
 
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ errors: [{ message: "denied", extensions: { code: "ACCESS_DENIED" } }] }))));
   const res = await post({ shop, customerAccessToken: "c" });
@@ -169,6 +171,58 @@ test("session: no app key or a website Origin is refused", async () => {
   expect((await post({ shop, customerAccessToken: "c" }, {})).status).toBe(403);
   const withOrigin = await post({ shop, customerAccessToken: "c" }, { "x-askcart-app-key": APP_KEY, origin: "https://evil.example.com" });
   expect(withOrigin.status).toBe(403);
+});
+
+test("session: a refused storefront token is replaced at most once an hour, and replacing it deletes our older tokens", async () => {
+  await tokenRow();
+  await admin`update store_tokens set storefront_token_enc = ${encrypt("old", storeId)} where store_id = ${storeId}`;
+  adminGraphql.mockImplementation(async (_s: string, _d: string, q: string) => {
+    if (q.includes("storefrontAccessTokenCreate(")) return { storefrontAccessTokenCreate: { storefrontAccessToken: { accessToken: "new" }, userErrors: [] } };
+    if (q.includes("storefrontAccessTokens(")) {
+      return {
+        shop: {
+          storefrontAccessTokens: {
+            nodes: [
+              { id: "gid://shopify/StorefrontAccessToken/1", accessToken: "old", title: "AskCart customer sign-in" },
+              { id: "gid://shopify/StorefrontAccessToken/2", accessToken: "new", title: "AskCart customer sign-in" },
+              { id: "gid://shopify/StorefrontAccessToken/3", accessToken: "theirs", title: "Merchant's own" },
+            ],
+          },
+        },
+      };
+    }
+    return {};
+  });
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 403 })));
+  expect((await post({ shop, customerAccessToken: "c" })).status).toBe(503);
+  expect(creates()).toBe(1);
+  const deletes = adminGraphql.mock.calls.filter((c) => String(c[2]).includes("storefrontAccessTokenDelete("));
+  expect(deletes.map((c) => (c[3] as { input: { id: string } }).input.id)).toEqual(["gid://shopify/StorefrontAccessToken/1"]);
+
+  // Within the hour every further refusal is "unavailable" without another mint.
+  for (let i = 0; i < 3; i++) expect((await post({ shop, customerAccessToken: "c" })).status).toBe(503);
+  expect(creates()).toBe(1);
+
+  await admin`update store_tokens set storefront_token_minted_at = now() - interval '2 hours' where store_id = ${storeId}`;
+  expect((await post({ shop, customerAccessToken: "c" })).status).toBe(503);
+  expect(creates()).toBe(2);
+});
+
+test("session: a failed mint gives the hour back so the next sign-in can try", async () => {
+  await tokenRow();
+  const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+  adminGraphql.mockRejectedValue(new Error("boom"));
+  vi.stubGlobal("fetch", storefront(null));
+  expect((await post({ shop, customerAccessToken: "c" })).status).toBe(503);
+  expect((await post({ shop, customerAccessToken: "c" })).status).toBe(503);
+  expect(creates()).toBe(2);
+  spy.mockRestore();
+});
+
+test("session: a same-origin browser request without the key is refused, and a non-JSON body is a 400", async () => {
+  expect((await post({ shop, customerAccessToken: "c" }, { "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors" })).status).toBe(403);
+  const bad = await sessionRoute.POST(new Request("http://x/api/chat/session", { method: "POST", headers: { "x-askcart-app-key": APP_KEY }, body: "nope" }));
+  expect(bad.status).toBe(400);
 });
 
 // --- website App Proxy ---

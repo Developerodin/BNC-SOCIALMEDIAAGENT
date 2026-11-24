@@ -48,6 +48,8 @@ export const storeTokens = pgTable("store_tokens", {
   // Storefront API token AskCart created for this store (storefrontAccessTokenCreate), used only to check a mobile
   // customer's customerAccessToken. Encrypted like the tokens above; null until the first customer sign-in.
   storefrontTokenEnc: text("storefront_token_enc"),
+  // When we last asked Shopify for a storefront token; limits minting to one an hour (the cap is 100 per app and store).
+  storefrontTokenMintedAt: timestamp("storefront_token_minted_at", { withTimezone: true }),
 });
 
 export const webhookEvents = pgTable("webhook_events", {

@@ -1,0 +1,1 @@
+ALTER TABLE "store_tokens" ADD COLUMN "storefront_token_minted_at" timestamp with time zone;
