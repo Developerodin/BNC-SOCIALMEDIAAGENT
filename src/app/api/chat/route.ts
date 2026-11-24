@@ -1,7 +1,4 @@
-import { eq } from "drizzle-orm";
-import { db } from "@/db/client";
-import { stores } from "@/db/schema";
-import { corsFor, preflight } from "@/lib/chat/cors";
+import { preflight, storeFor } from "@/lib/chat/cors";
 import { MAX_INPUT_CHARS } from "@/lib/chat/limits";
 import { PING, PING_MS, SSE_HEADERS, sseEvent } from "@/lib/chat/sse";
 import { openTurn, runTurn } from "@/lib/chat/turn";
@@ -10,7 +7,6 @@ import { openTurn, runTurn } from "@/lib/chat/turn";
 // is on, and it doesn't support the segment option (route handlers run on Node.js by default).
 // Abuse limits (rate limits, the monthly cap, Turnstile) come in M10 (D40): don't expose this on a live store before then.
 
-const SHOP = /^[a-z0-9-]+\.myshopify\.com$/;
 const MAX_PAGE_URL = 2048;
 
 export function OPTIONS(req: Request) {
@@ -19,25 +15,10 @@ export function OPTIONS(req: Request) {
 
 export async function POST(req: Request) {
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
-  const shop = typeof body?.shop === "string" ? body.shop : "";
-  if (!body || !SHOP.test(shop)) return Response.json({ error: "unknown_shop" }, { status: 404 });
-  const [store] = await db
-    .select({
-      id: stores.id,
-      shopDomain: stores.shopDomain,
-      active: stores.active,
-      domains: stores.domains,
-      name: stores.name,
-      primaryLocale: stores.primaryLocale,
-      currencyCode: stores.currencyCode,
-      settings: stores.settings,
-    })
-    .from(stores)
-    .where(eq(stores.shopDomain, shop));
-  if (!store?.active) return Response.json({ error: "unknown_shop" }, { status: 404 });
-
-  const cors = corsFor(req, store);
-  if (!cors) return new Response(null, { status: 403 });
+  if (!body) return Response.json({ error: "unknown_shop" }, { status: 404 });
+  const found = await storeFor(req, body.shop);
+  if (found instanceof Response) return found;
+  const { store, cors } = found;
   const fail = (error: string, status: number) => Response.json({ error }, { status, headers: cors });
 
   const { message, conversationToken } = body;

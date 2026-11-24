@@ -1,5 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
-import { forStore } from "@/db/client";
+import { forStore, type Conn } from "@/db/client";
 import { conversations, messages } from "@/db/schema";
 import { search } from "@/lib/retrieval";
 import { fallbackCards, liveCheck, type FallbackCard, type LiveProduct, type LiveVariant, type Stock } from "@/lib/shopify/live-products";
@@ -85,11 +85,7 @@ export async function openTurn(
     if (isNew) {
       await tx.insert(conversations).values({ id: conversationId, storeId: store.id, tokenHash: tokenHash(token), pageUrl: opts.pageUrl });
     } else {
-      const found = await tx
-        .select({ id: conversations.id })
-        .from(conversations)
-        .where(and(eq(conversations.storeId, store.id), eq(conversations.id, conversationId)));
-      if (found.length === 0) return { ok: false as const, status: 404 as const };
+      if (!(await conversationExists(tx, store.id, conversationId))) return { ok: false as const, status: 404 as const };
     }
     const rows = await tx
       .select({ role: messages.role, content: messages.content })
@@ -99,6 +95,41 @@ export async function openTurn(
       .limit(HISTORY_MESSAGES);
     await tx.insert(messages).values({ storeId: store.id, conversationId, role: "user", content: message });
     return { ok: true as const, conversationId, token, history: rows.reverse(), message };
+  });
+}
+
+async function conversationExists(tx: Conn, storeId: string, conversationId: string): Promise<boolean> {
+  const found = await tx
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(and(eq(conversations.storeId, storeId), eq(conversations.id, conversationId)));
+  return found.length > 0;
+}
+
+export type HistoryMessage = { role: "user" | "assistant"; content: string; status: "ok" | "cut_off"; cards: Card[] };
+
+/**
+ * GET /api/chat/history (Task 20, UD13): the conversation's last 20 messages, oldest first, already masked (D41).
+ * Same token rules as openTurn: a bad or other-store token → 401, a conversation that is gone → 404.
+ * C15 (b): the cards are the snapshot saved with the answer, exactly as the shopper saw them; user rows have none ([]).
+ * `// ponytail:` no live re-check, so a reopened card can show a stale price or stock until the shopper asks again
+ * (the cart still charges Shopify's real price at checkout). C15 (a) would run liveCheck here.
+ */
+export async function readHistory(
+  storeId: string,
+  token: string,
+): Promise<{ ok: true; messages: HistoryMessage[] } | { ok: false; status: 401 | 404 }> {
+  const conversationId = verifyToken(storeId, token);
+  if (!conversationId) return { ok: false, status: 401 };
+  return forStore(storeId, async (tx) => {
+    if (!(await conversationExists(tx, storeId, conversationId))) return { ok: false as const, status: 404 as const };
+    const rows = await tx
+      .select({ role: messages.role, content: messages.content, status: messages.status, cards: messages.cards })
+      .from(messages)
+      .where(and(eq(messages.storeId, storeId), eq(messages.conversationId, conversationId)))
+      .orderBy(desc(messages.createdAt))
+      .limit(HISTORY_MESSAGES);
+    return { ok: true as const, messages: rows.reverse().map((r) => ({ ...r, cards: (r.cards as Card[] | null) ?? [] })) };
   });
 }
 
