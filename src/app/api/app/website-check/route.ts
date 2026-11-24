@@ -4,7 +4,7 @@ import { stores } from "@/db/schema";
 import { rateLimit } from "@/lib/partner/rate-limit";
 import { authenticateEmbedded } from "@/lib/shopify/session";
 import { appOrigin } from "@/lib/widget-config";
-import { checkWebsite, normalizeHost } from "@/lib/website-check";
+import { checkWebsite, normalizeHost, themeEditorLink } from "@/lib/website-check";
 
 // The admin's "Connect your website" card: GET pre-fills the address, POST says how to connect the one typed.
 // The fetching and its SSRF guards live in src/lib/website-check.ts.
@@ -68,12 +68,7 @@ export async function POST(req: Request) {
     const origin = appOrigin();
     return Response.json({
       ...result,
-      // Shopify's app-embed deep link: <app api key>/<block file name without .liquid> (extensions/askcart/blocks/askcart-embed.liquid).
-      // Built here so the client never sees env. The page opens it with target _top.
-      themeLink:
-        result.kind === "shopify_store" && process.env.SHOPIFY_API_KEY
-          ? `https://${shop}/admin/themes/current/editor?context=apps&template=index&activateAppId=${process.env.SHOPIFY_API_KEY}/askcart-embed`
-          : null,
+      themeLink: result.kind === "shopify_store" ? themeEditorLink(shop) : null,
       embedSnippet: result.kind === "other" && origin ? `<script src="${origin}/embed.js" data-shop="${shop}" defer></script>` : null,
       chatLink: result.kind === "other" && origin ? `${origin}/chat/${shop}` : null,
     });

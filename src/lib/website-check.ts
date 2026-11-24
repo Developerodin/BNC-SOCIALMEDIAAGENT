@@ -165,3 +165,13 @@ export async function checkWebsite(host: string, shop: string, domains: string[]
     clearTimeout(timer);
   }
 }
+
+/**
+ * Shopify's app-embed deep link into the theme editor: <app api key>/<block file name without .liquid>
+ * (extensions/askcart/blocks/askcart-embed.liquid). Null when the API key isn't set. Built on the server so the client
+ * never sees env; the admin opens it with target _top.
+ */
+export function themeEditorLink(shop: string): string | null {
+  const key = process.env.SHOPIFY_API_KEY;
+  return key ? `https://${shop}/admin/themes/current/editor?context=apps&template=index&activateAppId=${key}/askcart-embed` : null;
+}

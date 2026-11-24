@@ -107,6 +107,7 @@ export default function AppHome() {
   return (
     <s-page heading="Shop Assistant">
       <s-text>Connected to {name}</s-text>
+      <SetupGuideCard sync={sync} />
       {sync && <s-text>{statusLine(sync)}</s-text>}
       {refused && <s-text>A sync is already queued.</s-text>}
       {sync && sync.status === "idle" && sync.syncError && <s-text>{sync.syncError}</s-text>}
@@ -122,6 +123,65 @@ export default function AppHome() {
   );
 }
 
+type Onboarding = { chatConfirmed: boolean; dismissed: boolean; themeLink: string | null };
+
+/** First-run guide (POST /api/app/onboarding keeps its state). The theme step is confirmed by the merchant, since Shopify gives apps no way to see whether an app embed is on. */
+function SetupGuideCard({ sync }: { sync: SyncState | null }) {
+  const [state, setState] = useState<Onboarding | null>(null);
+  const [error, setError] = useState(false);
+  // Whether both steps were already done when the page loaded: then there is nothing to celebrate, so the guide stays hidden.
+  const [doneAtLoad, setDoneAtLoad] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const res = await authed("/api/app/onboarding");
+      if (res.ok) setState(await res.json());
+    })();
+  }, []);
+
+  async function act(action: "confirm_chat" | "dismiss") {
+    setError(false);
+    try {
+      const res = await authed("/api/app/onboarding", { method: "POST", body: JSON.stringify({ action }) });
+      if (!res.ok) throw new Error(String(res.status));
+      const next = await res.json();
+      setState((s) => s && { ...s, ...next });
+    } catch {
+      setError(true);
+    }
+  }
+
+  const synced = !!sync && sync.status === "idle" && !!sync.lastSyncAt && sync.productCount > 0;
+  const allDone = synced && !!state?.chatConfirmed;
+  if (doneAtLoad === null && state && sync) setDoneAtLoad(allDone);
+  if (!state || !sync || state.dismissed || doneAtLoad) return null;
+
+  return (
+    <s-section heading="Set up AskCart">
+      {allDone ? (
+        <s-text>You&apos;re all set. Shoppers can now use the chat on your store.</s-text>
+      ) : (
+        <>
+          <s-text>{synced ? "Step 1: Products synced. Done." : sync.status === "running" ? `Step 1: Syncing your products... ${sync.itemsRead} items read` : "Step 1: Sync your products. Use Resync below."}</s-text>
+          <s-text>Step 2: Turn on the chat in your theme.{state.chatConfirmed ? " Done." : ""}</s-text>
+          {state.themeLink ? (
+            <>
+              {/* target _top: the theme editor can't open inside the admin iframe. */}
+              <s-button onClick={() => window.open(state.themeLink!, "_top")}>Turn on chat</s-button>
+              <s-text>In the theme editor, click Save.</s-text>
+            </>
+          ) : (
+            <s-text>In your theme editor, open App embeds and turn on AskCart, then click Save.</s-text>
+          )}
+          {!state.chatConfirmed && <s-button onClick={() => act("confirm_chat")}>I&apos;ve turned it on</s-button>}
+          <s-text>Using another website or a mobile app? See Connect your website and Mobile app key below.</s-text>
+        </>
+      )}
+      {error && <s-text>That didn&apos;t work. Try again.</s-text>}
+      <s-button onClick={() => act("dismiss")}>Dismiss guide</s-button>
+    </s-section>
+  );
+}
 type WebsiteResult = {
   kind: "shopify_store" | "shopify_other_store" | "other";
   host: string;
