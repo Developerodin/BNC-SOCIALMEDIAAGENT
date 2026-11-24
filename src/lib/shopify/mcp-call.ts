@@ -19,7 +19,7 @@ export async function callMcpTool(
     ...(opts.redirect ? { redirect: opts.redirect } : {}),
     signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
   });
-  if (res.status !== 200) {
+  if (!res.ok) {
     const loc = res.headers.get("location");
     throw new Error(`HTTP ${res.status}${loc ? ` -> ${loc}` : ""}`);
   }

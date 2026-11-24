@@ -22,6 +22,8 @@ export async function purgeStore(storeId: string, days: number, now = new Date()
         delete from conversations where id in (
           select c.id from conversations c
           where c.store_id = ${storeId} and c.created_at < ${cutoff}::timestamptz
+            -- Skip a conversation a shopper is resuming right now; it gets a new message and survives the next run.
+            and (c.busy_until is null or c.busy_until < now())
             and not exists (select 1 from messages m where m.store_id = c.store_id and m.conversation_id = c.id and m.created_at >= ${cutoff}::timestamptz)
           limit ${BATCH})
         returning id`),

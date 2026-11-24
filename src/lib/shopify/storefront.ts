@@ -79,7 +79,8 @@ async function create(storeId: string, shop: string): Promise<string | null> {
     const token = data.storefrontAccessTokenCreate.storefrontAccessToken?.accessToken;
     if (!token) throw new Error("storefrontAccessTokenCreate returned no token");
     await save(storeId, token);
-    await deleteOld(storeId, shop, token);
+    // Not awaited: up to ~99 Admin calls on the first replacement shouldn't hold up this sign-in; deleteOld never throws.
+    void deleteOld(storeId, shop, token);
     return token;
   } catch (err) {
     // Nothing was made (or it couldn't be kept): give the claim back so the next sign-in can try.
