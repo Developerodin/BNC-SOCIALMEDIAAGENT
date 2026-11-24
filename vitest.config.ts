@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import { loadEnv } from "vite";
 import path from "node:path";
 
@@ -19,6 +19,8 @@ export default defineConfig({
       // Real key from .env, only for tests/live (skipped when unset); other tests mock embed.
       ...(env.OPENAI_API_KEY ? { OPENAI_API_KEY: env.OPENAI_API_KEY } : {}),
     },
+    // Agent worktrees under .claude/ hold full copies of the repo and their tests.
+    exclude: [...configDefaults.exclude, ".claude/**"],
     fileParallelism: false, // DB files share one database and truncate per file
     globalSetup: ["tests/global-setup.ts"],
     setupFiles: ["tests/setup-truncate.ts"],
