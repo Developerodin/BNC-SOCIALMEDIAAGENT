@@ -45,7 +45,7 @@ test("a store never sees another store's chunks, even a closer match", async () 
   const a = await seeded(boots("1"), dress("2"));
   const b = await seeded(node("9", { title: "hiking boots", description: "hiking boots hiking boots" }));
 
-  const hits = await retrieval.search(a, "hiking boots", 10);
+  const hits = await retrieval.search(a, "hiking boots", 10, { minScore: 0 });
 
   const bIds = (await admin`select id from chunks where store_id = ${b}`).map((r) => r.id);
   expect(hits.length).toBeGreaterThan(0);
@@ -56,7 +56,7 @@ test("a store never sees another store's chunks, even a closer match", async () 
 test("the best match ranks first, scores descend, and k limits the hits", async () => {
   const a = await seeded(dress("1"), boots("2"), bottle("3"));
 
-  const hits = await retrieval.search(a, "hiking boots", 2);
+  const hits = await retrieval.search(a, "hiking boots", 2, { minScore: 0 });
 
   expect(hits).toHaveLength(2);
   expect(hits[0]).toMatchObject({ source: "product", productId: gid("2") });
@@ -81,7 +81,7 @@ test("a store with no chunks returns []", async () => {
 
 test("opts.productId appends that product's chunks with their real score, as a GID or a numeric id", async () => {
   const a = await seeded(boots("1"), dress("2"), bottle("3"));
-  const all = await retrieval.search(a, "hiking boots", 10);
+  const all = await retrieval.search(a, "hiking boots", 10, { minScore: 0 });
   const bottleScore = all.find((h) => h.productId === gid("3"))!.score;
 
   for (const productId of [gid("3"), "3"]) {
@@ -117,7 +117,7 @@ test("one long product fills at most 2 of the k slots; the rest go to other prod
   const a = await seeded(boots("1"), dress("2"), bottle("3"), long);
   expect((await admin`select count(*)::int as n from chunks where store_id = ${a} and product_id = ${gid("4")}`)[0].n).toBeGreaterThan(3);
 
-  const hits = await retrieval.search(a, "hiking boots trail", 4);
+  const hits = await retrieval.search(a, "hiking boots trail", 4, { minScore: 0 });
   expect(hits).toHaveLength(4);
   expect(hits.filter((h) => h.productId === gid("4"))).toHaveLength(2);
   expect(new Set(hits.map((h) => h.productId)).size).toBe(3);
@@ -134,4 +134,30 @@ test("D74: gift cards are left out of search unless includeGiftCards is set", as
 
   const asked = await retrieval.search(a, "hiking boots gift", 10, { includeGiftCards: true });
   expect(asked.map((h) => h.productId)).toContain(gid("7"));
+});
+
+test("D86: a query unrelated to every product returns [], a close one still returns its match", async () => {
+  const a = await seeded(boots("1"), dress("2"));
+
+  expect(await retrieval.search(a, "qwzx blorft zzkv", 10)).toEqual([]);
+
+  const close = await retrieval.search(a, "waterproof leather hiking boots", 10);
+  expect(close.map((h) => h.productId)).toContain(gid("1"));
+  expect(close.every((h) => h.score >= retrieval.MIN_SCORE)).toBe(true);
+});
+
+test("D86: the current product's chunks are kept even below the threshold", async () => {
+  const a = await seeded(boots("1"), dress("2"));
+
+  const hits = await retrieval.search(a, "qwzx blorft zzkv", 10, { productId: gid("2") });
+  expect(hits.length).toBeGreaterThan(0);
+  expect(hits.every((h) => h.productId === gid("2") && h.score < retrieval.MIN_SCORE)).toBe(true);
+});
+
+test("D86: opts.minScore overrides the threshold", async () => {
+  const a = await seeded(boots("1"), dress("2"));
+
+  const loose = await retrieval.search(a, "qwzx blorft zzkv", 10, { minScore: 0 });
+  expect(new Set(loose.map((h) => h.productId))).toEqual(new Set([gid("1"), gid("2")]));
+  expect(await retrieval.search(a, "waterproof leather hiking boots", 10, { minScore: 0.999 })).toEqual([]);
 });

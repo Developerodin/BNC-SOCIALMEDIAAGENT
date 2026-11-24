@@ -268,3 +268,39 @@ nonsense. Expected: nothing.
 | 3 | The Compare at Price Snowboard (score 0.246) |  |
 | 4 | The 3p Fulfilled Snowboard (score 0.246) |  |
 | 5 | The Collection Snowboard: Oxygen (score 0.242) |  |
+
+## After the cut-off (D86, MIN_SCORE = 0.18)
+
+Run 2026-11-24 with `scripts/mcp-compare/scores.mts`, ours only (the MCP side is unchanged). Scores are raw, with no cut-off; the last column is the real `search(storeId, query, 10)` call with the default threshold, top 5 distinct products, graded as above. Scores came out identical on a second run.
+
+| Query | Expected | Top score (title) | Best expected hit | 5th product | With cut-off: products kept, grade |
+|---|---|---|---|---|---|
+| exact-complete | The Complete Snowboard | 0.695 (The Complete Snowboard) | 0.695 (#1) | 0.540 | 5, hit@1 |
+| exact-videographer | The Videographer Snowboard | 0.676 (The Videographer Snowboard) | 0.676 (#1) | 0.451 | 5, hit@1 |
+| partial-hydrogen | Hydrogen | 0.618 (Collection: Hydrogen) | 0.618 (#1) | 0.517 | 5, hit@1 |
+| partial-oxygen | Oxygen | 0.339 (Collection: Oxygen) | 0.339 (#1) | 0.134 | 3, hit@1 |
+| partial-liquid | Liquid | 0.395 (Collection: Liquid) | 0.395 (#1) | 0.299 | 5, hit@1 |
+| vague-beginner | n/a | 0.241 (3p Fulfilled) | - | 0.171 | 3, n/a |
+| vague-gift-budget | Gift Card / Ski Wax | 0.379 (Gift Card) | 0.379 (#1) | 0.233 | 5, hit@1 |
+| vague-cheapest | n/a | 0.537 (Compare at Price) | - | 0.476 | 5, n/a |
+| vague-premium | Complete / Multi-location / Multi-managed | 0.480 (Complete) | 0.480 (#1) | 0.357 | 5, hit@1 |
+| attr-159 | Complete / Multi-managed | 0.430 (Multi-managed) | 0.430 (#1) | 0.370 | 5, hit@1 |
+| attr-weight | Complete | 0.535 (Complete) | 0.535 (#1) | 0.481 | 5, hit@1 |
+| attr-color | Complete | 0.424 (Complete) | 0.424 (#1) | 0.332 | 5, hit@1 |
+| attr-sale | Compare at Price | 0.587 (Out of Stock) | 0.561 (#2) | 0.511 | 5, hit@5 |
+| accessory-wax | Ski Wax | 0.510 (Ski Wax) | 0.510 (#1) | 0.367 | 5, hit@1 |
+| accessory-subscription | Ski Wax | 0.437 (Ski Wax) | 0.437 (#1) | 0.191 | 5, hit@1 |
+| lang-fr | Complete / Multi-location / Multi-managed | 0.490 (Compare at Price) | 0.481 (#3 Complete) | 0.467 | 5, hit@5 |
+| lang-hi | Snowboard | 0.192 (Compare at Price) | 0.192 (#1) | 0.171 | 1, hit@1 |
+| sold-out | The Out of Stock Snowboard | 0.813 (Out of Stock) | 0.813 (#1) | 0.545 | 5, hit@1 |
+| gift-card | Gift Card | 0.563 (Gift Card) | 0.563 (#1) | 0.192 | 5, hit@1 |
+| off-catalogue | nothing | 0.173 (Collection: Liquid) | - | 0.150 | 0, **pass** (was fail) |
+| nonsense | nothing | 0.274 (Videographer) | - | 0.242 | 5, fail |
+
+Grades for ours: hit@1 15, hit@5 2, n/a 2, pass 1, fail 1 (before: fail 2). Every expected hit is kept.
+
+**No single threshold separates the two groups.** The lowest real match is the Hindi query at 0.192 (non-English queries score low against this English catalogue); the nonsense string tops out at 0.274, above it. 0.18 is the highest value that keeps every expected hit while dropping the blender (0.173), with a margin of about 0.01 on each side. Extra off-topic probes (not in queries.json) also land above it: "car insurance quotes" 0.219, "running shoes" 0.256, "asdf" 0.241, "a red dress for a wedding" 0.192. So the cut-off removes only what is clearly unrelated. The chat model still has to judge relevance on what is left.
+
+Side effects: the Hindi query now returns 1 product instead of 5 (the next ones score 0.179 and 0.178), "oxygen" returns 3 and "something for a beginner" returns 3.
+
+A relative rule (drop hits far below the best hit) was not added. The nonsense hits score close together (0.274 down to 0.242), and so do the hits for real broad queries ("cheapest snowboard": 0.537 down to 0.476), so a gap rule can't tell them apart. It would only trim tails on queries that already pass, such as "oxygen", where the absolute threshold already does that.
