@@ -194,6 +194,9 @@ export async function answer(opts: {
       if (opts.signal.aborted) return { kind: "user" };
       if (Date.now() >= endAt) return { kind: "total" };
       roundBreak = true;
+      // Nothing shown yet (a tool call straight away, or only whitespace): the next round may still open with
+      // [[escalate]], so the small model's marker check starts over. Once text was shown, escalating is impossible.
+      if (!delivered) reset();
       out = await streamWithRetry(size, onDelta, reset);
     }
     return out;

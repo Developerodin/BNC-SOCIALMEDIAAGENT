@@ -321,3 +321,35 @@ test("the small model's reasoning items are not sent to the large model on escal
   expect((sent.bodies[1].input as { type?: string }[]).some((i) => i.type === "reasoning")).toBe(true);
   expect((sent.bodies[2].input as { type?: string }[]).map((i) => i.type)).toEqual([undefined, "function_call", "function_call_output"]);
 });
+
+// A response that says `text` and then asks for a tool.
+function sayThenTool(text: string) {
+  return async (_b: unknown, { signal }: { signal: AbortSignal }) => {
+    signals.push(signal);
+    const output = [{ type: "function_call", call_id: "c1", name: "store_policies", arguments: '{"query":"q"}' }];
+    return (async function* () {
+      yield { type: "response.output_text.delta", delta: text };
+      yield { type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 1 }, output } };
+    })();
+  };
+}
+
+test("[[escalate]] after a tool round still escalates when nothing was shown before it", async () => {
+  // The first round's only text is a marker that is stripped, so the small model has "decided" but the shopper saw nothing.
+  create
+    .mockImplementationOnce(sayThenTool("[[note]]"))
+    .mockImplementationOnce(stream(["[[escalate]]", { hang: true }]))
+    .mockImplementationOnce(stream(["Large answer"]));
+  const { opts, texts } = setup({ tools: tools() });
+  const r = await answer(opts);
+  expect(r).toMatchObject({ model: "large", text: "Large answer" });
+  expect(texts.join("")).toBe("Large answer");
+});
+
+test("[[escalate]] in a later round is stripped, not obeyed, once text was shown", async () => {
+  create.mockImplementationOnce(sayThenTool("Let me check.")).mockImplementationOnce(stream(["[[escalate]] We accept returns."]));
+  const { opts, texts } = setup({ tools: tools() });
+  const r = await answer(opts);
+  expect(r).toMatchObject({ model: "small", status: "ok" });
+  expect(texts.join("")).toBe("Let me check.\n\nWe accept returns.");
+});
