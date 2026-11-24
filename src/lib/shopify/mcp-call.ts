@@ -31,3 +31,15 @@ export async function callMcpTool(
   if (json.result?.isError) throw new Error("tool error");
   return json.result;
 }
+
+/** A result's JSON payload: `structuredContent`, else the first text content parsed. Throws a fixed message if that text isn't JSON. */
+export function mcpPayload(r: McpResult | undefined): unknown {
+  if (r?.structuredContent !== undefined) return r.structuredContent;
+  const text = r?.content?.[0]?.text;
+  if (!text) return undefined;
+  try {
+    return JSON.parse(String(text));
+  } catch {
+    throw new Error("invalid JSON");
+  }
+}

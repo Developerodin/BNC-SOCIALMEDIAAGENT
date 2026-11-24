@@ -62,11 +62,51 @@ test("an empty ask_business answer is the answer: no fallback", async () => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
-test("a timeout on ask_business falls back; both failing returns null", async () => {
+test("a timeout on ask_business returns null without the fallback", async () => {
   vi.stubEnv("UCP_AGENT_PROFILE_URL", PROFILE);
   fetchMock.mockRejectedValue(new DOMException("timed out", "TimeoutError"));
   expect(await askPolicies("x.myshopify.com", "q", [], opts)).toBeNull();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test("a fast network error falls back; both failing returns null", async () => {
+  vi.stubEnv("UCP_AGENT_PROFILE_URL", PROFILE);
+  fetchMock.mockRejectedValue(new TypeError("fetch failed"));
+  expect(await askPolicies("x.myshopify.com", "q", [], opts)).toBeNull();
   expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+test("a tool isError result falls back", async () => {
+  vi.stubEnv("UCP_AGENT_PROFILE_URL", PROFILE);
+  fetchMock.mockResolvedValueOnce(rpc({ isError: true, content: [{ text: "unknown tool" }] })).mockResolvedValueOnce(oldTool("old answer"));
+  expect(await askPolicies("x.myshopify.com", "q", [], opts)).toBe("old answer");
+});
+
+test("an answer only in content[0].text is read", async () => {
+  vi.stubEnv("UCP_AGENT_PROFILE_URL", PROFILE);
+  fetchMock.mockResolvedValue(rpc({ content: [{ type: "text", text: JSON.stringify({ ucp: {}, answer: { plain: "From text." } }) }] }));
+  expect(await askPolicies("x.myshopify.com", "q", [], opts)).toBe("From text.");
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test("a missing answer object, a ucp error status or error-only messages fall back", async () => {
+  vi.stubEnv("UCP_AGENT_PROFILE_URL", PROFILE);
+  for (const payload of [
+    { ucp: {} },
+    { ucp: { status: "error" }, answer: { plain: "x" } },
+    { ucp: {}, messages: [{ type: "error", content: "bad" }], answer: { plain: "" } },
+  ]) {
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(rpc({ structuredContent: payload })).mockResolvedValueOnce(oldTool("old answer"));
+    expect(await askPolicies("x.myshopify.com", "q", [], opts)).toBe("old answer");
+  }
+});
+
+test("ask_business is called with redirect: manual", async () => {
+  vi.stubEnv("UCP_AGENT_PROFILE_URL", PROFILE);
+  fetchMock.mockResolvedValue(answer("ok"));
+  await askPolicies("x.myshopify.com", "q", [], opts);
+  expect(fetchMock.mock.calls[0][1].redirect).toBe("manual");
 });
 
 test("an aborted turn does not start the fallback", async () => {
