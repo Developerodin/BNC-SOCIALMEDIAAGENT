@@ -13,6 +13,13 @@ export const WIDGET_KEY = "widget";
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {});
 
+const RETENTION_DAYS = [30, 90, 365] as const;
+/** How long chats are kept (D41), shown in the widget and enforced by src/lib/retention.ts; anything but 30, 90 or 365 is 30. */
+export function retentionDays(settings: unknown): 30 | 90 | 365 {
+  const v = obj(settings).retentionDays;
+  return RETENTION_DAYS.find((d) => d === v) ?? 30;
+}
+
 /**
  * C23: the look is edited only in M7 Settings, which saves it under `stores.settings.widget` (same field names as
  * WidgetConfig); until then every store gets the defaults. Each bad value falls back to its default and is logged.
@@ -63,7 +70,7 @@ export function buildWidgetConfig(store: { settings: unknown; name: string | nul
     },
     stockThreshold: stockThreshold(settings), // the server's own threshold, so cards and widget agree
     // D41 retention lives at the top of settings (no editor before M7).
-    retentionDays: pick("retentionDays", settings.retentionDays, oneOf(30, 90, 365), 30),
+    retentionDays: pick("retentionDays", settings.retentionDays, oneOf(...RETENTION_DAYS), 30),
   };
 }
 

@@ -23,6 +23,7 @@ function init(): Promise<void> {
       await boss.updateQueue(name, retry);
     }
     await boss.createQueue("resync-scan", { retryLimit: 5, retryBackoff: true });
+    await boss.createQueue("retention-scan", { retryLimit: 3, retryBackoff: true });
   })());
 }
 
@@ -75,6 +76,11 @@ export async function startWorkers(): Promise<void> {
     await resyncScan();
   });
   await boss.schedule("resync-scan", "0 * * * *");
+  const { retentionScan } = await import("@/lib/retention");
+  await boss.work("retention-scan", async () => {
+    await retentionScan();
+  });
+  await boss.schedule("retention-scan", "30 3 * * *"); // daily, 03:30 UTC
 }
 
 export async function enqueue(name: string, data: object, opts?: SendOptions): Promise<string | null> {
