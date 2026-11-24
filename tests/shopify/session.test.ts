@@ -2,6 +2,9 @@ import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import postgres from "postgres";
 import { createHmac } from "node:crypto";
 
+// The widget config write has its own tests (tests/widget-config.test.ts); here it only must be called.
+vi.mock("@/lib/widget-config", () => ({ syncWidgetConfig: vi.fn(async () => {}) }));
+
 let admin: ReturnType<typeof postgres>;
 let session: typeof import("@/lib/shopify/session");
 let api: typeof import("@/lib/shopify/api");
@@ -105,6 +108,12 @@ test("/api/app/me fetches a missing shop name, and retries on a later load after
   // Saved: no further fetch.
   await GET(req(auth));
   expect(fetchName).toHaveBeenCalledTimes(1);
+
+  // Every load syncs the widget config (Task 24), even the one whose name fetch failed.
+  const { syncWidgetConfig } = await import("@/lib/widget-config");
+  const [s] = await admin`select id from stores`;
+  expect(syncWidgetConfig).toHaveBeenCalledTimes(3);
+  expect(syncWidgetConfig).toHaveBeenLastCalledWith(s.id, "a.myshopify.com");
 });
 
 test("a fresh token exchange clears the reconnect flag, and only that reason", async () => {
