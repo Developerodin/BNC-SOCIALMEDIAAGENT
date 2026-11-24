@@ -12,7 +12,8 @@ import { adminGraphql } from "@/lib/shopify/admin";
 const BATCH = 250;
 const POLL_DELAY_S = 15;
 
-const BULK_QUERY = `{ products { edges { node { ${PRODUCT_FIELDS} metafields(first: 50) { edges { node { namespace key type value } } } } } } }`;
+const COLLECTIONS = `collections(first: 20) { edges { node { title } } }`;
+const BULK_QUERY = `{ products { edges { node { ${PRODUCT_FIELDS} metafields(first: 50) { edges { node { namespace key type value } } } ${COLLECTIONS} } } } }`;
 const RUN = `mutation($query: String!) {
   bulkOperationRunQuery(query: $query) { bulkOperation { id } userErrors { field message } }
 }`;
@@ -145,23 +146,32 @@ export async function pollSync({ storeId }: { storeId: string }): Promise<void> 
   await failSync(storeId, { status: op?.status ?? null, errorCode: op?.errorCode ?? null });
 }
 
-const PRODUCT = `query($id: ID!) { product(id: $id) { ${PRODUCT_FIELDS} metafields(first: 50) { edges { node { namespace key type value } } } } }`;
+const PRODUCT = `query($id: ID!) { product(id: $id) { ${PRODUCT_FIELDS} metafields(first: 50) { edges { node { namespace key type value } } } ${COLLECTIONS} } }`;
 
 /** The `product-sync` handler: re-reads one product and upserts it, or deletes it when Shopify no longer has it. */
 export async function syncProduct({ storeId, productId }: { storeId: string; productId: string }): Promise<void> {
   const [s] = await db.select({ shop: stores.shopDomain, active: stores.active }).from(stores).where(eq(stores.id, storeId));
   if (!s?.active) return;
   const { product } = await adminGraphql<{
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    product: (Record<string, any> & { metafields: { edges: { node: ShopifyProduct["metafields"][number] }[] } }) | null;
+    product:
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      | (Record<string, any> & {
+          metafields: { edges: { node: ShopifyProduct["metafields"][number] }[] };
+          collections?: { edges: { node: { title: string } }[] };
+        })
+      | null;
   }>(storeId, s.shop, PRODUCT, { id: productId });
   if (!product) await deleteProduct(storeId, productId);
-  else await upsertProducts(storeId, [toShopifyProduct(product, product.metafields.edges.map((e) => e.node))]);
+  else {
+    const collections = product.collections?.edges.map((e) => e.node.title) ?? [];
+    await upsertProducts(storeId, [toShopifyProduct(product, product.metafields.edges.map((e) => e.node), collections)]);
+  }
   await enqueueEmbed(storeId);
 }
 
 /**
- * Imports bulk-query JSONL: a line without `__parentId` is a product, a line with one is a metafield of that product.
+ * Imports bulk-query JSONL: a line without `__parentId` is a product; a line with one is a metafield (has `namespace`)
+ * or a collection (has `title`) of that product.
  * Returns the product count.
  *
  * The docs promise only that "nested connections appear after their parents in the file", not right after
@@ -173,18 +183,21 @@ export async function syncProduct({ storeId, productId }: { storeId: string; pro
  */
 export async function importJsonl(storeId: string, lines: AsyncIterable<string>): Promise<number> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const byId = new Map<string, { node: any; metafields: ShopifyProduct["metafields"] }>();
+  const byId = new Map<string, { node: any; metafields: ShopifyProduct["metafields"]; collections: string[] }>();
   for await (const line of lines) {
     if (!line.trim()) continue;
     const row = JSON.parse(line);
     if (row.__parentId) {
-      byId.get(row.__parentId)?.metafields.push({ namespace: row.namespace, key: row.key, type: row.type, value: row.value });
+      const parent = byId.get(row.__parentId);
+      if (row.namespace !== undefined) parent?.metafields.push({ namespace: row.namespace, key: row.key, type: row.type, value: row.value });
+      else if (row.title !== undefined) parent?.collections.push(row.title);
     } else {
-      // A repeated product line keeps the latest node and the metafields collected so far.
-      byId.set(row.id, { node: row, metafields: byId.get(row.id)?.metafields ?? [] });
+      // A repeated product line keeps the latest node and the children collected so far.
+      const prev = byId.get(row.id);
+      byId.set(row.id, { node: row, metafields: prev?.metafields ?? [], collections: prev?.collections ?? [] });
     }
   }
-  const all = [...byId.values()].map((p) => toShopifyProduct(p.node, p.metafields));
+  const all = [...byId.values()].map((p) => toShopifyProduct(p.node, p.metafields, p.collections));
   for (let i = 0; i < all.length; i += BATCH) await upsertProducts(storeId, all.slice(i, i + BATCH));
   return all.length;
 }

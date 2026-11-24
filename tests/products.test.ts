@@ -41,6 +41,7 @@ function product(over: Partial<import("@/lib/products").ShopifyProduct> = {}): i
     imageUrl: null,
     updatedAt: "2026-01-02T00:00:00Z",
     metafields: [],
+    collections: [],
     ...over,
   };
 }
@@ -70,6 +71,24 @@ test("buildContent leaves out json metafields, app-- namespaces and price", () =
   expect(out).not.toContain("APPNS");
   expect(out).not.toContain("PRICEVAL");
   expect(out).toContain("cotton");
+});
+
+test("buildContent leaves out empty fields and Shopify's Default Title option", () => {
+  const out = products.buildContent(
+    product({ description: "", tags: [], productType: "", vendor: "", options: [{ name: "Title", values: ["Default Title"] }] }),
+  );
+  expect(out).toBe("Title: Tee");
+});
+
+test("buildContent writes measurements as words and lists collections", () => {
+  const out = products.buildContent(
+    product({
+      collections: ["Winter", "Best sellers"],
+      metafields: [mf("test_data", "length", "dimension", '{"value":159.0,"unit":"CENTIMETERS"}')],
+    }),
+  );
+  expect(out).toContain("test_data.length: 159 centimeters");
+  expect(out).toContain("Collections: Best sellers, Winter");
 });
 
 test("buildContent cuts a metafield value to 500 characters", () => {

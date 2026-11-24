@@ -83,6 +83,15 @@ test("importJsonl stores a product with the metafields that follow it", async ()
   expect(r.content).toContain("custom.care: wash cold");
 });
 
+test("importJsonl adds the collection titles that follow a product", async () => {
+  const storeId = await newStore();
+  const col = (title: string) => ({ title, __parentId: "gid://shopify/Product/1" });
+  await sync.importJsonl(storeId, lines(node("1"), col("Winter"), meta("1", "fabric", "cotton")));
+  const [r] = await rows(storeId);
+  expect(r.content).toContain("Collections: Winter");
+  expect(r.content).toContain("custom.fabric: cotton");
+});
+
 test("pollSync on COMPLETED with no url leaves the store idle and sweeps old products", async () => {
   const storeId = await newStore({ bulkOperationId: "gid://shopify/BulkOperation/1" });
   await products.upsertProducts(storeId, [products.toShopifyProduct(node("1"), [])]);
@@ -238,13 +247,18 @@ test("syncProduct deletes the row when Shopify returns no product", async () => 
 test("syncProduct upserts the product with its metafields", async () => {
   const storeId = await newStore();
   gql.mockResolvedValue({
-    product: { ...node("live", "Live"), metafields: { edges: [{ node: { namespace: "n", key: "k", type: "single_line_text_field", value: "metaval" } }] } },
+    product: {
+      ...node("live", "Live"),
+      metafields: { edges: [{ node: { namespace: "n", key: "k", type: "single_line_text_field", value: "metaval" } }] },
+      collections: { edges: [{ node: { title: "Summer" } }] },
+    },
   });
   await sync.syncProduct({ storeId, productId: "gid://shopify/Product/live" });
   const rows = await admin`select title, content from products where store_id = ${storeId}`;
   expect(rows).toHaveLength(1);
   expect(rows[0].title).toBe("Live");
   expect(rows[0].content).toContain("n.k: metaval");
+  expect(rows[0].content).toContain("Collections: Summer");
 });
 
 test("syncProduct does nothing for an inactive store", async () => {

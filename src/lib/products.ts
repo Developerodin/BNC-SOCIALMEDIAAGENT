@@ -19,6 +19,9 @@ export type ShopifyProduct = {
   imageUrl: string | null;
   updatedAt: string;
   metafields: { namespace: string; key: string; type: string; value: string }[];
+  /** Titles of the collections the product is in. Adding a product to a collection fires no products/update
+   * webhook, so these can be up to one resync (daily by default) out of date. */
+  collections: string[];
 };
 
 /** GraphQL selection for one product (Admin API 2026-10), without metafields. */
@@ -30,7 +33,7 @@ export const PRODUCT_FIELDS = `
 
 /** Maps a node selected with PRODUCT_FIELDS (plus separately fetched metafields) to a ShopifyProduct. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function toShopifyProduct(node: any, metafields: ShopifyProduct["metafields"]): ShopifyProduct {
+export function toShopifyProduct(node: any, metafields: ShopifyProduct["metafields"], collections: string[] = []): ShopifyProduct {
   return {
     id: node.id,
     handle: node.handle,
@@ -46,6 +49,7 @@ export function toShopifyProduct(node: any, metafields: ShopifyProduct["metafiel
     imageUrl: node.featuredMedia?.preview?.image?.url ?? null,
     updatedAt: node.updatedAt,
     metafields,
+    collections,
   };
 }
 
@@ -67,18 +71,34 @@ const METAFIELD_TYPES = new Set([
 export function buildContent(p: ShopifyProduct): string {
   const meta = p.metafields
     .filter((m) => METAFIELD_TYPES.has(m.type) && !m.namespace.startsWith("app--") && !/price/i.test(`${m.namespace}.${m.key}`))
-    .map((m) => ({ name: `${m.namespace}.${m.key}`, value: m.value.slice(0, MAX_VALUE) }))
+    .map((m) => ({ name: `${m.namespace}.${m.key}`, value: readable(m).slice(0, MAX_VALUE) }))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
     .slice(0, MAX_METAFIELDS);
+  const field = (name: string, value: string) => (value.trim() ? [`${name}: ${value}`] : []);
   return [
     `Title: ${p.title}`,
-    `Description: ${p.description}`,
-    `Type: ${p.productType}`,
-    `Vendor: ${p.vendor}`,
-    `Tags: ${[...p.tags].sort().join(", ")}`,
-    ...p.options.map((o) => `Option ${o.name}: ${o.values.join(", ")}`),
+    ...field("Description", p.description),
+    ...field("Type", p.productType),
+    ...field("Vendor", p.vendor),
+    ...field("Tags", [...p.tags].sort().join(", ")),
+    ...field("Collections", [...p.collections].sort().join(", ")),
+    // A product without variants has one option, Title: Default Title, which says nothing about it.
+    ...p.options
+      .filter((o) => !(o.values.length === 1 && o.values[0] === "Default Title"))
+      .map((o) => `Option ${o.name}: ${o.values.join(", ")}`),
     ...meta.map((m) => `${m.name}: ${m.value}`),
   ].join("\n");
+}
+
+/** Measurement metafields hold JSON like {"value":159.0,"unit":"CENTIMETERS"}; search matches "159 centimeters" better. */
+function readable(m: { type: string; value: string }): string {
+  if (m.type !== "dimension" && m.type !== "weight" && m.type !== "volume") return m.value;
+  try {
+    const { value, unit } = JSON.parse(m.value);
+    return `${value} ${String(unit).toLowerCase().replace(/_/g, " ")}`;
+  } catch {
+    return m.value;
+  }
 }
 
 /** Last write wins by Shopify's updatedAt, so a late webhook can't overwrite newer bulk data. */
