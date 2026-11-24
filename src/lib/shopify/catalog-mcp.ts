@@ -108,17 +108,54 @@ async function callSearchCatalog(
  * UCP_AGENT_PROFILE_URL. Never throws. The GID is ours (the chat tool maps a number to it), never shopper text.
  */
 export async function getProduct(shopDomain: string, productGid: string, opts: { storeId: string; signal?: AbortSignal }): Promise<Record<string, unknown> | null> {
-  try {
-    const profile = process.env.UCP_AGENT_PROFILE_URL;
-    if (!profile) throw new Error("UCP_AGENT_PROFILE_URL is not set");
-    const args = { meta: { "ucp-agent": { profile } }, catalog: { id: productGid } };
-    const { r, sc } = await callUcpTool(shopDomain, "get_product", args, opts.signal);
-    if (r?.isError || !sc?.product || typeof sc.product !== "object") throw new Error(`tool error: ${JSON.stringify(r).slice(0, 300)}`);
-    return sc.product as Record<string, unknown>;
-  } catch (err) {
-    console.warn("catalog mcp get_product failed", { storeId: opts.storeId, error: errorText(err) });
+  const profile = process.env.UCP_AGENT_PROFILE_URL;
+  if (!profile) {
+    console.warn("catalog mcp get_product failed", { storeId: opts.storeId, error: "UCP_AGENT_PROFILE_URL is not set" });
     return null;
   }
+  // filters.available defaults to true (sale-ready only), so like mcpSearch two calls run in parallel, true and false, and
+  // are merged: otherwise a sold-out size would look like it doesn't exist. One failing call keeps the other's result.
+  const [ready, soldOut] = await Promise.allSettled([
+    callGetProduct(shopDomain, productGid, profile, true, opts.signal),
+    callGetProduct(shopDomain, productGid, profile, false, opts.signal),
+  ]);
+  const failed = [ready, soldOut].filter((r) => r.status === "rejected").map((r) => errorText(r.reason));
+  if (failed.length) console.warn(failed.length === 2 ? "catalog mcp get_product failed" : "catalog mcp get_product partly failed", { storeId: opts.storeId, error: failed.join("; ") });
+  const parts = [ready, soldOut].flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+  return parts.length ? mergeProducts(parts) : null;
+}
+
+async function callGetProduct(shopDomain: string, productGid: string, profile: string, available: boolean, signal?: AbortSignal) {
+  const args = { meta: { "ucp-agent": { profile } }, catalog: { id: productGid, filters: { available } } };
+  const { r, sc } = await callUcpTool(shopDomain, "get_product", args, signal);
+  if (r?.isError || !sc?.product || typeof sc.product !== "object") throw new Error(`tool error: ${JSON.stringify(r).slice(0, 300)}`);
+  return sc.product as Record<string, unknown>;
+}
+
+type Obj = Record<string, unknown>;
+const objs = (v: unknown): Obj[] => (Array.isArray(v) ? v.filter((x): x is Obj => !!x && typeof x === "object") : []);
+
+/**
+ * The product fields of the first part, with variants and option values unioned over all parts (by variant id or title,
+ * option name and value label). The order must not show which call a variant came from (sold-out ones come from the
+ * second), so variants are sorted by their numeric id (Shopify's creation order, usually the merchant's) and each
+ * option's values by first appearance in that order.
+ */
+function mergeProducts(parts: Obj[]): Obj {
+  const variants = new Map<string, Obj>();
+  for (const v of parts.flatMap((p) => objs(p.variants))) variants.set(String(v.id ?? v.title), variants.get(String(v.id ?? v.title)) ?? v);
+  const num = (v: Obj) => Number(String(v.id ?? "").match(/\d+$/)?.[0] ?? NaN);
+  const sorted = [...variants.values()].sort((a, b) => (num(a) - num(b) || 0));
+  const seen = (name: unknown, label: unknown) =>
+    sorted.findIndex((v) => objs(v.options).some((o) => o.name === name && o.label === label)) + 1 || 1e9;
+  const options = new Map<string, Obj>();
+  for (const o of parts.flatMap((p) => objs(p.options))) {
+    const have = options.get(String(o.name));
+    const values = new Map(objs(have?.values ?? []).map((x) => [String(x.label), x]));
+    for (const x of objs(o.values)) if (!values.has(String(x.label))) values.set(String(x.label), x);
+    options.set(String(o.name), { ...(have ?? o), values: [...values.values()].sort((a, b) => seen(o.name, a.label) - seen(o.name, b.label)) });
+  }
+  return { ...parts[0], variants: sorted, options: [...options.values()] };
 }
 
 /** One tools/call on the store's UCP MCP: the raw `result` and its structured payload. Throws on an HTTP, JSON-RPC or network error, or a timeout of ~3 s. */

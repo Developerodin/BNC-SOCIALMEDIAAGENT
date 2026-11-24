@@ -96,7 +96,7 @@ const inner = (out: string) => out.slice("<store_data>\n".length, -"\n</store_da
 
 beforeEach(() => {
   fetchMock.mockReset();
-  vi.stubGlobal("fetch", fetchMock);
+  vi.stubGlobal("fetch", (...a: unknown[]) => Promise.resolve(fetchMock(...a)).then((r: Response) => r.clone())); // a stubbed Response body can be read once, and every get_product makes two calls
   vi.stubEnv("UCP_AGENT_PROFILE_URL", PROFILE);
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -117,13 +117,53 @@ test("product_details is offered only when UCP_AGENT_PROFILE_URL is set, and TOO
 test("product_details sends get_product with the profile and the GID of the number, never a model-written id", async () => {
   fetchMock.mockResolvedValue(ucpReply({ title: "Wax" }));
   await details("1");
-  expect(fetchMock).toHaveBeenCalledTimes(1);
-  const [url, init] = fetchMock.mock.calls[0];
-  expect(url).toBe("https://x.myshopify.com/api/ucp/mcp");
-  expect(JSON.parse(init.body).params).toEqual({
+  // filters.available defaults to true (sale-ready only), so sold-out variants need a second call with false.
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  for (const [url] of fetchMock.mock.calls) expect(url).toBe("https://x.myshopify.com/api/ucp/mcp");
+  const bodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).params);
+  expect(bodies).toEqual([true, false].map((available) => ({
     name: "get_product",
-    arguments: { meta: { "ucp-agent": { profile: PROFILE } }, catalog: { id: gid(1) } },
+    arguments: { meta: { "ucp-agent": { profile: PROFILE } }, catalog: { id: gid(1), filters: { available } } },
+  })));
+});
+
+/** get_product answering by the filter: `ready` for available: true, `soldOut` for available: false (an Error rejects that call). */
+const byFilter = (ready: unknown, soldOut: unknown) =>
+  fetchMock.mockImplementation(async (_u: string, init: RequestInit) => {
+    const r = JSON.parse(String(init.body)).params.arguments.catalog.filters.available ? ready : soldOut;
+    if (r instanceof Error) throw r;
+    return ucpReply(r);
   });
+const v = (n: number, size: string) => ({ id: `gid://shopify/ProductVariant/${n}`, title: size, options: [{ name: "Size", label: size }] });
+
+test("product_details merges the sale-ready and sold-out halves: all variants and sizes, in id order, de-duplicated", async () => {
+  byFilter(
+    { title: "Tee", options: [{ name: "Size", values: [{ label: "S", available: true }, { label: "L", available: true }] }], variants: [v(3, "L"), v(1, "S")] },
+    { title: "Tee", options: [{ name: "Size", values: [{ label: "M", available: false }, { label: "S", available: false }] }], variants: [v(2, "M"), v(1, "S")] },
+  );
+  const out = inner(await details("1"));
+  expect(out).toContain("Option Size: S, M, L");
+  expect(out.match(/^Variant: .*$/gm)).toEqual(["Variant: S (Size: S)", "Variant: M (Size: M)", "Variant: L (Size: L)"]);
+});
+
+test("product_details still describes a product that is sold out entirely (only the available: false call has it)", async () => {
+  byFilter(new Error("no product"), { title: "Gone Tee", description: { html: "Soft." }, variants: [v(1, "M")] });
+  const out = inner(await details("1"));
+  expect(out).toContain("#1 Gone Tee");
+  expect(out).toContain("Variant: M (Size: M)");
+  expect(console.warn).toHaveBeenCalledWith("catalog mcp get_product partly failed", expect.objectContaining({ storeId: "store-1" }));
+});
+
+test("product_details with the sold-out half failing uses the sale-ready half", async () => {
+  byFilter({ title: "Tee", variants: [v(1, "S")] }, new TypeError("fetch failed"));
+  expect(inner(await details("1"))).toContain("Variant: S");
+});
+
+test("product_details strips style and script blocks from the description", async () => {
+  fetchMock.mockResolvedValue(ucpReply({ title: "T", description: { html: "<style>.a{color:red}</style>Nice<script type='x'>alert(1)</script> tee" } }));
+  const out = inner(await details("1"));
+  expect(out).toContain("Description: Nice tee");
+  expect(out).not.toMatch(/color|alert/);
 });
 
 test("product_details with an unknown number, a GID or a bad argument says so without calling Shopify", async () => {
@@ -194,19 +234,19 @@ test("product_details is size-capped: long descriptions are cut and extra varian
 
 test("product_details failures (HTTP, JSON-RPC, tool error, no product, network, timeout) are a sentence, and the log has no query", async () => {
   const sentence = /unavailable right now/;
-  fetchMock.mockResolvedValueOnce(new Response("nope", { status: 500 }));
+  fetchMock.mockResolvedValue(new Response("nope", { status: 500 }));
   expect(await details("1")).toMatch(sentence);
-  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: "bad" } }), { status: 200 }));
+  fetchMock.mockResolvedValue(new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: "bad" } }), { status: 200 }));
   expect(await details("1")).toMatch(sentence);
-  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [] } }), { status: 200 }));
+  fetchMock.mockResolvedValue(new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [] } }), { status: 200 }));
   expect(await details("1")).toMatch(sentence);
-  fetchMock.mockResolvedValueOnce(ucpReply(undefined));
+  fetchMock.mockResolvedValue(ucpReply(undefined));
   expect(await details("1")).toMatch(sentence);
-  fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"));
+  fetchMock.mockRejectedValue(new TypeError("fetch failed"));
   expect(await details("1")).toMatch(sentence);
   expect(console.warn).toHaveBeenCalledWith("catalog mcp get_product failed", expect.objectContaining({ storeId: "store-1" }));
 
-  fetchMock.mockImplementationOnce((_u: string, init: RequestInit) => new Promise((_, rej) => init.signal!.addEventListener("abort", () => rej(init.signal!.reason))));
+  fetchMock.mockImplementation((_u: string, init: RequestInit) => new Promise((_, rej) => init.signal!.addEventListener("abort", () => rej(init.signal!.reason))));
   vi.useFakeTimers();
   const slow = details("1");
   await vi.advanceTimersByTimeAsync(3100);

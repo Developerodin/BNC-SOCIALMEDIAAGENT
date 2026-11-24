@@ -390,6 +390,25 @@ test("a cheapest question searches 30 hits, checks them in one call, and only th
   expect(r.products.map((p) => p.id)).toEqual([gid("30")]);
 });
 
+test("a budget or sort turn offers product_details (when the UCP profile is set) but not search_products", async () => {
+  vi.stubEnv("UCP_AGENT_PROFILE_URL", "https://example.com/profile.json");
+  try {
+    for (const turn of [{ budget: { max: 50 } }, { sort: "cheapest" as const }, {}]) {
+      create.mockClear();
+      rewritten(turn);
+      search.mockResolvedValue([hit("1")]);
+      liveCheck.mockResolvedValue(liveMap(priced("1", "10.00")));
+      create.mockImplementationOnce(fakeStream(["ok"]));
+      await run();
+      const names = (create.mock.calls[0][0].tools as { name: string }[]).map((t) => t.name);
+      expect(names).toContain("product_details");
+      expect(names.includes("search_products")).toBe(!("budget" in turn || "sort" in turn));
+    }
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
 test("a budget question also searches 30 hits and keeps the first 8 in-budget products in hit order", async () => {
   rewritten({ budget: { max: 50 } });
   const ids = Array.from({ length: 30 }, (_, i) => String(i + 1));

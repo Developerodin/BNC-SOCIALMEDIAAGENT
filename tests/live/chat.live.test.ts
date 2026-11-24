@@ -82,7 +82,7 @@ async function ask(storeId: string, products: Seed[], message: string, storeLoca
   const { input, allowed } = buildInput({ hits, live: { ok: true, products: liveMap }, history: [], message, threshold: 5, note: o.note });
 
   // The MCP tools as runTurn passes them (search_products only without a budget or sort), the live check mocked the same way.
-  const { runTool, TOOL_DEFS } = await import("@/lib/chat/tools");
+  const { runTool, toolDefs } = await import("@/lib/chat/tools");
   const live = { ok: true as const, products: liveMap };
   const toolCtx = {
     store: { id: storeId, shopDomain: `live-test-${storeId}.myshopify.com`, settings: {} },
@@ -107,7 +107,7 @@ async function ask(storeId: string, products: Seed[], message: string, storeLoca
     largeSystem: LARGE_SYSTEM_PROMPT("Trail & Co"),
     input,
     tools: {
-      defs: wide ? TOOL_DEFS.filter((d) => d.name !== "search_products") : TOOL_DEFS,
+      defs: wide ? toolDefs().filter((d) => d.name !== "search_products") : toolDefs(),
       run: (name, args) => (usedTools.push(name), runTool(name, args, toolCtx)),
     },
     allowed,
