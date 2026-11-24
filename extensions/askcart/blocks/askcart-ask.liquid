@@ -1,0 +1,22 @@
+{%- comment -%}
+  "Ask about this product" (UD5). The merchant places it near Add to cart. It uses the theme's own button classes
+  and only opens the chat for this product (C25): askcart-ask.js dispatches `askcart:open` and the AskCart embed
+  opens the panel. With the embed off, the script hides the button.
+{%- endcomment -%}
+{%- if product -%}
+  <div class="askcart-ask" {{ block.shopify_attributes }}>
+    <button type="button" class="button button--secondary" data-askcart-ask data-product="{{ product.id }}">
+      {{- 'ask_block.button' | t -}}
+    </button>
+  </div>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Ask about this product",
+  "target": "section",
+  "javascript": "askcart-ask.js",
+  "enabled_on": { "templates": ["product"] },
+  "settings": []
+}
+{% endschema %}
