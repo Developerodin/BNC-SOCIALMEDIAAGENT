@@ -13,6 +13,7 @@ const BUDGETS: Record<string, number> = {
   "askcart-widget.js": 30 * 1024,
   "askcart-faq.js": 10 * 1024, // Shopify's suggested limit for schema-loaded JS
   "askcart-ask.js": 10 * 1024,
+  "askcart-ask-ai.js": 10 * 1024,
 };
 
 describe("widget bundle budgets (Task 33)", () => {

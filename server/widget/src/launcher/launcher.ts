@@ -6,7 +6,14 @@ import type { PageContext, WidgetConfig } from "../../../src/lib/widget-contract
 import { safeHex, textOn } from "../core/format";
 import { uiState } from "../core/storage";
 
-type OpenArgs = { productId: string | null; focus?: boolean };
+// message / mode / title come from the "Ask our AI agent" block (askcart-ask-ai.js): the drawer opens with this question sent.
+type OpenArgs = {
+  productId: string | null;
+  focus?: boolean;
+  message?: string;
+  mode?: "floating" | "drawer";
+  title?: { eyebrow: string; heading: string };
+};
 type AskCartApi = { open(a: OpenArgs): void };
 
 const DEFAULT_ACCENT = "#0A0A0A";
@@ -57,6 +64,10 @@ export function start(): (() => void) | undefined {
   const d = root.dataset;
   const ui = uiState(page.shop); // the same storage the panel writes (core/storage.ts)
   const left = cfg.launcher.side === "left";
+  // The button follows launcher.scope (a config from before it existed means "all"). With no button the launcher still
+  // mounts and listens for `askcart:open`, so the product block can open the chat.
+  const scope = cfg.launcher.scope ?? "all";
+  const showBtn = scope === "all" || (scope === "product" && !!page.productId);
   const offset = Math.min(200, Math.max(0, Number(cfg.launcher.offset) || 0));
   const accent = safeHex(cfg.accent) ?? DEFAULT_ACCENT;
 
@@ -82,7 +93,8 @@ export function start(): (() => void) | undefined {
     // The visible label is the accessible name (WCAG 2.5.3), so no aria-label that would differ from it.
     btn.append(chatIcon(), cfg.launcher.label || d.label || "Ask us anything"); // icon + label pill
   }
-  shadow.append(style, btn);
+  shadow.append(style);
+  if (showBtn) shadow.append(btn);
   document.body.append(host);
 
   // --- lazy load ---
@@ -116,8 +128,13 @@ export function start(): (() => void) | undefined {
   // A <button> already turns Enter and Space into a click.
   btn.addEventListener("click", () => openChat({ productId: null }));
   const onOpenEvent = (e: Event) => {
-    const id = (e as CustomEvent<{ productId?: unknown } | null>).detail?.productId;
-    openChat({ productId: typeof id === "string" || typeof id === "number" ? String(id) : null });
+    const det = (e as CustomEvent<{ productId?: unknown; message?: unknown; mode?: unknown; title?: { eyebrow?: unknown; heading?: unknown } } | null>).detail;
+    const id = det?.productId;
+    const args: OpenArgs = { productId: typeof id === "string" || typeof id === "number" ? String(id) : null };
+    if (typeof det?.message === "string" && det.message.trim()) args.message = det.message;
+    if (det?.mode === "drawer") args.mode = "drawer";
+    if (typeof det?.title?.eyebrow === "string" && typeof det.title.heading === "string") args.title = { eyebrow: det.title.eyebrow, heading: det.title.heading };
+    openChat(args);
   };
   window.addEventListener("askcart:open", onOpenEvent);
 
@@ -133,7 +150,7 @@ export function start(): (() => void) | undefined {
   }
 
   const t = cfg.teaser;
-  if (t && t.enabled && !ui.open.get() && !ui.teaserSeen.get() && !ui.teaserShownThisVisit.get()) {
+  if (showBtn && t && t.enabled && !ui.open.get() && !ui.teaserSeen.get() && !ui.teaserShownThisVisit.get()) {
     const delay = Math.min(120, Math.max(0, Number(t.delaySec) || 0)) * 1000;
     timer = setTimeout(() => {
       ui.teaserShownThisVisit.set(true);

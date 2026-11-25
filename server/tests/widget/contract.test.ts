@@ -21,7 +21,7 @@ describe("extension locales", () => {
 
   it("English has every Liquid string M5 needs", () => {
     const en = keys(load("en.default"));
-    for (const k of ["launcher.label", "launcher.aria_label", "ask_block.button", "faq.heading", "faq.show_answer"]) {
+    for (const k of ["launcher.label", "launcher.aria_label", "ask_block.button", "faq.heading", "faq.show_answer", "ask_ai.eyebrow", "ask_ai.heading", "ask_ai.placeholder", "ask_ai.send", "ask_ai.note"]) {
       expect(en).toContain(k);
     }
     expect(load("en.default").launcher.label).toBe("Ask us anything");

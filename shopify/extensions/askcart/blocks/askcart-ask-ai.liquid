@@ -1,0 +1,86 @@
+{%- comment -%}
+  "Ask our AI agent": an inline section below the Buy buttons. The merchant's own questions become pills; with none,
+  askcart-ask-ai.js fetches AI-written questions for this product from our server. Tapping a pill or sending the input
+  asks the AskCart embed to open the chat as a drawer with that question sent (`askcart:open`, see ask-ai-block.ts).
+  It renders hidden: the script shows it only when the AskCart embed is on, so with the embed off nothing is left
+  that does nothing. Every value leaves Liquid through `escape` (Review Focus 2); the script builds the pills with textContent.
+{%- endcomment -%}
+{%- assign cfg = app.metafields.askcart.widget.value -%}
+{%- if product and cfg.enabled and cfg.apiBase != blank -%}
+  {%- assign eyebrow = block.settings.eyebrow -%}
+  {%- if eyebrow == blank -%}{%- assign eyebrow = 'ask_ai.eyebrow' | t -%}{%- endif -%}
+  {%- assign heading = block.settings.heading -%}
+  {%- if heading == blank -%}{%- assign heading = 'ask_ai.heading' | t -%}{%- endif -%}
+  <div
+    class="askcart-ai"
+    data-askcart-ask-ai
+    data-shop="{{ shop.permanent_domain | escape }}"
+    data-product="{{ product.id | escape }}"
+    data-locale="{{ request.locale.iso_code | escape }}"
+    data-api="{{ cfg.apiBase | escape }}"
+    data-accent="{{ cfg.accent | escape }}"
+    data-q1="{{ block.settings.question_1 | escape }}"
+    data-q2="{{ block.settings.question_2 | escape }}"
+    data-q3="{{ block.settings.question_3 | escape }}"
+    {{ block.shopify_attributes }}
+    hidden
+  >
+    <p class="askcart-ai__eyebrow" data-askcart-eyebrow>{{ eyebrow | escape }}</p>
+    <h2 class="askcart-ai__heading" data-askcart-heading>{{ heading | escape }}</h2>
+    <div class="askcart-ai__pills" data-askcart-pills></div>
+    <form class="askcart-ai__form" data-askcart-form>
+      <input
+        class="askcart-ai__input"
+        type="text"
+        name="question"
+        maxlength="2000"
+        autocomplete="off"
+        placeholder="{{ 'ask_ai.placeholder' | t | escape }}"
+        aria-label="{{ 'ask_ai.placeholder' | t | escape }}"
+      >
+      <button class="askcart-ai__send" type="submit" aria-label="{{ 'ask_ai.send' | t | escape }}">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 4l7 7-1.41 1.41L13 7.83V20h-2V7.83l-4.59 4.58L5 11z"/></svg>
+      </button>
+    </form>
+    {%- if block.settings.show_note -%}
+      <p class="askcart-ai__note">{{ 'ask_ai.note' | t }}</p>
+    {%- endif -%}
+  </div>
+{%- endif -%}
+
+{% stylesheet %}
+  .askcart-ai { margin: 24px 0; font: inherit; color: inherit; }
+  .askcart-ai[hidden] { display: none; }
+  .askcart-ai__eyebrow { margin: 0 0 4px; font-size: 14px; line-height: 20px; font-weight: 700; opacity: 0.65; }
+  .askcart-ai__heading { margin: 0 0 16px; font-size: 26px; line-height: 30px; font-weight: 700; text-transform: uppercase; }
+  .askcart-ai__pills { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+  .askcart-ai__pills:empty { display: none; }
+  .askcart-ai__pill { display: flex; align-items: center; gap: 10px; width: 100%; margin: 0; padding: 13px 18px; border: 1px solid rgba(127, 127, 127, 0.55); border-radius: 999px; background: transparent; color: inherit; font: inherit; font-size: 15px; line-height: 20px; text-align: left; text-transform: none; letter-spacing: normal; cursor: pointer; }
+  .askcart-ai__pill:hover { border-color: currentColor; }
+  .askcart-ai__pill svg { flex: none; width: 18px; height: 18px; }
+  .askcart-ai__form { display: flex; align-items: center; gap: 8px; margin: 0; padding: 5px 5px 5px 18px; border: 1px solid rgba(127, 127, 127, 0.55); border-radius: 999px; }
+  .askcart-ai__form:focus-within { border-color: currentColor; }
+  .askcart-ai__input { flex: 1; min-width: 0; margin: 0; padding: 8px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: inherit; font: inherit; font-size: 16px; line-height: 24px; outline: 0; }
+  .askcart-ai__send { flex: none; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: var(--askcart-ai-accent, #0a0a0a); color: var(--askcart-ai-on, #fff); cursor: pointer; }
+  .askcart-ai__pill:focus-visible, .askcart-ai__send:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+  .askcart-ai__note { margin: 12px 0 0; font-size: 12px; line-height: 16px; opacity: 0.65; }
+{% endstylesheet %}
+
+{% schema %}
+{
+  "name": "Ask our AI agent",
+  "target": "section",
+  "javascript": "askcart-ask-ai.js",
+  "enabled_on": { "templates": ["product"] },
+  "settings": [
+    { "type": "text", "id": "eyebrow", "label": "Small text above the heading", "info": "Leave empty for the translated default." },
+    { "type": "text", "id": "heading", "label": "Heading", "info": "Leave empty for the translated default." },
+    { "type": "header", "content": "Suggested questions" },
+    { "type": "paragraph", "content": "Leave all three empty and the AI writes questions for each product." },
+    { "type": "text", "id": "question_1", "label": "Question 1" },
+    { "type": "text", "id": "question_2", "label": "Question 2" },
+    { "type": "text", "id": "question_3", "label": "Question 3" },
+    { "type": "checkbox", "id": "show_note", "label": "Show the note under the input", "default": true }
+  ]
+}
+{% endschema %}

@@ -8,6 +8,13 @@
   "ask_block": {
     "button": "Vraag over dit product"
   },
+  "ask_ai": {
+    "eyebrow": "Nog vragen?",
+    "heading": "Vraag het onze AI-assistent",
+    "placeholder": "Stel je vraag",
+    "send": "Verstuur",
+    "note": "De antwoorden gebruiken gegevens van dit product (beschrijving, afmetingen, prijs, voorraad, opties)."
+  },
   "faq": {
     "heading": "Veelgestelde vragen",
     "show_answer": "Antwoord tonen"

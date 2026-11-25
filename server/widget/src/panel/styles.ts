@@ -13,11 +13,13 @@ export const CSS =
   ".panel[hidden]{display:none}" +
   ":where(.panel) *{box-sizing:border-box;font:inherit;color:inherit;margin:0}" +
   ".panel.left{right:auto;left:20px}" +
+  ".panel.drawer{top:0;bottom:0;right:0;left:auto;width:420px;max-width:100vw;height:100vh;height:100dvh;max-height:none;border-radius:0;animation:sl .25s ease-out}" +
+  ".panel.titled .av{display:none}.panel.titled .sub{order:-1;font-size:12px;opacity:.85}.panel.titled .name{font-size:18px;line-height:24px}" +
   ".panel.full{inset:0;width:100%;height:100vh;height:100dvh;max-height:none;border-radius:0}" +
   ".panel.wide{width:min(760px,92vw);height:min(88vh,900px)}" + // expanded: still anchored to the launcher's side
   ".panel.wide .ac-cards__slide{flex-basis:calc((100% - 20px) / 3)}" + // three cards per row instead of cramped one-and-a-bit
   ".panel.inline{max-width:760px;margin:0 auto}" + // a wide window: keep the chat readable
-  "@keyframes in{from{opacity:0;transform:translateY(12px)}}" +
+  "@keyframes in{from{opacity:0;transform:translateY(12px)}}@keyframes sl{from{transform:translateX(100%)}}" +
   ".hd{display:flex;align-items:center;gap:10px;padding:12px 8px 12px 14px;background:var(--ac);color:var(--ac-fg);flex:none}" +
   ".who{flex:1;min-width:0;display:flex;flex-direction:column}" +
   ".hd .name{font-weight:600;font-size:16px;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
@@ -72,4 +74,4 @@ export const CSS =
   ".notice{font-size:12px;line-height:16px;color:#666;padding-top:6px}" +
   ".notice a{color:inherit;text-decoration:underline}" +
   ".sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}" +
-  "@media (prefers-reduced-motion:reduce){.panel,.typing span{animation:none}.panel{transition:none}.sugg button{transition:none}}";
+  "@media (prefers-reduced-motion:reduce){.panel,.typing span{animation:none}.panel.drawer{animation:none}.panel{transition:none}.sugg button{transition:none}}";

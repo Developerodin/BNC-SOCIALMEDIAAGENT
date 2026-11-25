@@ -20,12 +20,12 @@ const page: PageContext = {
 };
 
 // Mirrors the Liquid output: the strings come from locales/ as data attributes.
-function mountRoot(cfg: WidgetConfig | string = config()) {
+function mountRoot(cfg: WidgetConfig | string = config(), pageOver: Partial<PageContext> = {}) {
   const root = document.createElement("div");
   root.id = "askcart-root";
   root.hidden = true;
   root.dataset.config = typeof cfg === "string" ? cfg : JSON.stringify(cfg);
-  root.dataset.page = JSON.stringify(page);
+  root.dataset.page = JSON.stringify({ ...page, ...pageOver });
   root.dataset.widgetSrc = SRC;
   root.dataset.label = "Ask us anything";
   root.dataset.ariaLabel = "Open the chat assistant";
@@ -287,5 +287,56 @@ describe("no-ops", () => {
     start();
     start();
     expect(document.querySelectorAll("askcart-host")).toHaveLength(1);
+  });
+});
+
+describe("launcher scope", () => {
+  const withScope = (scope: "all" | "product" | "none") => config({ launcher: { style: "pill", label: null, side: "right", offset: 20, scope } });
+  const hasButton = () => shadow().querySelector("button.l") !== null;
+
+  it("all: the button shows on every page", () => {
+    mountRoot(withScope("all"));
+    start();
+    expect(hasButton()).toBe(true);
+  });
+
+  it("a config from before scope existed behaves like all", () => {
+    const old = config();
+    delete (old.launcher as { scope?: string }).scope;
+    mountRoot(old);
+    start();
+    expect(hasButton()).toBe(true);
+  });
+
+  it("product: the button shows only on a product page", () => {
+    mountRoot(withScope("product"));
+    const stop = start();
+    expect(hasButton()).toBe(false);
+    stop?.();
+    document.body.innerHTML = "";
+    mountRoot(withScope("product"), { productId: "42" });
+    start();
+    expect(hasButton()).toBe(true);
+  });
+
+  it("none: no button and no teaser, but askcart:open still loads the chat and passes the block's args", () => {
+    vi.useFakeTimers();
+    mountRoot({ ...withScope("none"), teaser: { enabled: true, text: "Hi", delaySec: 1 } });
+    start();
+    vi.advanceTimersByTime(5_000);
+    expect(hasButton()).toBe(false);
+    expect(teaser()).toBeNull();
+    const title = { eyebrow: "More questions?", heading: "Ask our AI agent" };
+    window.dispatchEvent(new CustomEvent("askcart:open", { detail: { productId: 42, message: "What size?", mode: "drawer", title } }));
+    expect(scripts().length).toBeGreaterThan(0); // earlier tests leave their launchers listening, so not exactly 1
+    const open = widgetLoaded();
+    expect(open).toHaveBeenCalledWith({ productId: "42", message: "What size?", mode: "drawer", title });
+  });
+
+  it("drops a message that is not a non-empty string, an unknown mode and a malformed title", () => {
+    mountRoot(withScope("none"));
+    start();
+    window.dispatchEvent(new CustomEvent("askcart:open", { detail: { productId: "1", message: "   ", mode: "weird", title: { eyebrow: 1 } } }));
+    expect(widgetLoaded()).toHaveBeenCalledWith({ productId: "1" });
   });
 });

@@ -8,6 +8,13 @@
   "ask_block": {
     "button": "Ask about this product"
   },
+  "ask_ai": {
+    "eyebrow": "More questions?",
+    "heading": "Ask our AI agent",
+    "placeholder": "Ask your question",
+    "send": "Send",
+    "note": "The answers use data from this product (description, dimensions, price, stock, options)."
+  },
   "faq": {
     "heading": "Frequently asked questions",
     "show_answer": "Show answer"

@@ -32,7 +32,16 @@ export type PanelOptions = Renderers & {
   wait?: (ms: number) => Promise<void>;
 };
 
-export type OpenArgs = { productId?: string | null; focus?: boolean };
+export type OpenArgs = {
+  productId?: string | null;
+  focus?: boolean;
+  /** Sent as if typed, once the chat has loaded (the "Ask our AI agent" block). */
+  message?: string;
+  /** "drawer": a full-height panel on the right (the block's chat). Anything else is the floating panel. */
+  mode?: "floating" | "drawer";
+  /** Drawer header: replaces the assistant's name and subtitle. */
+  title?: { eyebrow: string; heading: string };
+};
 
 export type Panel = {
   open(args?: OpenArgs): Promise<void>;
@@ -175,6 +184,9 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   let sugg: HTMLElement | null = null;
   let locked = false;
   let prevOverflow = "";
+  let drawer = false;
+  let loadP: Promise<void> | null = null; // the first open's load, while it runs
+  let queued: string | null = null; // a message waiting for loadP; a second open() replaces it instead of sending twice
 
   function update() {
     offline.hidden = !isOffline;
@@ -198,8 +210,8 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     panel.classList.toggle("full", full);
     back.hidden = !full || !!opts.inline;
     closeBtn.hidden = full;
-    wideBtn.hidden = full; // a full-screen sheet is already as large as it gets
-    const wide = !full && ui.wide.get();
+    wideBtn.hidden = full || drawer; // a full-screen sheet is already as large as it gets; a drawer has its own width
+    const wide = !full && !drawer && ui.wide.get();
     panel.classList.toggle("wide", wide);
     wideBtn.setAttribute("aria-pressed", String(wide));
     wideBtn.setAttribute("aria-label", t(wide ? "collapse" : "expand"));
@@ -437,18 +449,43 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     opts.launcher?.setAttribute("aria-expanded", String(on));
   }
 
+  function setHeader(title: OpenArgs["title"]) {
+    name.textContent = title ? title.heading : config.name;
+    sub.textContent = title ? title.eyebrow : t("subtitle");
+    panel.setAttribute("aria-label", title ? title.heading : config.name);
+    panel.classList.toggle("titled", !!title);
+  }
+
   async function open(args: OpenArgs = {}) {
     const fromProduct = args.productId != null && args.productId !== productId;
     if (args.productId != null) productId = args.productId;
+    drawer = args.mode === "drawer";
+    panel.classList.toggle("drawer", drawer);
+    setHeader(drawer ? args.title : undefined);
     panel.hidden = false;
     layout();
     ui.open.set(true);
     ui.teaserSeen.set(true);
     setExpanded(true);
     if (args.focus !== false) input.focus();
-    if (!loaded) {
+    const first = !loaded;
+    if (first) {
       loaded = true;
-      await load();
+      loadP = load().finally(() => {
+        loadP = null;
+      });
+    }
+    if (args.message) {
+      if (!loadP) return submit(args.message);
+      const waiting = queued !== null;
+      queued = args.message; // the latest request wins; only the first caller sends it
+      if (waiting) return;
+      await loadP;
+      const m = queued;
+      queued = null;
+      if (m) submit(m);
+    } else if (first) {
+      await loadP;
     } else if (fromProduct) {
       // C25: the Ask block opened an existing chat for another product: offer its FAQ questions, send nothing.
       const faq = await loadFaq();

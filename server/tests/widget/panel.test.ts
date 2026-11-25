@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "../../widget/src/widget";
 import type { Panel } from "../../widget/src/panel/panel";
+import { CSS } from "../../widget/src/panel/styles";
 import type { Renderers } from "../../widget/src/panel/messages";
 import type { FeedbackRenderer, HistoryItem, PageContext, WidgetApi, WidgetConfig } from "@/lib/widget-contract";
 import { ev, jsonResponse, sseResponse } from "./core/helpers";
@@ -827,5 +828,71 @@ describe("expanded mode", () => {
       expect(d.expand).toBeTruthy();
       expect(d.collapse).toBeTruthy();
     }
+  });
+});
+
+describe("drawer mode and send-on-open (the Ask our AI agent block)", () => {
+  const title = { eyebrow: "More questions?", heading: "Ask our AI agent" };
+  const done = () => vi.fn(async () => sseResponse([ev("done", { conversationToken: "t", messageId: null })]));
+  const panelEl = () => q(".panel")!;
+
+  it("a drawer shows the block's eyebrow and heading instead of the assistant, as text", async () => {
+    await setup(mockApi()).open({ mode: "drawer", title: { eyebrow: "<b>More</b>", heading: "Ask <img src=x onerror=alert(1)>" } });
+    expect(panelEl().classList.contains("drawer")).toBe(true);
+    expect(q(".hd .name")!.textContent).toBe("Ask <img src=x onerror=alert(1)>");
+    expect(q(".hd .sub")!.textContent).toBe("<b>More</b>");
+    expect(sh().querySelector(".hd img, .hd b")).toBeNull(); // no markup came from the strings
+  });
+
+  it("opening without a mode afterwards is the normal floating panel with the assistant's header", async () => {
+    const p = setup(mockApi());
+    await p.open({ mode: "drawer", title });
+    await p.open({});
+    expect(panelEl().classList.contains("drawer")).toBe(false);
+    expect(q(".hd .name")!.textContent).toBe("Demo Store");
+    expect(q(".hd .sub")!.textContent).toBe("AI shopping assistant");
+  });
+
+  it("a message is sent once the chat has loaded, scoped to the product, with no suggestions left", async () => {
+    const api = mockApi({ send: done() });
+    await setup(api).open({ productId: "42", mode: "drawer", title, message: "What are the dimensions?" });
+    await flush();
+    expect(api.send).toHaveBeenCalledTimes(1);
+    expect(api.send.mock.calls[0][0]).toMatchObject({ message: "What are the dimensions?", productId: "42" });
+    expect(bubbles()[0].textContent).toContain("What are the dimensions?");
+    expect(q(".sugg")).toBeNull();
+  });
+
+  it("calling open twice while the chat is still loading sends one message (the latest)", async () => {
+    const api = mockApi({ send: done(), latest: vi.fn(() => new Promise<string | null>((r) => setTimeout(() => r(null), 20))) });
+    const p = setup(api);
+    const a = p.open({ productId: "42", mode: "drawer", title, message: "First?" });
+    const b = p.open({ productId: "42", mode: "drawer", title, message: "Second?" });
+    const c = p.open({ productId: "42", mode: "drawer", title, message: "Second?" });
+    await Promise.all([a, b, c]);
+    await flush();
+    expect(api.send).toHaveBeenCalledTimes(1);
+    expect(api.send.mock.calls[0][0].message).toBe("Second?");
+  });
+
+  it("open with a message on an already loaded chat sends it", async () => {
+    const api = mockApi({ send: done() });
+    const p = setup(api);
+    await p.open({ productId: "42" });
+    await p.open({ productId: "42", mode: "drawer", title, message: "Is it in stock?" });
+    await flush();
+    expect(api.send).toHaveBeenCalledTimes(1);
+    expect(api.send.mock.calls[0][0].message).toBe("Is it in stock?");
+  });
+
+  it("an open without a message sends nothing", async () => {
+    const api = mockApi({ send: done() });
+    await setup(api).open({ productId: "42", mode: "drawer", title });
+    await flush();
+    expect(api.send).not.toHaveBeenCalled();
+  });
+
+  it("reduced motion switches the drawer's slide off", () => {
+    expect(CSS).toMatch(/prefers-reduced-motion:reduce\).*\.panel\.drawer\{animation:none\}/);
   });
 });

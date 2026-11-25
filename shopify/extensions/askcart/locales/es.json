@@ -8,6 +8,13 @@
   "ask_block": {
     "button": "Preguntar sobre este producto"
   },
+  "ask_ai": {
+    "eyebrow": "¿Más preguntas?",
+    "heading": "Pregunta a nuestro agente de IA",
+    "placeholder": "Escribe tu pregunta",
+    "send": "Enviar",
+    "note": "Las respuestas usan datos de este producto (descripción, dimensiones, precio, stock, opciones)."
+  },
   "faq": {
     "heading": "Preguntas frecuentes",
     "show_answer": "Mostrar respuesta"

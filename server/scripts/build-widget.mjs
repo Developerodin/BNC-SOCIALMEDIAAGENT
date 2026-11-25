@@ -19,6 +19,7 @@ const entries = [
   { in: "widget/src/widget.ts", out: "askcart-widget", budget: 30 * 1024 },
   { in: "widget/src/faq-block.ts", out: "askcart-faq", budget: 10 * 1024 },
   { in: "widget/src/ask-block.ts", out: "askcart-ask", budget: 10 * 1024 },
+  { in: "widget/src/ask-ai-block.ts", out: "askcart-ask-ai", budget: 10 * 1024 },
   { in: "widget/src/embed.ts", out: "embed", dir: publicDir, budget: 4 * 1024 },
   { in: "widget/src/hosted.ts", out: "askcart-hosted", dir: publicDir, budget: 30 * 1024 },
 ];
