@@ -1,0 +1,50 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "b8c22f4b59fbb4181923cc9c1ff099d0"
+application_url = "https://askcart.13.232.66.119.sslip.io"
+embedded = true
+# The server (EC2) and the theme app extension (Shopify CDN) live in their own folders.
+web_directories = [ "server" ]
+extension_directories = [ "shopify/extensions/*" ]
+name = "Shop Assistant"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+# unauthenticated_read_customers: lets AskCart check a mobile customer's sign-in token (Storefront API). Existing installs must re-approve.
+scopes = "read_products,read_inventory,read_orders,read_all_orders,read_publications,unauthenticated_read_customers,write_app_proxy"
+# write_files, read_files: only the chat widget's Upload logo needs them, so they are asked for when a merchant first uploads (App Bridge scopes.request), not at install.
+optional_scopes = [ "write_files", "read_files" ]
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [ "https://askcart.13.232.66.119.sslip.io/api/auth" ]
+
+# Website sign-in: the storefront calls /apps/askcart/session; Shopify signs it and adds logged_in_customer_id.
+# `url` follows application_url like the entries above (shopify app dev rewrites it); the request lands on /api/proxy/session.
+[app_proxy]
+url = "https://askcart.13.232.66.119.sslip.io/api/proxy"
+subpath = "askcart"
+prefix = "apps"
+
+[webhooks]
+# Matches ApiVersion.October26 in src/lib/shopify/api.ts; bump both together.
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled"]
+  uri = "/api/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
+  topics = ["bulk_operations/finish"]
+  uri = "/api/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
+  topics = ["products/create", "products/update", "products/delete", "shop/update"]
+  uri = "/api/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = ["customers/data_request","customers/redact","shop/redact"]
+  uri = "/api/webhooks/shopify"
+
+[build]
+automatically_update_urls_on_dev = false # live app for Bois & Chiffons: never point it at a dev tunnel
