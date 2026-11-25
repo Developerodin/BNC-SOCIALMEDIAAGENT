@@ -71,7 +71,7 @@
 ## Waiting on the user
 - EC2 logs for tester #10 "Assistant unavailable" on return policy:
   `pm2 logs askcart --lines 400 --nostream | grep -iE "polic|error|unavailable|timeout" | tail -40`
-- (Done) BnC's real `*.myshopify.com` domain is already in the EC2 `.env` (user, 2026-11-25). Don't ask again; it isn't needed in chat.
+- BnC's real `*.myshopify.com` domain is in the user's **local** `.env` (`PARTNER_STORE_DOMAIN`), but **not yet in the EC2 `.env`**: the user adds it there together with `PARTNER_API_SECRET` and `OPS_SECRET`, then restarts pm2 with `--update-env`. No need to ask for the value in chat.
 - `PARTNER_API_SECRET` + `PARTNER_STORE_DOMAIN` on EC2 (for the Social Media Agent; the user sets these manually).
 - Pull + restart EC2 (BnC sync recovery, partner API, room fix are pushed but not live).
 
