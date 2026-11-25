@@ -212,6 +212,9 @@ test("the AI-identity, viewing-product and cart rules are in both models' prompt
     expect(lines[friendly + 3]).toBe(
       "- Products listed as added to the cart in this chat are already in the shopper's cart. Build on that (for example, what goes with them) and don't suggest adding them again.",
     );
+    expect(lines[friendly + 4]).toBe(
+      `- Option names such as a colour or size are only names: a colour called "Powder" doesn't make a product suited to powder snow. Say what a product suits only from its description; if it says nothing about that, say you don't have that detail.`,
+    ); // X06
   }
 });
 

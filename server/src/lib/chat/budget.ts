@@ -22,15 +22,18 @@ function inBudget(price: number | null, b: Budget): boolean {
   return (b.min === undefined || price >= b.min) && (b.max === undefined || price <= b.max);
 }
 
-/** "₹500–₹1,000", "at most ₹1,000", "at least ₹500". Unknown currency codes fall back to "1000 XYZ". */
+/** "₹1,000". Unknown currency codes fall back to "1000 XYZ". */
+function money(n: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat("en", { style: "currency", currency, minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(n);
+  } catch {
+    return `${n} ${currency}`;
+  }
+}
+
+/** "₹500–₹1,000", "at most ₹1,000", "at least ₹500". */
 function formatBudget(b: Budget, currency: string): string {
-  const fmt = (n: number) => {
-    try {
-      return new Intl.NumberFormat("en", { style: "currency", currency, minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(n);
-    } catch {
-      return `${n} ${currency}`;
-    }
-  };
+  const fmt = (n: number) => money(n, currency);
   if (b.min !== undefined && b.max !== undefined) return `${fmt(b.min)}–${fmt(b.max)}`;
   if (b.max !== undefined) return `at most ${fmt(b.max)}`;
   return `at least ${fmt(b.min!)}`;
@@ -63,6 +66,16 @@ export function applyBudget(opts: {
     products = new Map([...products].filter(([, p]) => inBudget(productPrice(p), budget)));
     if (products.size === 0 && live.products.size > 0) {
       notes.push(`No products are within the shopper's budget of ${formatBudget(budget, opts.currency ?? "")}.`);
+    }
+    // C05: with a maximum, name the cheapest product left out, so the answer can say how far off the budget is.
+    if (budget.max !== undefined) {
+      let cheapest: { title: string; price: number } | null = null;
+      for (const [id, p] of live.products) {
+        const price = productPrice(p);
+        if (products.has(id) || price === null || price <= budget.max) continue;
+        if (!cheapest || price < cheapest.price) cheapest = { title: p.title, price };
+      }
+      if (cheapest) notes.push(`Left out for costing more than the budget: the cheapest of those is "${cheapest.title}" at ${money(cheapest.price, opts.currency ?? "")}.`);
     }
   }
 

@@ -367,7 +367,8 @@ test("the rewrite gets the store currency; products over the budget are dropped 
   const prompt = promptOf();
   expect(prompt).toContain("#1 Tee 1");
   expect(prompt).toContain("#2 Tee 3"); // 40.00 is inside "at most 40"
-  expect(prompt).not.toContain("Tee 2");
+  expect(prompt).not.toContain("#2 Tee 2"); // named only in the over-budget note (C05)
+  expect(prompt).toContain('the cheapest of those is "Tee 2" at €50.');
   expect(r.products.map((p) => p.id)).toEqual([gid("3")]);
 });
 

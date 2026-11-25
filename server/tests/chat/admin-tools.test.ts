@@ -300,7 +300,8 @@ test("the browse fallback applies the turn's budget and price order, with the no
   const check = vi.fn(async (ids: string[]) => ({ ok: true as const, products: new Map(ids.map((id) => [id, priced(Number(id.split("/").pop()), prices[id])])) }));
   const c = ctx({ check, budget: { budget: { max: 500 }, sort: "cheapest", currency: "INR" } });
   const out = inner(await run("browse_collection", { collection: "snowboards", page: 1 }, c));
-  expect(out).not.toContain("P7");
+  expect(out).not.toMatch(/#\d+ P7/); // named only in the over-budget note (C05)
+  expect(out).toContain('the cheapest of those is "P7" at ₹900.');
   expect(out.indexOf("P9")).toBeLessThan(out.indexOf("P8"));
   expect(out).toContain("cheapest to the most expensive");
   // Nothing in budget: said so, and the collection names are not offered instead.

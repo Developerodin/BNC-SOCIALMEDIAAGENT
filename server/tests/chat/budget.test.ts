@@ -48,13 +48,13 @@ test("a budget keeps products inside it (bounds inclusive) and drops the rest", 
   const r = applyBudget({ hits, live: liveOf(a, b, c), budget: { min: 400, max: 1000 }, sort: null, currency: "INR" });
   expect(r.live.ok && [...r.live.products.keys()]).toEqual(["b", "c"]);
   expect(r.hits).toBe(hits);
-  expect(r.note).toBeUndefined();
+  expect(r.note).toBe('Left out for costing more than the budget: the cheapest of those is "P a" at ₹1,500.'); // C05
 });
 
 test("a budget that leaves nothing gives a note with the budget", () => {
   const r = applyBudget({ hits, live: liveOf(a, b, c), budget: { min: 10, max: 100 }, sort: null, currency: "INR" });
   expect(r.live.ok && r.live.products.size).toBe(0);
-  expect(r.note).toBe("No products are within the shopper's budget of ₹10–₹100.");
+  expect(r.note).toBe(`No products are within the shopper's budget of ₹10–₹100. Left out for costing more than the budget: the cheapest of those is "P b" at ₹400.`);
   expect(applyBudget({ hits, live: liveOf(a), budget: { max: 1000 }, sort: null, currency: "INR" }).note).toContain("of at most ₹1,000.");
   expect(applyBudget({ hits, live: liveOf(b), budget: { min: 500 }, sort: null, currency: "EUR" }).note).toContain("of at least €500.");
 });
