@@ -227,3 +227,37 @@ test("no token appears in any response body or header", async () => {
     expect(text).not.toContain(token);
   }
 });
+
+test("a token and the legacy secret get identical order and product data for the same store", async () => {
+  const { token } = await mint(storeB, SHOP_B, { scopes: ALL });
+  vi.stubEnv("PARTNER_STORE_DOMAIN", SHOP_B);
+  vi.stubEnv("PARTNER_API_SECRET", LEGACY_SECRET);
+  const m = { shopMoney: { amount: "1.00", currencyCode: "INR" } };
+  const order = {
+    id: "gid://shopify/Order/1", name: "#1", processedAt: "2026-11-02T10:00:00Z", createdAt: "2026-11-02T10:00:00Z", cancelledAt: null,
+    test: false, updatedAt: "2026-11-03T10:00:00Z", taxesIncluded: true, sourceName: "web", displayFulfillmentStatus: "FULFILLED",
+    displayFinancialStatus: "PAID", discountCodes: ["X"], currentSubtotalPriceSet: m, currentTotalDiscountsSet: m,
+    currentShippingPriceSet: m, currentTotalPriceSet: m, totalRefundedSet: m, currentTaxLines: [], shippingLines: { nodes: [] },
+    lineItems: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{
+      id: "gid://shopify/LineItem/1", title: "T", variantTitle: null, sku: null, quantity: 1, currentQuantity: 1,
+      product: { id: "gid://shopify/Product/1" }, variant: null, originalUnitPriceSet: m, discountedTotalSet: m,
+    }] },
+  };
+  const product = {
+    id: "gid://shopify/Product/1", title: "P", handle: "p", onlineStoreUrl: null, productType: "", description: "", status: "ACTIVE",
+    vendor: "V", tags: ["a"], collections: { nodes: [{ id: "gid://shopify/Collection/1", title: "C", handle: "c" }] },
+    featuredMedia: null, variants: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+  };
+  const ordersData = { currentAppInstallation: { accessScopes: [{ handle: "read_all_orders" }] }, orders: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [order] } };
+  const productsData = { shop: { currencyCode: "INR" }, products: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [product] } };
+  adminGraphql.mockResolvedValue(ordersData);
+  const viaToken = await (await ordersRoute.GET(get("orders?updatedSince=2026-11-01T00:00:00Z", token))).json();
+  const viaLegacy = await (await ordersRoute.GET(get("orders?updatedSince=2026-11-01T00:00:00Z", LEGACY_SECRET))).json();
+  expect(viaToken).toEqual(viaLegacy);
+  expect(viaToken.items[0].lineItems[0].productId).toBe("gid://shopify/Product/1");
+  adminGraphql.mockResolvedValue(productsData);
+  const pToken = await (await productsRoute.GET(get("products", token))).json();
+  const pLegacy = await (await productsRoute.GET(get("products", LEGACY_SECRET))).json();
+  expect(pToken).toEqual(pLegacy);
+  expect(pToken.items[0].collections).toEqual([{ id: "gid://shopify/Collection/1", title: "C", handle: "c" }]);
+});

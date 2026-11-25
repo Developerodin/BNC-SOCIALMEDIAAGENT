@@ -1,5 +1,9 @@
 # AskCart partner API (Social Media Agent)
 
+> **Changelog.** 2026-11-25: additive. `GET /orders` items gain `lineItems`, `lineItemsTruncated`, `displayFulfillmentStatus`,
+> `displayFinancialStatus`, `discountCodes`; `GET /products` items gain `collections`, `tags`, `vendor`. Orders now come
+> 25 per response and products 50 (were 100 each). Existing fields are unchanged; still no customer data.
+
 ## 1. Overview
 
 A partner portal (today only the Social Media Agent, C36) gets read-only access to the catalogue, sales and shop details
@@ -327,7 +331,7 @@ All list endpoints return:
 { "items": [], "nextCursor": "string or null", "complete": false, "rateLimited": true }
 ```
 
-- Up to 100 items per response.
+- Up to 25 orders or 50 products per response (orders carry line items and products carry collections, so Shopify's query cost limit sets the size). Keep following `nextCursor`; never assume a page size.
 - `nextCursor`: pass it back as `?cursor=` **with the same filters** to get the next page. `null` with `complete: true`
   means the read is finished.
 - `complete`: true only when this response reached the end of the list without being cut short.
@@ -366,11 +370,30 @@ Each item:
     "originalPriceSet": { "amount": "5.00", "currencyCode": "INR" },
     "discountedPriceSet": { "amount": "5.00", "currencyCode": "INR" },
     "taxLines": []
-  }]
+  }],
+  "displayFulfillmentStatus": "UNFULFILLED", "displayFinancialStatus": "PAID", "discountCodes": ["SAVE10"],
+  "lineItems": [{
+    "id": "gid://shopify/LineItem/501", "title": "Linen shirt", "variantTitle": "M", "sku": "LS-M",
+    "quantity": 2, "currentQuantity": 1,
+    "productId": "gid://shopify/Product/1", "variantId": "gid://shopify/ProductVariant/11",
+    "originalUnitPriceSet": { "amount": "50.00", "currencyCode": "INR" },
+    "discountedTotalSet": { "amount": "90.00", "currencyCode": "INR" }
+  }],
+  "lineItemsTruncated": false
 }
 ```
 
-No line items, customer, email, phone or address data is ever returned. At most 5 shipping lines per order.
+- `displayFulfillmentStatus` and `displayFinancialStatus` are Shopify's enums as strings (for example `UNFULFILLED`,
+  `PARTIALLY_FULFILLED`, `FULFILLED`; `PENDING`, `PAID`, `PARTIALLY_REFUNDED`, `REFUNDED`). `displayFinancialStatus` can be null.
+- `discountCodes` are the discount codes used on the order (strings; empty array if none).
+- `lineItems`: one entry per product line. `quantity` is what was ordered, `currentQuantity` what remains after removals
+  and refunds. `originalUnitPriceSet` is the unit price before discounts; `discountedTotalSet` is the line total after
+  discounts, before tax, for the line. `productId` and `variantId` are null when
+  the product or variant has since been deleted. Sum `discountedTotalSet` (or quantity) per `productId` to get sales by product.
+- Only the first 100 line items of an order are returned; `lineItemsTruncated` is `true` when the order has more.
+- At most 5 shipping lines per order.
+- **No customer data is ever returned**: no names, emails, phone numbers, addresses (billing or shipping), customer ids,
+  notes, or anything else personal, on the order or on its line items. Only the fields listed here are read from Shopify.
 
 **Orders older than 60 days.** Shopify only shows orders created in the last 60 days until it approves the
 `read_all_orders` scope (pending). Instead of returning a silently short list:
@@ -392,6 +415,8 @@ archive products you didn't see.
   "id": "gid://shopify/Product/1", "title": "Linen shirt", "handle": "linen-shirt",
   "onlineStoreUrl": "https://store.example/products/linen-shirt", "productType": "Shirt",
   "description": "Plain text description.", "status": "ACTIVE", "featuredImageUrl": "https://cdn.shopify.com/...jpg",
+  "vendor": "Bois & Chiffons", "tags": ["linen", "summer"],
+  "collections": [{ "id": "gid://shopify/Collection/5", "title": "Shirts", "handle": "shirts" }],
   "variants": [{
     "id": "gid://shopify/ProductVariant/11", "sku": "LS-M", "title": "M",
     "price": { "amount": "499.00", "currencyCode": "INR" }, "compareAtPrice": null,
@@ -401,6 +426,7 @@ archive products you didn't see.
 ```
 
 `onlineStoreUrl` is null when the product isn't on the online store. Every variant of a product is always included.
+`collections` lists the first 25 collections the product belongs to (manual and automated); `tags` and `vendor` are as set in Shopify admin.
 
 ### GET /shop
 

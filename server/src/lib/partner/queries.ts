@@ -6,19 +6,26 @@ import { partnerJson, type PartnerStore } from "./auth";
 import type { OrdersFilter } from "./params";
 
 // D70 partner reads. Everything is read live from Shopify per request and nothing is stored (D73). Only the fields the
-// Social Media Agent asked for: no customer, email, phone, address or line item ever enters a query, so none can leak.
+// Social Media Agent asked for: no customer, email, phone or address ever enters a query, so none can leak. Line items
+// carry product facts only (title, sku, quantity, ids, prices).
 
-/** Items per response (the consumer's contract). */
-export const PAGE_ITEMS = 100;
+/** Items per response (the consumer's contract). Smaller than a plain list because orders carry line items and products carry collections. */
+export const ORDERS_PAGE_ITEMS = 25;
+export const PRODUCTS_PAGE_ITEMS = 50;
 // Shopify refuses a single query whose requested cost is over 1000 points (connection = 2 + first × node cost, each
-// object 1). So a response is several smaller Shopify pages, each a multiple of PAGE_ITEMS so a response never splits one:
-// orders ≈ 1 + 10 money objects + tax lines + shippingLines(5) ≈ 56 each → 10 per call (~560);
-// products ≈ 1 + featuredMedia 3 + variants(50) ≈ 57 each → 10 per call (~570).
-// ponytail: up to 10 sequential Shopify calls per response (~2–4 s). If that is too slow, raise the sub-page size by
-// trimming fields, or move backfills to a bulk operation.
-const ORDERS_PER_CALL = 10;
+// object 1, a money bag 2). So a response is several smaller Shopify pages, each a divisor of the response size so a
+// response never splits one. Requested costs are estimates, not measured against a live store:
+// orders ≈ 56 base + lineItems(first: 10) = 2 + 10 × 7 (line item 1, two money bags 4, product 1, variant 1) = 72 → ≈ 128
+//   each → 5 per call (~640). An order with more than 10 line items gets follow-up calls (≤ 90 more: 2 + 90 × 7 = 632);
+// products ≈ 57 base + collections(first: 25) = 27 → ≈ 84 each → 5 per call (~420).
+// ponytail: up to 5 (orders) / 10 (products) sequential Shopify calls per response, plus one per order with more than 10
+// line items. If that is too slow, move backfills to a bulk operation.
+export const MAX_LINE_ITEMS = 100;
+const ORDERS_PER_CALL = 5;
+const LINE_ITEMS_PER_CALL = 10;
 const SHIPPING_LINES = 5; // ponytail: an order with more than 5 shipping lines loses the rest; none exist in practice.
-const PRODUCTS_PER_CALL = 10;
+const PRODUCTS_PER_CALL = 5;
+const COLLECTIONS = 25; // ponytail: a product in more than 25 collections loses the rest.
 const VARIANTS_PER_CALL = 50;
 const MORE_VARIANTS_PER_CALL = 250;
 const SIXTY_DAYS_MS = 60 * 86_400_000;
@@ -37,19 +44,22 @@ const MONEY = "shopMoney { amount currencyCode }";
 type TaxLine = { title: string; rate: number | null; priceSet: Bag };
 const taxLine = (t: TaxLine) => ({ title: t.title, rate: t.rate, priceSet: money(t.priceSet) });
 const TAX_LINE = `title rate priceSet { ${MONEY} }`;
+const LINE_ITEM = `id title variantTitle sku quantity currentQuantity product { id } variant { id }
+  originalUnitPriceSet { ${MONEY} } discountedTotalSet { ${MONEY} }`;
 
 /**
- * Reads Shopify pages from `cursor` until PAGE_ITEMS items or the end. `complete` is true only when the walk reached the
+ * Reads Shopify pages from `cursor` until pageItems items or the end. `complete` is true only when the walk reached the
  * end. A throttle returns the items so far with `rateLimited` and the cursor to resume from (the start of the page that
  * failed; null when that was the first page), so the consumer can stop and resume later.
  */
 async function walk<T>(
+  pageItems: number,
   cursor: string | null,
   fetchPage: (after: string | null) => Promise<{ items: T[]; hasNextPage: boolean; endCursor: string | null }>,
 ): Promise<Page<T>> {
   const items: T[] = [];
   let after = cursor;
-  while (items.length < PAGE_ITEMS) {
+  while (items.length < pageItems) {
     let page;
     try {
       page = await fetchPage(after);
@@ -72,6 +82,7 @@ const ORDERS_QUERY = `query PartnerOrders($first: Int!, $after: String, $query: 
     pageInfo { hasNextPage endCursor }
     nodes {
       id name processedAt createdAt cancelledAt test updatedAt taxesIncluded sourceName
+      displayFulfillmentStatus displayFinancialStatus discountCodes
       currentSubtotalPriceSet { ${MONEY} }
       currentTotalDiscountsSet { ${MONEY} }
       currentShippingPriceSet { ${MONEY} }
@@ -81,11 +92,21 @@ const ORDERS_QUERY = `query PartnerOrders($first: Int!, $after: String, $query: 
       shippingLines(first: ${SHIPPING_LINES}) {
         nodes { title originalPriceSet { ${MONEY} } discountedPriceSet { ${MONEY} } taxLines { ${TAX_LINE} } }
       }
+      lineItems(first: ${LINE_ITEMS_PER_CALL}) { pageInfo { hasNextPage endCursor } nodes { ${LINE_ITEM} } }
     }
   }
 }`;
+const MORE_LINE_ITEMS_QUERY = `query PartnerLineItems($id: ID!, $first: Int!, $after: String) {
+  order(id: $id) { lineItems(first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { ${LINE_ITEM} } } }
+}`;
 
+type LineItemNode = {
+  id: string; title: string; variantTitle: string | null; sku: string | null; quantity: number; currentQuantity: number;
+  product: { id: string } | null; variant: { id: string } | null; originalUnitPriceSet: Bag; discountedTotalSet: Bag;
+};
+type LineItems = { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: LineItemNode[] };
 type OrderNode = {
+  displayFulfillmentStatus: string; displayFinancialStatus: string | null; discountCodes: string[]; lineItems: LineItems;
   id: string; name: string; processedAt: string; createdAt: string; cancelledAt: string | null; test: boolean;
   updatedAt: string; taxesIncluded: boolean; sourceName: string | null;
   currentSubtotalPriceSet: Bag; currentTotalDiscountsSet: Bag; currentShippingPriceSet: Bag; currentTotalPriceSet: Bag;
@@ -97,8 +118,25 @@ type OrdersData = {
   orders: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: OrderNode[] };
 };
 
+/** The first MAX_LINE_ITEMS line items: the rest beyond the first call come from follow-up calls. `truncated` when more exist. */
+async function allLineItems(s: PartnerStore, o: OrderNode): Promise<{ nodes: LineItemNode[]; truncated: boolean }> {
+  const nodes = [...o.lineItems.nodes];
+  let info = o.lineItems.pageInfo;
+  while (info.hasNextPage && info.endCursor && nodes.length < MAX_LINE_ITEMS) {
+    const d = await adminGraphql<{ order: { lineItems: LineItems } | null }>(s.storeId, s.shop, MORE_LINE_ITEMS_QUERY, {
+      id: o.id,
+      first: MAX_LINE_ITEMS - nodes.length,
+      after: info.endCursor,
+    });
+    if (!d.order) break; // deleted mid-read
+    nodes.push(...d.order.lineItems.nodes);
+    info = d.order.lineItems.pageInfo;
+  }
+  return { nodes, truncated: info.hasNextPage };
+}
+
 /** Built from explicit fields, so a field added to the query never reaches the consumer by accident. */
-function mapOrder(o: OrderNode) {
+function mapOrder(o: OrderNode, lines: { nodes: LineItemNode[]; truncated: boolean }) {
   return {
     id: o.id,
     name: o.name,
@@ -109,6 +147,9 @@ function mapOrder(o: OrderNode) {
     updatedAt: o.updatedAt,
     taxesIncluded: o.taxesIncluded,
     sourceName: o.sourceName,
+    displayFulfillmentStatus: o.displayFulfillmentStatus,
+    displayFinancialStatus: o.displayFinancialStatus,
+    discountCodes: o.discountCodes,
     currentSubtotalPriceSet: money(o.currentSubtotalPriceSet),
     currentTotalDiscountsSet: money(o.currentTotalDiscountsSet),
     currentShippingPriceSet: money(o.currentShippingPriceSet),
@@ -121,6 +162,19 @@ function mapOrder(o: OrderNode) {
       discountedPriceSet: money(s.discountedPriceSet),
       taxLines: s.taxLines.map(taxLine),
     })),
+    lineItems: lines.nodes.map((l) => ({
+      id: l.id,
+      title: l.title,
+      variantTitle: l.variantTitle,
+      sku: l.sku,
+      quantity: l.quantity,
+      currentQuantity: l.currentQuantity,
+      productId: l.product?.id ?? null,
+      variantId: l.variant?.id ?? null,
+      originalUnitPriceSet: money(l.originalUnitPriceSet),
+      discountedTotalSet: money(l.discountedTotalSet),
+    })),
+    lineItemsTruncated: lines.truncated,
   };
 }
 export type PartnerOrder = ReturnType<typeof mapOrder>;
@@ -155,11 +209,13 @@ export async function fetchOrders(
   const reachesPastWindow = filter.mode === "backfill" && Date.parse(`${filter.createdFrom}T00:00:00Z`) < now - BACKFILL_MARGIN_MS;
   let allOrders: boolean | undefined;
 
-  const page = await walk(cursor, async (after) => {
+  const page = await walk(ORDERS_PAGE_ITEMS, cursor, async (after) => {
     const d = await adminGraphql<OrdersData>(s.storeId, s.shop, ORDERS_QUERY, { first: ORDERS_PER_CALL, after, query, sortKey });
     allOrders = d.currentAppInstallation.accessScopes.some((x) => x.handle === "read_all_orders");
     if (reachesPastWindow && !allOrders) throw new AllOrdersPendingError(visibleSince);
-    return { items: d.orders.nodes.map(mapOrder), ...d.orders.pageInfo };
+    const items: PartnerOrder[] = [];
+    for (const o of d.orders.nodes) items.push(mapOrder(o, await allLineItems(s, o)));
+    return { items, ...d.orders.pageInfo };
   });
   if (filter.mode === "incremental" && allOrders === false) {
     return { ...page, warning: { code: "read_all_orders_pending", visibleSince } };
@@ -175,7 +231,8 @@ const PRODUCTS_QUERY = `query PartnerProducts($first: Int!, $after: String) {
   products(first: $first, after: $after, query: "status:active", sortKey: ID) {
     pageInfo { hasNextPage endCursor }
     nodes {
-      id title handle onlineStoreUrl productType description status
+      id title handle onlineStoreUrl productType description status vendor tags
+      collections(first: ${COLLECTIONS}) { nodes { id title handle } }
       featuredMedia { preview { image { url } } }
       variants(first: ${VARIANTS_PER_CALL}) { pageInfo { hasNextPage endCursor } nodes { ${VARIANT} } }
     }
@@ -192,6 +249,7 @@ type VariantNode = {
 type Variants = { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: VariantNode[] };
 type ProductNode = {
   id: string; title: string; handle: string; onlineStoreUrl: string | null; productType: string; description: string;
+  vendor: string; tags: string[]; collections: { nodes: { id: string; title: string; handle: string }[] };
   status: string; featuredMedia: { preview: { image: { url: string } | null } | null } | null; variants: Variants;
 };
 
@@ -221,6 +279,9 @@ function mapProduct(p: ProductNode, variants: VariantNode[], currencyCode: strin
     productType: p.productType,
     description: p.description,
     status: p.status,
+    vendor: p.vendor,
+    tags: p.tags,
+    collections: p.collections.nodes.map((c) => ({ id: c.id, title: c.title, handle: c.handle })),
     featuredImageUrl: p.featuredMedia?.preview?.image?.url ?? null,
     variants: variants.map((v) => ({
       id: v.id,
@@ -241,7 +302,7 @@ export type PartnerProduct = ReturnType<typeof mapProduct>;
  * throttle while fetching extra variants drops that whole Shopify page and resumes from its start.
  */
 export function fetchProducts(s: PartnerStore, cursor: string | null): Promise<Page<PartnerProduct>> {
-  return walk(cursor, async (after) => {
+  return walk(PRODUCTS_PAGE_ITEMS, cursor, async (after) => {
     const d = await adminGraphql<{
       shop: { currencyCode: string };
       products: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: ProductNode[] };

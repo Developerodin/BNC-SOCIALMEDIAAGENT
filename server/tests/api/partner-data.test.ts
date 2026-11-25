@@ -42,7 +42,20 @@ const get = (path: string) => new Request(`http://x/api/partner/${path}`, { head
 const gqlError = (code: string) =>
   new GraphqlQueryError({ message: code, response: {} as never, body: { errors: { graphQLErrors: [{ extensions: { code } }] } } as never });
 const bag = (amount: string) => ({ shopMoney: { amount, currencyCode: "INR" }, presentmentMoney: { amount: "9", currencyCode: "USD" } });
-const PII = /customer|email|phone|address|lineItems|firstName|lastName/i;
+const PII = /customer|email|phone|address|firstName|lastName/i;
+// No personal key anywhere in a response (values such as a product title are not keys).
+const PII_KEY = /"[^"]*(customer|email|phone|address|firstName|lastName|note)[^"]*"\s*:/i;
+const lineNode = (n: number, over: Record<string, unknown> = {}) => ({
+  id: `gid://shopify/LineItem/${n}`, title: `Shirt ${n}`, variantTitle: "M", sku: `SKU-${n}`, quantity: 2, currentQuantity: 1,
+  product: { id: `gid://shopify/Product/${n}` }, variant: { id: `gid://shopify/ProductVariant/${n}` },
+  originalUnitPriceSet: bag("50.00"), discountedTotalSet: bag("90.00"),
+  // never requested; the mapper must drop them anyway
+  customAttributes: [{ key: "note", value: "x" }], taxLines: [], customer: { email: "a@b.c" },
+  ...over,
+});
+const lines = (from: number, count: number, hasNextPage = false, endCursor: string | null = null) => ({
+  pageInfo: { hasNextPage, endCursor }, nodes: Array.from({ length: count }, (_, i) => lineNode(from + i)),
+});
 
 function orderNode(n: number) {
   return {
@@ -52,8 +65,11 @@ function orderNode(n: number) {
     currentTotalPriceSet: bag("95.00"), totalRefundedSet: bag("0.00"),
     currentTaxLines: [{ title: "GST", rate: 0.18, priceSet: bag("14.49"), channelLiable: false }],
     shippingLines: { nodes: [{ title: "Standard", originalPriceSet: bag("5.00"), discountedPriceSet: bag("5.00"), taxLines: [] }] },
+    displayFulfillmentStatus: "UNFULFILLED", displayFinancialStatus: "PAID", discountCodes: ["SAVE10"],
+    lineItems: lines(1, 1),
     // Fields Shopify would never send for our query; the mapper must drop them anyway.
     customer: { email: "a@b.c", phone: "+1", firstName: "A" }, email: "a@b.c", shippingAddress: { address1: "x" },
+    billingAddress: { address1: "y" }, note: "leave at door", phone: "+1",
   };
 }
 const ordersData = (nodes: unknown[], hasNextPage: boolean, endCursor: string | null, scopes = ["read_orders", "read_all_orders"]) => ({
@@ -86,11 +102,64 @@ test("incremental mode: updated_at filter, UPDATED_AT sort, exact field mapping 
         title: "Standard", originalPriceSet: { amount: "5.00", currencyCode: "INR" },
         discountedPriceSet: { amount: "5.00", currencyCode: "INR" }, taxLines: [],
       }],
+      displayFulfillmentStatus: "UNFULFILLED", displayFinancialStatus: "PAID", discountCodes: ["SAVE10"],
+      lineItems: [{
+        id: "gid://shopify/LineItem/1", title: "Shirt 1", variantTitle: "M", sku: "SKU-1", quantity: 2, currentQuantity: 1,
+        productId: "gid://shopify/Product/1", variantId: "gid://shopify/ProductVariant/1",
+        originalUnitPriceSet: { amount: "50.00", currencyCode: "INR" }, discountedTotalSet: { amount: "90.00", currencyCode: "INR" },
+      }],
+      lineItemsTruncated: false,
     }],
     nextCursor: null,
     complete: true,
   });
-  expect(JSON.stringify(body)).not.toMatch(PII);
+  expect(JSON.stringify(body)).not.toMatch(PII_KEY);
+});
+
+test("line items: a deleted product or variant maps to null ids; no personal key survives even if Shopify sent one", async () => {
+  const o = { ...orderNode(1), lineItems: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [lineNode(1, { product: null, variant: null, variantTitle: null, sku: null })] } };
+  adminGraphql.mockResolvedValueOnce(ordersData([o], false, null));
+  const body = await (await orders.GET(get("orders?updatedSince=2026-11-01T00:00:00Z"))).json();
+  expect(body.items[0].lineItems[0]).toMatchObject({ productId: null, variantId: null, variantTitle: null, sku: null });
+  expect(JSON.stringify(body)).not.toMatch(PII_KEY);
+});
+
+test("line items beyond the first call are fetched by follow-up calls; more than 100 are cut with lineItemsTruncated", async () => {
+  const o = { ...orderNode(1), lineItems: lines(1, 10, true, "l10") };
+  adminGraphql
+    .mockResolvedValueOnce(ordersData([o], false, null))
+    .mockResolvedValueOnce({ order: { lineItems: lines(11, 90, true, "l100") } });
+  const body = await (await orders.GET(get("orders?updatedSince=2026-11-01T00:00:00Z"))).json();
+  expect(body.items[0].lineItems).toHaveLength(100);
+  expect(body.items[0].lineItemsTruncated).toBe(true);
+  expect(adminGraphql.mock.calls[1][3]).toEqual({ id: "gid://shopify/Order/1", first: 90, after: "l10" });
+
+  adminGraphql.mockReset();
+  adminGraphql
+    .mockResolvedValueOnce(ordersData([{ ...orderNode(2), lineItems: lines(1, 10, true, "l10") }], false, null))
+    .mockResolvedValueOnce({ order: { lineItems: lines(11, 5) } });
+  const exact = await (await orders.GET(get("orders?updatedSince=2026-11-01T00:00:00Z"))).json();
+  expect(exact.items[0].lineItems).toHaveLength(15);
+  expect(exact.items[0].lineItemsTruncated).toBe(false);
+});
+
+test("a throttle on the line-items follow-up drops that Shopify page and resumes from its start", async () => {
+  adminGraphql
+    .mockResolvedValueOnce(ordersData([{ ...orderNode(1), lineItems: lines(1, 10, true, "l10") }], true, "c1"))
+    .mockRejectedValueOnce(gqlError("THROTTLED"));
+  const body = await (await orders.GET(get("orders?updatedSince=2026-11-01T00:00:00Z&cursor=c0"))).json();
+  expect(body).toMatchObject({ items: [], nextCursor: "c0", complete: false, rateLimited: true });
+});
+
+test("the orders query asks for no personal field and stays under Shopify's 1000-point limit (estimate)", async () => {
+  adminGraphql.mockResolvedValueOnce(ordersData([], false, null));
+  await orders.GET(get("orders?updatedSince=2026-11-01T00:00:00Z"));
+  const [, , query, vars] = adminGraphql.mock.calls[0];
+  expect(query).not.toMatch(PII);
+  expect(query).toContain("lineItems(first: 10)");
+  // Same estimate as the comment in queries.ts: base 56 + (2 + 10 * 7) per order.
+  expect(vars.first * (56 + 2 + 10 * 7)).toBeLessThanOrEqual(1000);
+  expect(2 + 90 * 7).toBeLessThanOrEqual(1000); // the line-items follow-up
 });
 
 test("backfill mode: inclusive created_at range, CREATED_AT sort, cursor passed through", async () => {
@@ -103,18 +172,19 @@ test("backfill mode: inclusive created_at range, CREATED_AT sort, cursor passed 
   });
 });
 
-test("a page is 100 items gathered from several Shopify calls; nextCursor resumes, complete only at the end", async () => {
-  for (let p = 0; p < 10; p++) adminGraphql.mockResolvedValueOnce(ordersData(Array.from({ length: 10 }, (_, i) => orderNode(p * 10 + i)), true, `c${p}`));
+test("a page is 25 orders gathered from several Shopify calls; nextCursor resumes, complete only at the end", async () => {
+  for (let p = 0; p < 5; p++) adminGraphql.mockResolvedValueOnce(ordersData(Array.from({ length: 5 }, (_, i) => orderNode(p * 5 + i)), true, `c${p}`));
   const body = await (await orders.GET(get("orders?updatedSince=2026-11-01T00:00:00Z"))).json();
-  expect(body.items).toHaveLength(100);
-  expect(body).toMatchObject({ nextCursor: "c9", complete: false });
+  expect(body.items).toHaveLength(25);
+  expect(body).toMatchObject({ nextCursor: "c4", complete: false });
   expect(body.rateLimited).toBeUndefined();
-  expect(adminGraphql.mock.calls.map((c) => c[3].after)).toEqual([null, "c0", "c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8"]);
+  expect(adminGraphql.mock.calls.map((c) => c[3].after)).toEqual([null, "c0", "c1", "c2", "c3"]);
+  expect(adminGraphql.mock.calls[0][3].first).toBe(5);
 
   adminGraphql.mockResolvedValueOnce(ordersData([orderNode(200)], false, "c10"));
-  const last = await (await orders.GET(get("orders?updatedSince=2026-11-01T00:00:00Z&cursor=c9"))).json();
+  const last = await (await orders.GET(get("orders?updatedSince=2026-11-01T00:00:00Z&cursor=c4"))).json();
   expect(last).toMatchObject({ nextCursor: null, complete: true });
-  expect(adminGraphql.mock.lastCall![3].after).toBe("c9");
+  expect(adminGraphql.mock.lastCall![3].after).toBe("c4");
 });
 
 test("Shopify throttling mid-read returns the items so far with rateLimited and the cursor to resume from (200)", async () => {
@@ -195,7 +265,8 @@ const variant = (n: number) => ({
 });
 const productNode = (n: number, variants = { pageInfo: { hasNextPage: false, endCursor: null as string | null }, nodes: [variant(1)] }) => ({
   id: `gid://shopify/Product/${n}`, title: `P${n}`, handle: `p-${n}`, onlineStoreUrl: `https://bc.example/products/p-${n}`,
-  productType: "Shirt", description: "Plain text.", status: "ACTIVE",
+  productType: "Shirt", description: "Plain text.", status: "ACTIVE", vendor: "Bois", tags: ["linen", "summer"],
+  collections: { nodes: [{ id: "gid://shopify/Collection/5", title: "Shirts", handle: "shirts", description: "x" }] },
   featuredMedia: { preview: { image: { url: `https://cdn.example/${n}.jpg` } } }, variants,
 });
 const productsData = (nodes: unknown[], hasNextPage: boolean, endCursor: string | null) => ({
@@ -212,6 +283,7 @@ test("products: ACTIVE only, exact mapping with money in shop currency, complete
     items: [{
       id: "gid://shopify/Product/1", title: "P1", handle: "p-1", onlineStoreUrl: "https://bc.example/products/p-1",
       productType: "Shirt", description: "Plain text.", status: "ACTIVE", featuredImageUrl: "https://cdn.example/1.jpg",
+      vendor: "Bois", tags: ["linen", "summer"], collections: [{ id: "gid://shopify/Collection/5", title: "Shirts", handle: "shirts" }],
       variants: [{
         id: "gid://shopify/ProductVariant/1", sku: "SKU-1", title: "V1", price: { amount: "499.00", currencyCode: "INR" },
         compareAtPrice: { amount: "599.00", currencyCode: "INR" }, inventoryQuantity: 7, availableForSale: true,
@@ -220,6 +292,18 @@ test("products: ACTIVE only, exact mapping with money in shop currency, complete
     nextCursor: null,
     complete: true,
   });
+});
+
+test("products: a page is 50 products from calls of 5; the query asks for the first 25 collections and nothing personal", async () => {
+  for (let p = 0; p < 10; p++) adminGraphql.mockResolvedValueOnce(productsData(Array.from({ length: 5 }, (_, i) => productNode(p * 5 + i)), true, `p${p}`));
+  const body = await (await products.GET(get("products"))).json();
+  expect(body.items).toHaveLength(50);
+  expect(body).toMatchObject({ nextCursor: "p9", complete: false });
+  const query = adminGraphql.mock.calls[0][2];
+  expect(query).toContain("collections(first: 25)");
+  expect(query).not.toMatch(PII);
+  expect(5 * (57 + 2 + 25)).toBeLessThanOrEqual(1000); // estimate, as in queries.ts
+  expect(JSON.stringify(body)).not.toMatch(PII_KEY);
 });
 
 test("products: variants beyond the first call are fetched, so every product is whole", async () => {
@@ -243,7 +327,7 @@ test("products: a throttle mid-walk keeps only whole pages, complete false, and 
   const body = await res.json();
   expect(body).toMatchObject({ complete: false, rateLimited: true, nextCursor: "p1" });
   expect(body.items.map((p: { id: string }) => p.id)).toEqual(["gid://shopify/Product/1"]);
-  expect(adminGraphql.mock.calls[0][3]).toEqual({ first: 10, after: "p0" });
+  expect(adminGraphql.mock.calls[0][3]).toEqual({ first: 5, after: "p0" });
 });
 
 // ---------- shop ----------
