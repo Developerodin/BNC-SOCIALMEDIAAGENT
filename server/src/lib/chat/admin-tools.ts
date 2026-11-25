@@ -28,6 +28,12 @@ const MAX_REFRESHES = 2; // refresh_product calls per turn
 const PAGE_SIZE = 8;
 const MAX_PAGE = 5;
 const MAX_LISTED = 50; // collections in the overview
+const SAMPLE_SIZE = 50; // products read for the types, tags and examples
+const MAX_TYPES = 8;
+const MAX_TAGS = 10;
+const MAX_EXAMPLES = 5;
+// Collections Shopify creates itself (or the Hydrogen channel adds): their names say nothing about what the store sells.
+const GENERIC_COLLECTION = /^(automated collection|home page|homepage|frontpage|hydrogen)$/i;
 
 const UNAVAILABLE = "Store information is temporarily unavailable. Answer from <store_data> only, or tell the shopper you can't check right now.";
 
@@ -36,7 +42,7 @@ export const ADMIN_TOOL_DEFS: FunctionTool[] = [
     type: "function",
     name: "store_overview",
     description:
-      "Get facts about the whole store, live: how many products it sells and its collections (with product counts). Call it for questions about the whole store or catalog: how many products there are, what categories or collections it has.",
+      "Get facts about the whole store, live: how many products it sells, what kinds of products (product types and tags, with counts, and example titles) and its named collections. Call it for questions about the whole store or catalog: how many products there are, what it sells, what categories or collections it has.",
     strict: true,
     parameters: { type: "object", properties: {}, required: [], additionalProperties: false },
   },
@@ -96,8 +102,9 @@ const gql = <T>(ctx: ToolContext, query: string, variables?: Record<string, unkn
 
 // Cost (Admin GraphQL, bucket of 1,000 points, restoring 50/s): productsCount ~1, collections(first: 50) with a nested
 // productsCount ~100; about 100-150 points per call at worst, so one call per store per 10 minutes.
-// Product types are left out on purpose: Admin's productTypes lists types used only by draft products too, and our own
-// products table keeps the type only inside its text, so there is no leak-free list to give.
+// Admin's productTypes lists types used only by draft products too, so what the store sells is read from a sample of the
+// active, published products instead: their types and tags are counted and a few titles given as examples. The sample is
+// the first SAMPLE_SIZE products, so on a bigger catalog the counts say "of the first N" (the upgrade path is paging).
 // "published_status:published" is the Online Store; draft and archived products are not counted. Collection.productsCount
 // counts every product in the collection, including ones not for sale, so a collection's count can be a little high.
 const OVERVIEW = `query StoreOverview {
@@ -106,6 +113,9 @@ const OVERVIEW = `query StoreOverview {
     pageInfo { hasNextPage }
     nodes { id title productsCount { count } }
   }
+  products(first: ${SAMPLE_SIZE}, query: "status:active published_status:published") {
+    nodes { title productType tags }
+  }
 }`;
 
 type Overview = {
@@ -113,6 +123,7 @@ type Overview = {
   atLeast: boolean;
   collections: { id: string; title: string; count: number }[];
   moreCollections: boolean;
+  sample: { title: string; productType: string; tags: string[] }[];
 };
 
 // ponytail: per process and per store. With several server instances each keeps its own copy (so up to N calls per 10
@@ -153,23 +164,34 @@ async function fetchOverview(ctx: ToolContext): Promise<Overview> {
   const d = await gql<{
     productsCount: { count: number; precision: string };
     collections: { pageInfo: { hasNextPage: boolean }; nodes: { id: string; title: string; productsCount: { count: number } }[] };
+    products: { nodes: { title: string; productType: string; tags: string[] }[] };
   }>(ctx, OVERVIEW);
   return {
     total: d.productsCount.count,
     atLeast: d.productsCount.precision === "AT_LEAST",
     collections: d.collections.nodes.map((c) => ({ id: c.id, title: c.title, count: c.productsCount.count })),
     moreCollections: d.collections.pageInfo.hasNextPage,
+    sample: d.products.nodes,
   };
 }
 
 async function storeOverview(ctx: ToolContext): Promise<string> {
   const o = await overviewOf(ctx);
   const lines = [`Products on sale in the store: ${o.atLeast ? "at least " : ""}${o.total}.`];
-  lines.push(
-    o.collections.length
-      ? `Collections (title, number of products): ${o.collections.map((c) => `${c.title.slice(0, 80)} (${c.count})`).join("; ")}${o.moreCollections ? "; and more not listed" : ""}.`
-      : "The store has no collections.",
-  );
+  const top = (values: string[], max: number) => {
+    const counts = new Map<string, number>();
+    for (const v of values.map((x) => x.trim().slice(0, 40)).filter(Boolean)) counts.set(v, (counts.get(v) ?? 0) + 1);
+    return [...counts].sort((a, b) => b[1] - a[1]).slice(0, max).map(([v, n]) => `${v} (${n})`);
+  };
+  const scope = o.sample.length < o.total ? `, counted in the first ${o.sample.length} products` : "";
+  const types = top(o.sample.map((p) => p.productType), MAX_TYPES);
+  const tags = top(o.sample.flatMap((p) => p.tags), MAX_TAGS);
+  if (types.length) lines.push(`Product types (type, number of products${scope}): ${types.join("; ")}.`);
+  if (tags.length) lines.push(`Most used tags (tag, number of products${scope}): ${tags.join("; ")}.`);
+  if (o.sample.length) lines.push(`Example products: ${o.sample.slice(0, MAX_EXAMPLES).map((p) => p.title.slice(0, 80)).join("; ")}.`);
+  const named = o.collections.filter((c) => !GENERIC_COLLECTION.test(c.title.trim()));
+  if (named.length) lines.push(`Collections (title, number of products): ${named.map((c) => `${c.title.slice(0, 80)} (${c.count})`).join("; ")}${o.moreCollections ? "; and more not listed" : ""}.`);
+  else if (!o.sample.length) lines.push(o.collections.length ? "The store's collections have no descriptive names." : "The store has no collections.");
   return sanitizeData(lines.join("\n")).slice(0, MAX_RESULT_CHARS);
 }
 

@@ -81,6 +81,21 @@ test("a plain answer streams the small model with store: false and max_output_to
   });
 });
 
+test("a second message item in one response is not appended to the first", async () => {
+  create.mockImplementationOnce(async () =>
+    (async function* () {
+      yield { type: "response.output_text.delta", item_id: "m1", delta: "I am an AI. " };
+      yield { type: "response.output_text.delta", item_id: "m1", delta: "Need a snowboard?" };
+      yield { type: "response.output_text.delta", item_id: "m2", delta: "I am an AI, again." };
+      yield { type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 1 } } };
+    })(),
+  );
+  const { opts, texts } = setup();
+  const r = await answer(opts);
+  expect(r.text).toBe("I am an AI. Need a snowboard?");
+  expect(texts.join("")).toBe("I am an AI. Need a snowboard?");
+});
+
 test("[[escalate]] split across deltas: no small-model text, small aborted, large answers", async () => {
   create
     .mockImplementationOnce(stream(["[[esc", "alate]] let me", " think", { hang: true }]))

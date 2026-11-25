@@ -126,8 +126,16 @@ export async function answer(opts: {
         },
         { signal: ac.signal },
       );
+      // One response can hold several message items; a second one rewrites the first (the "…a snowboard?I'm an AI…" doubled
+      // answer), so only the first item's text is shown. Deltas without an item id all count as one item.
+      let firstItem: string | undefined;
       for await (const ev of events) {
         if (ev.type === "response.output_text.delta") {
+          const item = (ev as { item_id?: string }).item_id;
+          if (item !== undefined) {
+            firstItem ??= item;
+            if (item !== firstItem) continue;
+          }
           clearTimeout(firstTimer);
           firstTimer = undefined;
           if (!onDelta(ev.delta)) {

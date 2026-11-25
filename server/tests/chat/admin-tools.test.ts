@@ -55,6 +55,14 @@ const OVERVIEW = {
       { id: "gid://shopify/Collection/2", title: "Boots", productsCount: { count: 5 } },
     ],
   },
+  products: {
+    nodes: [
+      { title: "Linen Dress", productType: "Dress", tags: ["summer", "linen"] },
+      { title: "Maxi Dress", productType: "Dress", tags: ["summer"] },
+      { title: "Rain Boot", productType: "Boots", tags: ["winter"] },
+      { title: "Gift Card", productType: "", tags: [] },
+    ],
+  },
 };
 
 beforeAll(async () => {
@@ -96,10 +104,30 @@ test("store_overview returns the count and collections as sanitized store_data",
   expect(out.startsWith("<store_data>\n")).toBe(true);
   expect(out.endsWith("\n</store_data>")).toBe(true);
   expect(inner(out)).toContain("42");
-  expect(inner(out)).not.toMatch(/product types/i); // Admin lists types used only by drafts too, so none are given
-  expect(gql.mock.calls[0][2]).not.toContain("productTypes");
+  expect(gql.mock.calls[0][2]).not.toContain("productTypes"); // Admin's list includes draft-only types: read from active products instead
   expect(inner(out)).not.toMatch(/\[\[|\]\]|<\/?store_data/);
   expect(out.length).toBeLessThan(4000);
+});
+
+test("store_overview says what the store sells: types, tags and examples, and skips Shopify's default collection names", async () => {
+  gql.mockResolvedValue({
+    ...OVERVIEW,
+    collections: {
+      pageInfo: { hasNextPage: false },
+      nodes: [
+        { id: "a", title: "Automated Collection", productsCount: { count: 8 } },
+        { id: "b", title: "Home page", productsCount: { count: 1 } },
+        { id: "c", title: "Hydrogen", productsCount: { count: 3 } },
+        { id: "d", title: "Boots", productsCount: { count: 5 } },
+      ],
+    },
+  });
+  const text = inner(await run("store_overview", {}, ctx()));
+  expect(text).toContain("Product types (type, number of products, counted in the first 4 products): Dress (2); Boots (1)");
+  expect(text).toContain("summer (2)");
+  expect(text).toContain("Example products: Linen Dress; Maxi Dress; Rain Boot; Gift Card.");
+  expect(text).toContain("Boots (5)");
+  expect(text).not.toMatch(/Automated Collection|Home page|Hydrogen/);
 });
 
 test("store_overview is cached for 10 minutes per store", async () => {
