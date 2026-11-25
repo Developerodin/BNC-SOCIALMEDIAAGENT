@@ -39,7 +39,7 @@ export type PageContext = {
   /** The store's Shopify brand logo (Liquid image_url, may be protocol-relative); the chat's logo when no avatar is set. */
   logo?: string | null;
   /** Product pages only: the product being viewed, for the "You're viewing" card. Absent elsewhere and on the hosted page. */
-  viewing?: { title: string; image: string | null; price: string | null };
+  viewing?: { title: string; image: string | null; price: number | null }; // price: minor units (cents) in `currency`, formatted by the widget
   /** Only on the hosted chat page (/chat/<shop>): there is no storefront cart, so a card opens the product on the store. */
   hosted?: boolean;
   /** Hosted page only: the embedding storefront said it can add to the cart (a hint; the card falls back if nobody answers). */

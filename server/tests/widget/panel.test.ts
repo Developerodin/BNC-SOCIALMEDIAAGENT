@@ -117,7 +117,7 @@ describe("rendering safety (Review Focus 1)", () => {
 
   it("merchant name and welcome with markup stay text, and a non-CDN avatar is not loaded", async () => {
     await setup(mockApi(), config({ name: "<b>Shop</b>", welcome: "<script>x()</script>", avatarUrl: "https://evil.com/a.png" })).open();
-    expect(q(".name")!.textContent).toBe("Your <b>Shop</b> expert");
+    expect(q(".name")!.textContent).toBe("Your <b>Shop</b> AI expert");
     expect(q(".welcome")!.textContent).toBe("<script>x()</script>");
     expect(sh().querySelector("img, b, script")).toBeNull();
   });
@@ -537,19 +537,19 @@ describe("menu (C22)", () => {
 });
 
 describe("header and empty state", () => {
-  it("shows the store's initial as a monogram when there is no avatar, 'Your {store} expert' and the AI line", async () => {
+  it("shows the store's initial as a monogram when there is no avatar, 'Your {store} AI expert' and the AI line", async () => {
     await setup(mockApi(), config({ name: "maison bleue" })).open();
     expect(q(".avatar.initial")!.textContent).toBe("M");
     expect(q("img.avatar")).toBeNull();
-    expect(q(".hd .name")!.textContent).toBe("Your maison bleue expert");
+    expect(q(".hd .name")!.textContent).toBe("Your maison bleue AI expert");
     expect(q(".hd .sub")).toBeNull(); // the AI notice moved above the input
     expect(q(".ft .notice")!.nextElementSibling!.classList.contains("row")).toBe(true);
   });
 
   it("the header says it in every language and always keeps the AI notice above the input", async () => {
     const expected: Record<string, string> = {
-      en: "Your Demo Store expert", fr: "Votre expert Demo Store", de: "Ihr Demo Store-Experte",
-      es: "Tu experto de Demo Store", it: "Il tuo esperto Demo Store", nl: "Jouw Demo Store-expert",
+      en: "Your Demo Store AI expert", fr: "Votre expert IA Demo Store", de: "Ihr KI-Experte von Demo Store",
+      es: "Tu experto IA de Demo Store", it: "Il tuo esperto IA Demo Store", nl: "Jouw AI-expert van Demo Store",
     };
     for (const [locale, name] of Object.entries(expected)) {
       document.body.innerHTML = "";
@@ -562,7 +562,7 @@ describe("header and empty state", () => {
   });
 
   it("shows 'You're viewing' with photo, title and price from page.viewing, hidden when absent", async () => {
-    const viewing = { title: "Linen <b>tee</b>", image: "https://cdn.shopify.com/s/files/tee.jpg", price: "$20.00" };
+    const viewing = { title: "Linen <b>tee</b>", image: "https://cdn.shopify.com/s/files/tee.jpg", price: 2000 };
     await setup(mockApi(), config(), pageCtx({ productId: "1", viewing })).open();
     const card = q(".viewing")!;
     expect(card.hidden).toBe(false);
@@ -674,9 +674,13 @@ describe("header and empty state", () => {
     });
 
     it("goes up by the quantity after a successful add from the chat, not after a failed one", async () => {
-      const add = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => jsonResponse(200, { items: [] }));
+      let count = 2; // what cart.js says now: a successful add makes it 3 higher, and the badge re-reads it
+      const add = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => {
+        count += 3;
+        return jsonResponse(200, { items: [] });
+      });
       vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) =>
-        String(url).endsWith("/cart.js") ? jsonResponse(200, { items: [], item_count: 2 }) : add(url, init)));
+        String(url).endsWith("/cart.js") ? jsonResponse(200, { items: [], item_count: count }) : add(url, init)));
       await openCart();
       expect(badge().textContent).toBe("2");
       add.mockResolvedValueOnce(jsonResponse(422, { description: "No." }));
@@ -790,9 +794,9 @@ describe("header and empty state", () => {
   it("every animation in the panel CSS is switched off under prefers-reduced-motion", async () => {
     await setup(mockApi()).open();
     const css = q("style")!.textContent!;
-    const reduced = css.slice(css.indexOf("prefers-reduced-motion"));
+    const reduced = css.slice(css.indexOf("@media (prefers-reduced-motion"));
     expect(css).toContain("animation:in .22s cubic-bezier(0.22,1,0.36,1)");
-    expect(reduced).toContain(".panel,.panel.full:not(.drawer),.msg.in,.txt.in,.status,.err,.cards.in{animation:none}");
+    expect(reduced).toContain(".panel,.panel.full:not(.drawer),.msg.in,.status,.err,.cards.in,.nw,.scrim{animation:none}");
     expect(reduced).toContain(".stx{animation:none;background:none");
   });
 });
@@ -910,7 +914,7 @@ describe("i18n (UD18)", () => {
     expect(sendBtn().getAttribute("aria-label")).toBe("Senden");
     expect(q(".notice")!.textContent).toContain("Du chattest mit einem KI-Assistenten.");
     expect(q(".welcome")!.textContent).toBe("Hi! Ask me anything.");
-    expect(q(".name")!.textContent).toBe("Ihr Demo Store-Experte");
+    expect(q(".name")!.textContent).toBe("Ihr KI-Experte von Demo Store");
   });
 });
 
@@ -1032,16 +1036,11 @@ describe("expanded mode", () => {
 
   it("is hidden on a narrow screen (already a full sheet) and never applies there", async () => {
     localStorage.setItem(UI_KEY, JSON.stringify({ wide: true }));
-    const w = window.innerWidth;
-    window.innerWidth = 400;
-    try {
-      await setup(mockApi()).open();
-      openMenu();
-      expect(item().hidden).toBe(true);
-      expect(q(".panel")!.classList.contains("wide")).toBe(false);
-    } finally {
-      window.innerWidth = w;
-    }
+    (window as unknown as { happyDOM: { setViewport(v: { width: number; height: number }): void } }).happyDOM.setViewport({ width: 400, height: 800 });
+    await setup(mockApi()).open(); // beforeEach puts the viewport back
+    openMenu();
+    expect(item().hidden).toBe(true);
+    expect(q(".panel")!.classList.contains("wide")).toBe(false);
   });
 
   it("is hidden on the hosted page", async () => {
@@ -1071,7 +1070,7 @@ describe("drawer mode and send-on-open (the Ask our AI agent block)", () => {
   it("a drawer accepts the block's title but shows the same header as everywhere, with the AI line", async () => {
     await setup(mockApi()).open({ mode: "drawer", title: { eyebrow: "<b>More</b>", heading: "Ask <img src=x onerror=alert(1)>" } });
     expect(panelEl().classList.contains("drawer")).toBe(true);
-    expect(q(".hd .name")!.textContent).toBe("Your Demo Store expert");
+    expect(q(".hd .name")!.textContent).toBe("Your Demo Store AI expert");
     expect(q(".hd .sub")).toBeNull();
     expect(sh().querySelector(".hd img, .hd b")).toBeNull();
   });
@@ -1101,7 +1100,7 @@ describe("drawer mode and send-on-open (the Ask our AI agent block)", () => {
     await p.open({ mode: "drawer", title });
     await p.open({});
     expect(panelEl().classList.contains("drawer")).toBe(false);
-    expect(q(".hd .name")!.textContent).toBe("Your Demo Store expert");
+    expect(q(".hd .name")!.textContent).toBe("Your Demo Store AI expert");
     expect(q(".hd .sub")).toBeNull();
   });
 
@@ -1145,7 +1144,7 @@ describe("drawer mode and send-on-open (the Ask our AI agent block)", () => {
   });
 
   it("reduced motion switches the drawer's slide off", () => {
-    expect(CSS).toMatch(/prefers-reduced-motion:reduce\).*\.panel\.drawer\{animation:none\}/);
+    expect(CSS).toMatch(/prefers-reduced-motion:reduce\).*\.panel\.drawer,\.panel\.full\.drawer,:host\(:dir\(rtl\)\) \.panel\.drawer\{animation:none\}/);
   });
 });
 
@@ -1278,7 +1277,7 @@ describe("header logo, composer and the viewing thumbnail", () => {
 
   it("the 'You're viewing' thumbnail loads from Liquid's protocol-relative store URL", async () => {
     (window as unknown as { happyDOM: { setURL(u: string): void } }).happyDOM.setURL("https://shop.example/products/tee");
-    const viewing = { title: "Tee", image: "//shop.example/cdn/shop/files/tee.jpg?width=160", price: "$20.00" };
+    const viewing = { title: "Tee", image: "//shop.example/cdn/shop/files/tee.jpg?width=160", price: 2000 };
     await setup(mockApi(), config(), pageCtx({ productId: "1", viewing })).open();
     expect(q(".viewing img")!.getAttribute("src")).toBe("https://shop.example/cdn/shop/files/tee.jpg?width=160");
   });
@@ -1306,16 +1305,16 @@ describe("header logo, composer and the viewing thumbnail", () => {
     expect(q(".row")!.contains(q("button.send"))).toBe(true);
     expect(q(".row")!.contains(input())).toBe(true);
     expect(CSS).toMatch(/textarea\{[^}]*border:0;[^}]*font-size:16px/);
-    expect(CSS).toMatch(/\.send\{position:absolute;right:6px;/);
+    expect(CSS).toMatch(/\.send\{position:absolute;inset-inline-end:6px;/);
   });
 });
 
 describe("panel motion", () => {
-  type FakeAnim = { onfinish: (() => void) | null; cancel: ReturnType<typeof vi.fn> };
+  type FakeAnim = { onfinish: (() => void) | null; cancel: ReturnType<typeof vi.fn>; reverse: ReturnType<typeof vi.fn> };
   const animate = () => {
     const anims: FakeAnim[] = [];
     const fn = vi.fn(() => {
-      const a: FakeAnim = { onfinish: null, cancel: vi.fn() };
+      const a: FakeAnim = { onfinish: null, cancel: vi.fn(), reverse: vi.fn() };
       anims.push(a);
       return a;
     });
@@ -1349,18 +1348,35 @@ describe("panel motion", () => {
     motionOk();
     await setup(mockApi()).open({ mode: "drawer" });
     panel.close();
-    expect(JSON.stringify((fn.mock.calls[0] as unknown[])[0])).toContain("translateX(100%)");
+    // a card 16px in from the edge: it has to clear its own gap too; the exit is 240ms
+    expect(JSON.stringify((fn.mock.calls[0] as unknown[])[0])).toContain("translateX(calc((100% + 16px)))");
+    expect((fn.mock.calls[0] as unknown[])[1]).toMatchObject({ duration: 240 });
   });
 
-  it("opening again during the exit cancels it", async () => {
+  it("the phone's drawer (full screen) leaves by 100%, in 220ms", async () => {
+    const { fn } = animate();
+    motionOk();
+    (window as unknown as { happyDOM: { setViewport(v: { width: number; height: number }): void } }).happyDOM.setViewport({ width: 390, height: 844 });
+    await setup(mockApi()).open({ mode: "drawer" });
+    panel.close();
+    expect(JSON.stringify((fn.mock.calls[0] as unknown[])[0])).toContain("translateX(calc((100%)))");
+    expect((fn.mock.calls[0] as unknown[])[1]).toMatchObject({ duration: 220 });
+  });
+
+  it("opening again during the exit plays it backwards (no jump), then drops the held end frame", async () => {
     const { anims } = animate();
     motionOk();
     await setup(mockApi()).open();
     panel.close();
     await panel.open();
-    expect(anims[0].cancel).toHaveBeenCalled();
+    expect(anims[0].reverse).toHaveBeenCalled();
+    expect(anims[0].cancel).not.toHaveBeenCalled(); // still on its way back
     expect(q(".panel")!.hidden).toBe(false);
     expect(q(".panel")!.inert).toBe(false);
+    anims[0].onfinish!();
+    expect(anims[0].cancel).toHaveBeenCalled();
+    panel.close(); // and it can close again
+    expect(anims).toHaveLength(2);
   });
 
   it("reduced motion: no animation, hidden at once", async () => {
@@ -1433,5 +1449,92 @@ describe("the cart summary on a chat message", () => {
     await type("what's in my cart?");
     expect(api.send.mock.calls[0][0].cart).toBeNull();
     expect(f.mock.calls.some(([u]) => String(u).endsWith("/cart.js"))).toBe(false);
+  });
+});
+
+describe("the desktop drawer: backdrop, scroll lock, modal semantics", () => {
+  const scrim = () => q(".scrim")!;
+  const phone = () => (window as unknown as { happyDOM: { setViewport(v: { width: number; height: number }): void } }).happyDOM.setViewport({ width: 390, height: 844 });
+
+  it("dims the page behind the drawer, and a click on the backdrop closes it", async () => {
+    await setup(mockApi()).open({ mode: "drawer" });
+    expect(scrim().hidden).toBe(false);
+    expect(q(".panel")!.getAttribute("aria-modal")).toBe("true");
+    scrim().click();
+    expect(q(".panel")!.hidden).toBe(true);
+    expect(scrim().hidden).toBe(true);
+    expect(JSON.parse(localStorage.getItem(`askcart:${SHOP}:ui`)!).open).toBe(false);
+  });
+
+  it("locks the page scroll while the desktop drawer is open, padding for the scrollbar it hides, and restores both", async () => {
+    document.documentElement.style.paddingRight = "3px";
+    Object.defineProperty(document.documentElement, "clientWidth", { configurable: true, value: 1265 });
+    await setup(mockApi()).open({ mode: "drawer" });
+    expect(document.documentElement.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.paddingRight).toBe("15px");
+    panel.close();
+    expect(document.documentElement.style.overflow).toBe("");
+    expect(document.documentElement.style.paddingRight).toBe("3px");
+    delete (document.documentElement as unknown as { clientWidth?: number }).clientWidth;
+    document.documentElement.style.paddingRight = "";
+  });
+
+  it("the floating bubble has no backdrop, no scroll lock and is not aria-modal; full screen is modal", async () => {
+    await setup(mockApi()).open();
+    expect(scrim().hidden).toBe(true);
+    expect(document.documentElement.style.overflow).toBe("");
+    expect(q(".panel")!.hasAttribute("aria-modal")).toBe(false);
+    panel.destroy();
+    document.body.innerHTML = "";
+    phone();
+    await setup(mockApi()).open();
+    expect(q(".panel")!.getAttribute("aria-modal")).toBe("true");
+    expect(scrim().hidden).toBe(true); // full screen has nothing behind it
+  });
+
+  it("a phone's drawer is the full-screen sheet: no backdrop, still modal and locked", async () => {
+    phone();
+    await setup(mockApi()).open({ mode: "drawer" });
+    expect(q(".panel")!.classList.contains("full")).toBe(true);
+    expect(scrim().hidden).toBe(true);
+    expect(document.documentElement.style.overflow).toBe("hidden");
+  });
+
+  it("is a 560px floating card with the measured spring, 16px in from the edge", () => {
+    expect(CSS).toContain(".panel.drawer{top:16px;bottom:16px;right:16px;left:auto;width:min(560px,calc(100vw - 32px))");
+    expect(CSS).toContain("border-radius:16px");
+    expect(CSS).toContain("animation:sl .64s cubic-bezier(0.3,0.48,0.08,1)");
+    expect(CSS).toContain("linear(0,.1 6.3%,.288 12.5%");
+    expect(CSS).toContain("0 16px 32px -16px rgba(0,0,0,.12),0 8px 16px -8px rgba(24,24,37,.08)");
+    expect(CSS).toContain("@keyframes sl{from{transform:translateX(calc(100% + 16px))}}");
+    expect(CSS).toContain(".scrim{position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.3)");
+  });
+
+  it("does not animate the panel's width or height (expand snaps instead of re-laying out every frame)", () => {
+    expect(CSS).not.toMatch(/transition:[^;}]*(width|height)/);
+  });
+});
+
+describe("closing and the 'You're viewing' price", () => {
+  it("tells the page it was closed, so the launcher can dock as the edge tab", async () => {
+    const seen = vi.fn();
+    window.addEventListener("askcart:closed", seen);
+    const p = setup(mockApi());
+    await p.open();
+    expect(seen).not.toHaveBeenCalled();
+    p.close();
+    window.removeEventListener("askcart:closed", seen);
+    expect(seen).toHaveBeenCalledTimes(1);
+  });
+
+  it("formats the viewing price from cents and the page's currency, in the shopper's locale", async () => {
+    const viewing = { title: "Tee", image: null, price: 1999 };
+    await setup(mockApi(), config(), pageCtx({ productId: "1", currency: "EUR", locale: "fr", viewing })).open();
+    expect(q(".vw-label")!.textContent).toMatch(/^19,99\s€ · /);
+  });
+
+  it("shows no price when the page has no currency", async () => {
+    await setup(mockApi(), config(), pageCtx({ productId: "1", currency: null, viewing: { title: "Tee", image: null, price: 1999 } })).open();
+    expect(q(".vw-label")!.textContent).toBe("You're viewing");
   });
 });

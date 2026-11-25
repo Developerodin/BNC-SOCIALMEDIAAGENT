@@ -30,6 +30,7 @@ function onCartPage(page: CartTarget): boolean {
 }
 
 let inCart: Promise<CartState> | null = null;
+let readAt = 0; // when `inCart` was requested (ms), so a message sent right after opening reuses that read
 
 /** What the theme's cart.js says: quantity per variant id, and the total item count (the header badge). */
 export type CartState = { quantities: Map<string, number>; itemCount: number; summary: CartSummary | null };
@@ -90,24 +91,32 @@ function readCart(page: CartTarget): Promise<CartState> {
     .catch(() => ({ quantities: new Map<string, number>(), itemCount: 0, summary: null }));
 }
 
+/** A cart read this young is reused for a chat message instead of reading again (opening the chat reads it too). */
+const FRESH_MS = 5000;
+
 /**
- * The cart as it is right now, for a chat message: one cart.js read (the same one cartState uses), which also refreshes the
+ * The cart as it is right now, for a chat message: a cart.js read (the same one cartState uses), which also refreshes the
  * cached state. Null when it can't be read, is empty, or takes over 1.5 s: the message is never held up by the cart.
+ * A read started in the last few seconds (the panel opening, our own add) is reused. Ceiling: a change made on the page
+ * itself within those seconds is missed by this one message; our own adds always re-read.
  */
 export function cartSummaryNow(page: CartTarget): Promise<CartSummary | null> {
-  const read = (inCart = readCart(page));
+  const read = inCart && Date.now() - readAt < FRESH_MS ? inCart : startRead(page);
   return Promise.race([read.then((s) => s.summary), new Promise<null>((r) => setTimeout(() => r(null), 1500))]);
 }
 
+function startRead(page: CartTarget): Promise<CartState> {
+  readAt = Date.now();
+  return (inCart = readCart(page));
+}
+
 /**
- * The shopper's cart, read from the theme's cart.js once per page and kept up to date by our own adds. Empty when the cart
- * can't be read. A change made outside the chat (the theme's own buttons) shows after the next page load, which every add
- * from the cart page already causes, or when the panel next opens (refreshCart).
- * Ceiling: an add that lands while the first read is still in flight can be counted twice until the next refresh.
+ * The shopper's cart, read from the theme's cart.js once per page and read again after our own adds and whenever the panel
+ * opens. Empty when the cart can't be read. A change made outside the chat (the theme's own buttons) shows after the next
+ * page load, which every add from the cart page already causes, or when the panel next opens (refreshCart).
  */
 export function cartState(page: CartTarget): Promise<CartState> {
-  inCart ??= readCart(page);
-  return inCart;
+  return inCart ?? startRead(page);
 }
 
 /** The variant ids in the shopper's cart. */
@@ -117,13 +126,13 @@ export function cartVariantIds(page: CartTarget): Promise<Set<string>> {
 
 /** Reads the cart again (the panel opened: the shopper may have changed it on the page) and tells the listeners. */
 export function refreshCart(page: CartTarget): void {
-  inCart = readCart(page);
-  void inCart.then(() => window.dispatchEvent(new Event(CART_CHANGED)));
+  void startRead(page).then(() => window.dispatchEvent(new Event(CART_CHANGED)));
 }
 
 /** Tests only: forget the cached cart. */
 export function resetCartCache() {
   inCart = null;
+  readAt = 0;
 }
 
 async function viaAjax(page: CartTarget, variantId: string, quantity: number): Promise<CartResult> {
@@ -174,12 +183,9 @@ export async function addToCart(page: CartTarget, variantId: string, quantity: n
   result ??= await viaAjax(page, variantId, quantity);
   if (result.ok) {
     window.dispatchEvent(new CustomEvent("cart:updated", { detail: { variantId, quantity, source: "askcart" } }));
-    if (inCart) {
-      const state = await inCart;
-      state.quantities.set(variantId, (state.quantities.get(variantId) ?? 0) + quantity);
-      state.itemCount += quantity;
-    }
-    window.dispatchEvent(new Event(CART_CHANGED));
+    // Read the cart again instead of adding to the cached state: a read that was already in flight may include this add,
+    // and counting it twice showed "2 in your cart". refreshCart tells the cards and the badge when the read is back.
+    refreshCart(page);
     // Themes don't redraw their cart page after a plain add.js, so the shopper on /cart would see a stale list. Reload it
     // (the panel reopens on the next page, UD13). A theme's own updateCart refreshes itself, so no reload then.
     // setTimeout: the caller's follow-ups (the keepalive cart-event log, the embed's reply) run first.

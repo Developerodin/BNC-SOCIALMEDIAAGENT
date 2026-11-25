@@ -122,7 +122,7 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
           typing.remove(); // the status line is for the wait before the first token (a retried stream starts without it)
         }
         text += delta;
-        renderRich(txt, text);
+        renderRich(txt, text, true); // each new paragraph fades in
         scroll();
       },
       status(s) {

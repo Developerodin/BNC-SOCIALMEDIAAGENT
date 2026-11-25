@@ -35,13 +35,15 @@ const cartQty = (card: Card, s: CartState) => card.variants.reduce((n, v) => n +
 const inCartText = (t: WidgetCtx["t"], qty: number) => (qty > 1 ? t("in_cart_n", { count: qty }) : t("in_cart"));
 
 /** Calls `fn` with this product's cart quantity now, and again after every add from the chat or a re-read of the cart.
- * Store pages only: the hosted page can't read the store's cart. The listener lives as long as the page (ceiling: one
- * small closure per rendered card row; a long chat history keeps them all). */
-function watchInCart(card: Card, page: WidgetCtx["page"], fn: (qty: number, state: CartState) => void): void {
+ * Store pages only: the hosted page can't read the store's cart. The listener goes away at the first cart change after
+ * `owner` (the tile's list item) has left the page, e.g. after New chat or Delete chat; without an owner it lives as long
+ * as the page. */
+function watchInCart(card: Card, page: WidgetCtx["page"], fn: (qty: number, state: CartState) => void, owner?: Element): void {
   if (page.hosted) return;
   const run = () => void cartState(page).then((s) => fn(cartQty(card, s), s));
   run();
-  window.addEventListener(CART_CHANGED, run);
+  const on = () => (owner && !owner.isConnected ? window.removeEventListener(CART_CHANGED, on) : run());
+  window.addEventListener(CART_CHANGED, on);
 }
 
 const reduced = () => !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -81,7 +83,7 @@ function productAnchor(page: WidgetCtx["page"], href: string, cls: string, text:
 }
 
 /** Per product, shared by the card's Add button and the sheet's: one add at a time, and the "Buy on the store" fallback. */
-type AddState = { busy: boolean; fellBack: boolean };
+type AddState = { busy: boolean; fellBack: boolean; owner?: Element };
 
 /** What an add shows, per surface (the card's button or the sheet). `runAdd` drives it. */
 type AddView = {
@@ -396,7 +398,7 @@ function addControls(
     const inCart = available.filter((v) => (state.quantities.get(v.id) ?? 0) > 0);
     const best = inCart.reduce<Variant | null>((b, v) => (!b || (state.quantities.get(v.id) ?? 0) > (state.quantities.get(b.id) ?? 0) ? v : b), null);
     if (best) pick(best);
-  });
+  }, st.owner);
 
   const view = addButtonView(button, ctx, st, {
     clear: () => status.replaceChildren(),
@@ -512,7 +514,7 @@ export function renderCards(into: HTMLElement, cards: Card[], ctx: WidgetCtx, me
         incart.badge.classList.add("ac-pop"); // CSS: off under prefers-reduced-motion
       }
       before = qty;
-    });
+    }, li);
     tile.append(media, el("span", "ac-tile__title", c.title));
     const price = tilePrice(c, ctx);
     if (price) {
@@ -521,7 +523,7 @@ export function renderCards(into: HTMLElement, cards: Card[], ctx: WidgetCtx, me
       if (price.compareAt) row.append(el("s", "ac-tile__compare", price.compareAt));
       tile.append(row);
     }
-    const st: AddState = { busy: false, fellBack: false };
+    const st: AddState = { busy: false, fellBack: false, owner: li };
     let full: HTMLElement | null = null; // built on the first open, then kept so a chosen option survives closing
     const open = (opener: HTMLElement) => openSheet(into, opener, c, (full ??= cardEl(c, ctx, messageId, st, onAdded)), ctx);
     tile.addEventListener("click", () => open(tile));
@@ -566,8 +568,14 @@ export function renderCards(into: HTMLElement, cards: Card[], ctx: WidgetCtx, me
   const next = nav(1, ctx.t("next"));
   const sync = () => {
     const over = track.scrollWidth > track.clientWidth + 1;
-    prev.hidden = !over || track.scrollLeft <= 1;
-    next.hidden = !over || track.scrollLeft + track.clientWidth >= track.scrollWidth - 1;
+    const hidePrev = !over || track.scrollLeft <= 1;
+    const hideNext = !over || track.scrollLeft + track.clientWidth >= track.scrollWidth - 1;
+    // A hidden button can't keep focus (it would fall to <body>, outside the dialog): hand it to the tile it scrolled to.
+    const at = (track.getRootNode() as Document | ShadowRoot).activeElement;
+    if (hideNext && at === next) track.querySelector<HTMLElement>("li:last-child .ac-tile")?.focus();
+    if (hidePrev && at === prev) track.querySelector<HTMLElement>("li:first-child .ac-tile")?.focus();
+    prev.hidden = hidePrev;
+    next.hidden = hideNext;
   };
   track.addEventListener("scroll", sync);
   wrap.append(prev, track, next);
@@ -618,12 +626,14 @@ img.ac-ld{opacity:1}
 .ac-tile__title{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;overflow-wrap:anywhere;font-size:14px;line-height:19px;font-weight:500;color:#111}
 .ac-tile__prices{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:baseline;font-size:13px;line-height:18px;color:#6b6b6b}
 .ac-cards__nav{position:absolute;top:66px;display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:18px;border:0;background:#fff;color:#111;box-shadow:0 1px 6px rgba(0,0,0,.22);cursor:pointer;z-index:1}
+.ac-cards__nav::before{content:"";position:absolute;inset:-4px}
 .ac-cards__nav[hidden]{display:none}
 .ac-cards__nav--prev{left:4px}.ac-cards__nav--next{right:4px}
 @media (max-width:639px){.ac-cards__slide{flex-basis:148px;width:148px}.ac-cards__nav{top:56px}}
 @media (hover:hover) and (prefers-reduced-motion:no-preference){.ac-tile__img{transition:transform .2s ease}.ac-tile:hover .ac-tile__img{transform:scale(1.03)}}
 .ac-sheet{position:absolute;top:0;right:0;bottom:0;left:0;z-index:5;display:flex;flex-direction:column;background:#fff;color:#111;transform:translateX(100%);transition:transform .3s cubic-bezier(0.32,0.72,0,1)}
 .ac-sheet.on{transform:none}
+:host(:dir(rtl)) .ac-sheet{transform:translateX(-100%)}:host(:dir(rtl)) .ac-sheet.on{transform:none}
 .ac-sheet.out{transition-duration:.2s}
 .ac-sheet__bar{display:flex;align-items:center;gap:8px;padding:8px 12px;flex:none;border-bottom:1px solid #eee}
 .ac-sheet__back{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:22px;cursor:pointer;border:0;background:none;color:inherit}

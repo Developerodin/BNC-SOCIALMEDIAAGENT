@@ -35,7 +35,7 @@ describe("extension locales", () => {
   });
   it("English defaults", () => {
     const en = load("en.default");
-    expect(en.ask_ai.eyebrow).toBe("Your {{ store }} expert");
+    expect(en.ask_ai.eyebrow).toBe("Your {{ store }} AI expert");
     expect(en.ask_ai.heading).toBe("A question about this product?");
   });
 

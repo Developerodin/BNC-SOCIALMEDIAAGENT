@@ -28,6 +28,7 @@ const CSS =
   "box-shadow:-2px 0 12px rgba(0,0,0,.14);transform:translateY(-50%)}" +
   ".l.tab.sl{right:auto;left:0;border-radius:0 12px 12px 0;box-shadow:2px 0 12px rgba(0,0,0,.14)}" +
   ".l.tab:hover,.l.tab:active{transform:translateY(-50%)}" +
+  ".l.tab.dk{animation:fi .3s cubic-bezier(0.22,1,0.36,1)}" + // docking after a close: slides in from the edge
   ".l.tab img{display:block;max-width:44px;max-height:44px;object-fit:contain}" +
   ".l.tab::after{content:\"\";position:absolute;top:8px;right:8px;width:8px;height:8px;border-radius:50%;background:var(--ac-bg);box-shadow:0 0 0 2px #fff}" +
   ".l:focus-visible,.t button:focus-visible{outline:3px solid var(--ac-bg);outline-offset:3px}" +
@@ -36,8 +37,8 @@ const CSS =
   "background:#fff;color:#111;box-shadow:0 4px 16px rgba(0,0,0,.18);animation:f .2s ease-out}" +
   ".t button{flex:none;width:24px;height:24px;border:0;border-radius:12px;background:transparent;color:#555;" +
   "cursor:pointer;font:inherit;font-size:18px;line-height:24px;padding:0;margin:0}" +
-  "@keyframes f{from{opacity:0;transform:translateY(8px)}}@keyframes fo{from{opacity:0}}" + // the button only fades: it appears on every page
-  "@media (prefers-reduced-motion:reduce){.l,.t{animation:none;transition:none}}";
+  "@keyframes f{from{opacity:0;transform:translateY(8px)}}@keyframes fo{from{opacity:0}}@keyframes fi{from{opacity:0;transform:translate(14px,-50%)}}" + // the button only fades: it appears on every page
+  "@media (prefers-reduced-motion:reduce){.l,.t,.l.tab.dk{animation:none;transition:none}}";
 
 function chatIcon(): SVGSVGElement {
   const ns = "http://www.w3.org/2000/svg";
@@ -66,11 +67,21 @@ export function start(): (() => void) | undefined {
   }
   if (!cfg || !cfg.enabled || !cfg.launcher || !page || typeof page.shop !== "string") return;
   const d = root.dataset;
-  // "Ask our AI agent" without theme editing: the embed ships the block in a <template>; put it after the buy form unless
-  // the merchant placed the block by hand (any [data-askcart-ask-ai] already in the page), then load its script.
-  // Template content is a separate fragment, so the query below only sees blocks that are really in the page.
-  const tpl = document.querySelector<HTMLTemplateElement>("template[data-askcart-ask-ai-auto]");
-  if (tpl && !document.querySelector("[data-askcart-ask-ai]")) {
+  // "Ask our AI agent" without theme editing: the embed ships the block in a <template> inside #askcart-root; put it after the
+  // buy form unless the merchant placed the block by hand (any [data-askcart-ask-ai] already in the page), then load its script.
+  // Template content is a separate fragment, so the query below only sees blocks that are really in the page. Only this
+  // embed's own template counts, and its script must come from the same origin as the chat script (both are extension assets
+  // on Shopify's CDN): HTML that something else put in the page can't make us load a script.
+  const tpl = root.querySelector<HTMLTemplateElement>(":scope > template[data-askcart-ask-ai-auto]");
+  const origin = (u = "") => {
+    try {
+      return u ? new URL(u, location.href).origin : "";
+    } catch {
+      return "";
+    }
+  };
+  const aiSrc = tpl?.dataset.script;
+  if (tpl && origin(aiSrc) && origin(aiSrc) === origin(d.widgetSrc) && !document.querySelector("[data-askcart-ask-ai]")) {
     // The real buy form has a submit control; Dawn's price block also renders a hidden "installment" form before it.
     const forms = Array.from(document.querySelectorAll("form[action*='/cart/add']"));
     const isBuy = (f: Element) => !f.matches("[id*='installment'],.installment") && !!f.querySelector("button:not([type=button]):not([type=reset]),[name=add],input[type=submit]");
@@ -95,8 +106,8 @@ export function start(): (() => void) | undefined {
       } else anchor.after(tpl.content.cloneNode(true));
       const s = document.createElement("script");
       s.async = true;
-      s.src = tpl.dataset.script ?? "";
-      if (s.src) document.head.append(s);
+      s.src = aiSrc!;
+      document.head.append(s);
     }
   }
   const ui =uiState(page.shop); // the same storage the panel writes (core/storage.ts)
@@ -120,31 +131,37 @@ export function start(): (() => void) | undefined {
   btn.setAttribute("aria-haspopup", "dialog");
   btn.style.setProperty("--ac-bg", accent);
   btn.style.setProperty("--ac-fg", textOn(accent));
-  const tab = cfg.launcher.style === "tab";
-  if (!tab) {
-    btn.style.bottom = offset + "px";
-    btn.style[left ? "left" : "right"] = "20px";
-  }
-  if (tab) {
-    // Docked to the edge (offset doesn't apply). The accessible name is the label's translation: the tab shows no text.
-    btn.classList.add("tab");
-    if (left) btn.classList.add("sl");
-    btn.setAttribute("aria-label", d.ariaLabel || "Open the chat assistant");
-    const logo = brandLogo(cfg.avatarUrl, page.logo);
-    if (logo) {
-      const img = document.createElement("img");
-      img.alt = "";
-      img.src = logo;
-      btn.append(img);
-    } else btn.append(chatIcon());
-  } else if (cfg.launcher.style === "icon") {
-    btn.classList.add("i");
-    btn.setAttribute("aria-label", d.ariaLabel || "Open the chat assistant");
-    btn.append(chatIcon());
-  } else {
-    // The visible label is the accessible name (WCAG 2.5.3), so no aria-label that would differ from it.
-    btn.append(chatIcon(), cfg.launcher.label || d.label || "Ask us anything"); // icon + label pill
-  }
+  let tab = cfg.launcher.style === "tab";
+  const paint = () => {
+    btn.className = "l";
+    btn.replaceChildren();
+    btn.style.bottom = btn.style.left = btn.style.right = "";
+    if (!tab) {
+      btn.style.bottom = offset + "px";
+      btn.style[left ? "left" : "right"] = "20px";
+    }
+    if (tab) {
+      // Docked to the edge (offset doesn't apply). The accessible name is the label's translation: the tab shows no text.
+      btn.classList.add("tab");
+      if (left) btn.classList.add("sl");
+      btn.setAttribute("aria-label", d.ariaLabel || "Open the chat assistant");
+      const logo = brandLogo(cfg.avatarUrl, page.logo);
+      if (logo) {
+        const img = document.createElement("img");
+        img.alt = "";
+        img.src = logo;
+        btn.append(img);
+      } else btn.append(chatIcon());
+    } else if (cfg.launcher.style === "icon") {
+      btn.classList.add("i");
+      btn.setAttribute("aria-label", d.ariaLabel || "Open the chat assistant");
+      btn.append(chatIcon());
+    } else {
+      // The visible label is the accessible name (WCAG 2.5.3), so no aria-label that would differ from it.
+      btn.append(chatIcon(), cfg.launcher.label || d.label || "Ask us anything"); // icon + label pill
+    }
+  };
+  paint();
   shadow.append(style);
   if (showBtn) shadow.append(btn);
   document.body.append(host);
@@ -177,8 +194,21 @@ export function start(): (() => void) | undefined {
     document.head.append(script);
   }
 
+  // After the shopper closes the panel the launcher stays as the edge tab for the rest of this page view (whatever style the
+  // merchant chose; the next page load draws it as configured). One button changes shape, so it can't be shown twice, and a
+  // click on it reopens the chat the way it was last open (the drawer after a drawer). No button where launcher.scope says so.
+  let closed = false;
+  const onClosed = () => {
+    closed = true;
+    if (!tab) {
+      tab = true;
+      paint();
+      btn.classList.add("dk");
+    }
+  };
+  if (showBtn) window.addEventListener("askcart:closed", onClosed);
   // A <button> already turns Enter and Space into a click.
-  btn.addEventListener("click", () => openChat({ productId: null }));
+  btn.addEventListener("click", () => openChat({ productId: null, ...(closed && ui.drawer.get() && { mode: "drawer" as const }) }));
   const onOpenEvent = (e: Event) => {
     const det = (e as CustomEvent<{ productId?: unknown; message?: unknown; mode?: unknown; title?: { eyebrow?: unknown; heading?: unknown } } | null>).detail;
     const id = det?.productId;
@@ -235,6 +265,7 @@ export function start(): (() => void) | undefined {
   return () => {
     clearTimeout(timer);
     window.removeEventListener("askcart:open", onOpenEvent);
+    window.removeEventListener("askcart:closed", onClosed);
     host.remove();
   };
 }

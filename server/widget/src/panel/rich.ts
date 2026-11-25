@@ -17,33 +17,25 @@ function inline(parent: HTMLElement, text: string) {
   if (last < text.length) parent.append(text.slice(last));
 }
 
-/** Replaces `box`'s content with `text` rendered: runs of bullet lines become a <ul>, other lines keep their line breaks
- * (the bubble is white-space: pre-wrap). Called again on every streamed delta, so it rebuilds from scratch. */
-export function renderRich(box: HTMLElement, text: string) {
-  box.replaceChildren();
-  let list: HTMLElement | null = null;
+/** One block of the answer: a paragraph (`items` is its one text) or a bullet list (`items` are the bullets). */
+type Block = { tag: "p" | "ul"; items: string[] };
+
+function parse(text: string): Block[] {
+  const blocks: Block[] = [];
+  let list: Block | null = null;
   let plain: string[] = [];
   const flush = () => {
     // Line breaks next to a list are dropped: the list's own margin spaces it.
     const t = plain.join("\n").replace(/^\n+|\n+$/g, "");
-    const paras = t ? t.split(/\n{2,}/) : [];
-    if (paras.length === 1) inline(box, t);
-    else
-      for (const p of paras) {
-        const e = document.createElement("p"); // blank lines between paragraphs: each gets its own <p> (spaced in styles.ts)
-        inline(e, p);
-        box.append(e);
-      }
+    if (t) for (const p of t.split(/\n{2,}/)) blocks.push({ tag: "p", items: [p] });
     plain = [];
   };
   for (const line of text.split("\n")) {
     const m = BULLET.exec(line);
     if (m) {
       flush();
-      if (!list) box.append((list = document.createElement("ul")));
-      const li = document.createElement("li");
-      inline(li, m[1]);
-      list.append(li);
+      if (!list) blocks.push((list = { tag: "ul", items: [] }));
+      list.items.push(m[1]);
     } else if (list && !line.trim()) {
       continue; // a blank line between bullets doesn't end the list
     } else {
@@ -52,4 +44,45 @@ export function renderRich(box: HTMLElement, text: string) {
     }
   }
   flush();
+  return blocks;
+}
+
+function fill(node: HTMLElement, b: Block) {
+  node.replaceChildren();
+  if (b.tag === "p") return inline(node, b.items[0]);
+  for (const item of b.items) {
+    const li = document.createElement("li");
+    inline(li, item);
+    node.append(li);
+  }
+}
+
+const shown = new WeakMap<HTMLElement, string[]>(); // per box: the source of each block as last drawn
+
+/** Draws `text` in `box`: paragraphs (blank lines between them, spaced in styles.ts) and bullet lists. Called again on
+ * every streamed delta with the whole text so far, and only the blocks that changed are touched (in practice the last one),
+ * so a paragraph already on screen is not rebuilt and its fade is not replayed. `fade` gives each block that is new in
+ * this call the `nw` class (styles.ts fades it in once; off for history). */
+export function renderRich(box: HTMLElement, text: string, fade = false) {
+  const blocks = parse(text);
+  const keys = blocks.map((b) => b.tag + b.items.join("\n"));
+  const old = shown.get(box);
+  if (!old) box.replaceChildren(); // first call, or a box that held something else
+  shown.set(box, keys);
+  blocks.forEach((b, i) => {
+    let node = box.children[i] as HTMLElement | undefined;
+    if (node && old && old[i] === keys[i]) return; // unchanged
+    if (node && node.tagName.toLowerCase() !== b.tag) {
+      node.remove();
+      node = undefined;
+    }
+    if (node) return fill(node, b); // the same block, longer: the node stays and its fade carries on
+    node = document.createElement(b.tag);
+    if (fade) node.className = "nw";
+    fill(node, b);
+    const at = box.children[i];
+    if (at) at.before(node);
+    else box.append(node);
+  });
+  while (box.children.length > blocks.length) box.lastElementChild!.remove();
 }

@@ -31,6 +31,9 @@ function mountRoot(cfg: WidgetConfig | string = config(), pageOver: Partial<Page
   root.dataset.ariaLabel = "Open the chat assistant";
   root.dataset.teaser = "Questions? We can help.";
   root.dataset.teaserClose = "Dismiss";
+  // The embed's Liquid puts the automatic block's <template> inside #askcart-root: a template already in the body is moved in.
+  const tpl = document.body.querySelector("template[data-askcart-ask-ai-auto]");
+  if (tpl) root.append(tpl);
   document.body.append(root);
 }
 
@@ -344,7 +347,7 @@ describe("launcher scope", () => {
 describe("automatic Ask our AI agent block", () => {
   const AI_SRC = "https://cdn.shopify.com/extensions/x/assets/askcart-ask-ai.js";
   const template = () =>
-    `<template data-askcart-ask-ai-auto data-script="${AI_SRC}"><link rel="stylesheet" href="x.css"><div class="askcart-ai" data-askcart-ask-ai></div></template>`;
+    `<template data-askcart-ask-ai-auto data-script="${AI_SRC}"><div class="askcart-ai" data-askcart-ask-ai></div></template>`;
   const form = `<form action="/cart/add" method="post"><button>Add to cart</button></form>`;
   const aiScripts = () => document.querySelectorAll(`script[src="${AI_SRC}"]`);
 
@@ -353,7 +356,7 @@ describe("automatic Ask our AI agent block", () => {
     mountRoot();
     start();
     expect(document.querySelector("#after")!.previousElementSibling?.hasAttribute("data-askcart-ask-ai")).toBe(true);
-    expect(document.querySelector("form")!.nextElementSibling?.matches("link")).toBe(true);
+    expect(document.querySelector("form")!.nextElementSibling?.hasAttribute("data-askcart-ask-ai")).toBe(true);
     expect(aiScripts()).toHaveLength(1);
   });
 
@@ -365,7 +368,7 @@ describe("automatic Ask our AI agent block", () => {
     mountRoot();
     start();
     expect(document.querySelector("#pf [data-askcart-ask-ai]")).toBeNull();
-    expect(document.querySelector("#pf")!.nextElementSibling?.matches("link")).toBe(true);
+    expect(document.querySelector("#pf")!.nextElementSibling?.hasAttribute("data-askcart-ask-ai")).toBe(true);
     expect(document.querySelectorAll("main [data-askcart-ask-ai]")).toHaveLength(1);
     expect(document.querySelector("header [data-askcart-ask-ai]")).toBeNull();
   });
@@ -384,6 +387,24 @@ describe("automatic Ask our AI agent block", () => {
     start();
     expect(document.querySelectorAll("[data-askcart-ask-ai]")).toHaveLength(0);
     expect(aiScripts()).toHaveLength(0);
+  });
+
+  it("ignores a template that is not the embed's own (HTML some other app put in the page)", () => {
+    document.body.insertAdjacentHTML("beforeend", `<main>${form}</main>`);
+    mountRoot();
+    document.body.insertAdjacentHTML("beforeend", template().replace("cdn.shopify.com", "evil.example"));
+    document.body.insertAdjacentHTML("afterbegin", template());
+    start();
+    expect(document.querySelectorAll("[data-askcart-ask-ai]")).toHaveLength(0);
+    expect(document.querySelectorAll("script[src*='askcart-ask-ai']")).toHaveLength(0);
+  });
+
+  it("loads the block's script only from the chat script's own origin", () => {
+    document.body.insertAdjacentHTML("beforeend", `<main>${form}</main>` + template().replace("cdn.shopify.com", "evil.example"));
+    mountRoot();
+    start();
+    expect(document.querySelectorAll("[data-askcart-ask-ai]")).toHaveLength(0); // no block without its script
+    expect(document.querySelectorAll("script[src*='evil.example']")).toHaveLength(0);
   });
 
   it("does nothing without the template (setting off, or not a product page)", () => {
@@ -438,7 +459,7 @@ describe("logo tab launcher", () => {
     const css = shadow().querySelector("style")!.textContent!;
     expect(css).toMatch(/\.l\.tab\{top:50%;bottom:auto;right:0;width:56px;height:64px/);
     expect(css).toContain(".l.tab::after");
-    expect(css).toContain("@media (prefers-reduced-motion:reduce){.l,.t{animation:none;transition:none}}");
+    expect(css).toContain("@media (prefers-reduced-motion:reduce){.l,.t,.l.tab.dk{animation:none;transition:none}}");
     expect(css).toContain("@media (hover:hover) and (prefers-reduced-motion:no-preference){.l:hover");
   });
 
@@ -478,7 +499,7 @@ describe("restoring the chat on a page load", () => {
 
 describe("automatic block placement on Dawn-like markup", () => {
   const AI_SRC = "https://cdn.shopify.com/extensions/x/assets/askcart-ask-ai.js";
-  const template = `<template data-askcart-ask-ai-auto data-script="${AI_SRC}"><link rel="stylesheet" href="x.css"><div class="askcart-ai" data-askcart-ask-ai></div></template>`;
+  const template = `<template data-askcart-ask-ai-auto data-script="${AI_SRC}"><div class="askcart-ai" data-askcart-ask-ai></div></template>`;
   const dawn = `<main><div class="product__info-container">
     <div class="price-block"><p class="price">$20.00</p><p>Tax included.</p>
       <form action="/cart/add" id="product-form-installment-1" class="installment"><input type="hidden" name="id" value="1"></form></div>
@@ -495,7 +516,7 @@ describe("automatic block placement on Dawn-like markup", () => {
     expect(block.closest(".price-block")).toBeNull();
     expect(block.closest("product-form")).toBeNull();
     // right after the buy-buttons wrapper, before the description
-    expect(document.querySelector("product-form")!.nextElementSibling!.matches("link")).toBe(true);
+    expect(document.querySelector("product-form")!.nextElementSibling!.hasAttribute("data-askcart-ask-ai")).toBe(true);
     expect(document.querySelector("#buy")!.contains(block)).toBe(true);
     expect(block.parentElement!.nextElementSibling!.id).toBe("after");
   });
@@ -526,8 +547,100 @@ describe("automatic block placement on Dawn-like markup", () => {
     mountRoot();
     start();
     const block = document.querySelector("[data-askcart-ask-ai]")!;
-    expect(document.querySelector("#pay")!.nextElementSibling!.matches("link")).toBe(true);
+    expect(document.querySelector("#pay")!.nextElementSibling!.hasAttribute("data-askcart-ask-ai")).toBe(true);
     expect(block.parentElement!.nextElementSibling!.id).toBe("after");
   });
 });
 
+
+describe("the edge tab after the chat is closed", () => {
+  const closed = () => window.dispatchEvent(new Event("askcart:closed"));
+  const pill = () => config();
+  const styled = (style: "pill" | "icon" | "tab", side: "right" | "left" = "right", scope: "all" | "product" | "none" = "all") =>
+    config({ launcher: { style, label: null, side, offset: 40, scope } });
+
+  it("a pill becomes the logo tab, in the same button (never a second one), and is the pill again on the next page load", () => {
+    mountRoot(pill(), { logo: "https://cdn.shopify.com/s/files/logo.png" });
+    const stop = start()!;
+    const before = button();
+    expect(before.textContent).toContain("Ask us anything");
+    closed();
+    expect(button()).toBe(before);
+    expect(shadow().querySelectorAll("button.l")).toHaveLength(1);
+    expect(button().classList.contains("tab")).toBe(true);
+    expect(button().classList.contains("l")).toBe(true);
+    expect(button().getAttribute("aria-label")).toBe("Open the chat assistant");
+    expect(button().querySelector("img")!.getAttribute("src")).toBe("https://cdn.shopify.com/s/files/logo.png");
+    expect(button().textContent).toBe("");
+    expect(button().style.bottom).toBe(""); // the pill's offset does not apply to the tab
+    expect(button().style.right).toBe("");
+    stop();
+    document.body.innerHTML = "";
+    mountRoot(pill()); // the next page: as configured
+    start();
+    expect(button().classList.contains("tab")).toBe(false);
+    expect(button().textContent).toContain("Ask us anything");
+  });
+
+  it("an icon launcher docks too, on the left when the launcher is on the left", () => {
+    mountRoot(styled("icon", "left"));
+    start();
+    expect(button().classList.contains("i")).toBe(true);
+    closed();
+    expect(button().classList.contains("i")).toBe(false);
+    expect(button().classList.contains("tab")).toBe(true);
+    expect(button().classList.contains("sl")).toBe(true);
+    expect(button().style.left).toBe("");
+  });
+
+  it("a launcher that already is the tab stays one tab, with no docking animation", () => {
+    mountRoot(styled("tab"));
+    start();
+    closed();
+    closed();
+    expect(shadow().querySelectorAll("button.l")).toHaveLength(1);
+    expect(button().classList.contains("tab")).toBe(true);
+    expect(button().classList.contains("dk")).toBe(false);
+  });
+
+  it("slides in when it docks, and the docking animation is off under reduced motion", () => {
+    mountRoot(pill());
+    start();
+    closed();
+    expect(button().classList.contains("dk")).toBe(true);
+    const css = shadow().querySelector("style")!.textContent!;
+    expect(css).toContain(".l.tab.dk{animation:fi .3s");
+    expect(css).toMatch(/prefers-reduced-motion:reduce\)\{[^}]*\.l\.tab\.dk\{?[^}]*animation:none/);
+  });
+
+  it("is not shown where the merchant's scope shows no button", () => {
+    mountRoot(styled("pill", "right", "none"));
+    start();
+    closed();
+    expect(shadow().querySelector("button.l")).toBeNull();
+  });
+
+  it("a click on the tab reopens the chat the way it was last open: the drawer after a drawer, the panel otherwise", () => {
+    mountRoot(pill());
+    start();
+    button().click(); // before any close: the plain panel, whatever the stored mode is
+    const open = widgetLoaded();
+    expect(open).toHaveBeenLastCalledWith({ productId: null });
+    localStorage.setItem(`askcart:${SHOP}:ui`, JSON.stringify({ drawer: true }));
+    closed();
+    button().click();
+    expect(open).toHaveBeenLastCalledWith({ productId: null, mode: "drawer" });
+    localStorage.setItem(`askcart:${SHOP}:ui`, JSON.stringify({ drawer: false }));
+    button().click();
+    expect(open).toHaveBeenLastCalledWith({ productId: null });
+  });
+
+  it("stops listening when the launcher is removed", () => {
+    mountRoot(pill());
+    const stop = start()!;
+    const btn = button();
+    stop();
+    closed();
+    expect(btn.classList.contains("tab")).toBe(false);
+  });
+});

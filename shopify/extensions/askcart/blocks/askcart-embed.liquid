@@ -6,13 +6,20 @@
 {%- assign cfg = app.metafields.askcart.widget.value -%}
 {%- if cfg.enabled -%}
   {%- capture product_id -%}{%- if request.page_type == 'product' and product -%}{{ product.id | append: '' | json }}{%- else -%}null{%- endif -%}{%- endcapture -%}
-  {%- capture viewing -%}{%- if request.page_type == 'product' and product -%}{"title":{{ product.title | json }},"image":{% if product.featured_image %}{{ product.featured_image | image_url: width: 160 | json }}{% else %}null{% endif %},"price":{{ product.price | money | json }}}{%- else -%}null{%- endif -%}{%- endcapture -%}
+  {%- capture viewing -%}{%- if request.page_type == 'product' and product -%}{"title":{{ product.title | json }},"image":{% if product.featured_image %}{{ product.featured_image | image_url: width: 160 | json }}{% else %}null{% endif %},"price":{{ product.price | json }}}{%- else -%}null{%- endif -%}{%- endcapture -%}
   {%- comment -%} The store's Shopify brand logo (the chat's logo when no avatar is set); image_url is protocol-relative, the widget resolves it. {%- endcomment -%}
   {%- capture logo -%}{%- if shop.brand.logo -%}{{ shop.brand.logo | image_url: width: 256 | json }}{%- elsif shop.brand.square_logo -%}{{ shop.brand.square_logo | image_url: width: 256 | json }}{%- else -%}null{%- endif -%}{%- endcapture -%}
   {%- capture ctx -%}
     {"shop":{{ shop.permanent_domain | json }},"locale":{{ request.locale.iso_code | json }},"country":{{ localization.country.iso_code | json }},"currency":{{ cart.currency.iso_code | json }},"productId":{{ product_id }},"cartAddUrl":{{ routes.cart_add_url | json }},"cartUrl":{{ routes.cart_url | json }},"privacyUrl":{{ shop.privacy_policy.url | json }},"designMode":{{ request.design_mode | json }},"loggedIn":{% if customer %}true{% else %}false{% endif %},"viewing":{{ viewing }},"logo":{{ logo }}}
   {%- endcapture -%}
   {%- comment -%} C20: the chat script is an extension asset on Shopify's CDN; the launcher injects it on first click. {%- endcomment -%}
+  {%- comment -%}
+    The block's stylesheet is linked here, outside the template below and on product pages only, so it is already loaded when
+    the launcher inserts the block (no layout jump). A hand-placed block links the same file, which the browser fetches once.
+  {%- endcomment -%}
+  {%- if block.settings.auto_ask_ai and request.page_type == 'product' and product and cfg.apiBase != blank -%}
+    <link rel="stylesheet" href="{{ 'askcart-ask-ai.css' | asset_url | escape }}">
+  {%- endif -%}
   <div
     id="askcart-root"
     data-config="{{ cfg | json | escape }}"
@@ -23,21 +30,21 @@
     data-teaser="{{ 'launcher.teaser' | t }}"
     data-teaser-close="{{ 'launcher.teaser_close' | t }}"
     hidden
-  ></div>
-  {%- comment -%}
-    Ask our AI agent below the Buy buttons, with no theme editing. The launcher copies this template in after the buy form
-    (unless the merchant placed the block by hand) and loads the block's script; the stylesheet link rides inside the
-    template so it loads only when the block is inserted, on product pages only. Questions are AI-written per product.
-  {%- endcomment -%}
-  {%- if block.settings.auto_ask_ai and request.page_type == 'product' and product and cfg.apiBase != blank -%}
-    {%- assign store_name = cfg.name | default: shop.name -%}
-    {%- assign ask_eyebrow = 'ask_ai.eyebrow' | t: store: store_name -%}
-    {%- assign ask_heading = 'ask_ai.heading' | t -%}
-    <template data-askcart-ask-ai-auto data-script="{{ 'askcart-ask-ai.js' | asset_url | escape }}">
-      <link rel="stylesheet" href="{{ 'askcart-ask-ai.css' | asset_url | escape }}">
-      {%- render 'askcart-ask-ai', cfg: cfg, product: product, eyebrow: ask_eyebrow, heading: ask_heading, pill_count: 3 -%}
-    </template>
-  {%- endif -%}
+  >
+    {%- comment -%}
+      Ask our AI agent below the Buy buttons, with no theme editing. The launcher copies this template in after the buy form
+      (unless the merchant placed the block by hand) and loads the block's script. It lives inside #askcart-root so the
+      launcher never picks up a template that something else put in the page. Questions are AI-written per product.
+    {%- endcomment -%}
+    {%- if block.settings.auto_ask_ai and request.page_type == 'product' and product and cfg.apiBase != blank -%}
+      {%- assign store_name = cfg.name | default: shop.name -%}
+      {%- assign ask_eyebrow = 'ask_ai.eyebrow' | t: store: store_name -%}
+      {%- assign ask_heading = 'ask_ai.heading' | t -%}
+      <template data-askcart-ask-ai-auto data-script="{{ 'askcart-ask-ai.js' | asset_url | escape }}">
+        {%- render 'askcart-ask-ai', cfg: cfg, product: product, eyebrow: ask_eyebrow, heading: ask_heading, pill_count: 3 -%}
+      </template>
+    {%- endif -%}
+  </div>
 {%- endif -%}
 
 {% schema %}

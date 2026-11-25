@@ -11,6 +11,7 @@ const page: PageContext = {
 };
 const fetchMock = vi.fn<typeof fetch>();
 type W = { Shopify?: unknown };
+const addCalls = () => fetchMock.mock.calls.filter(([u]) => String(u).includes("/add"));
 
 beforeEach(() => {
   fetchMock.mockReset();
@@ -77,7 +78,7 @@ describe("addToCart", () => {
       const updateCart = shopify(false, async () => ({ cart: {} }));
       expect(await addToCart(page, "123", 1)).toEqual({ ok: true });
       expect(updateCart).toHaveBeenCalledWith({ lines: [{ merchandiseId: "gid://shopify/ProductVariant/123", quantity: 1 }] });
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(addCalls()).toHaveLength(0); // only the cart re-read goes out
     });
 
     it("is never used while it's Shopify's default (it may reload the page)", async () => {
@@ -85,13 +86,13 @@ describe("addToCart", () => {
       fetchMock.mockResolvedValue(jsonResponse(200, {}));
       await addToCart(page, "123", 1);
       expect(updateCart).not.toHaveBeenCalled();
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(addCalls()).toHaveLength(1);
     });
 
     it("returns the first userError as the message, with no fallback add", async () => {
       shopify(false, async () => ({ userErrors: [{ message: "Sold out" }] }));
       expect(await addToCart(page, "123", 1)).toEqual({ ok: false, status: 422, message: "Sold out" });
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled(); // a refused add re-reads nothing
     });
 
     it("falls back to cart/add.js when the action couldn't run at all", async () => {
@@ -100,7 +101,7 @@ describe("addToCart", () => {
       });
       fetchMock.mockResolvedValue(jsonResponse(200, {}));
       expect(await addToCart(page, "123", 1)).toEqual({ ok: true });
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(addCalls()).toHaveLength(1);
     });
   });
 
@@ -148,17 +149,18 @@ describe("addToCart", () => {
 });
 
 describe("cartVariantIds", () => {
-  it("reads the locale-aware cart.js once, and our successful adds join the set", async () => {
+  it("reads the locale-aware cart.js once, and the cart is read again after our successful adds", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [{ variant_id: 1 }, { variant_id: 2 }] }));
     expect([...(await cartVariantIds(page))]).toEqual(["1", "2"]);
     expect(fetchMock.mock.calls[0][0]).toBe("/fr/cart.js");
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [] })); // the add
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [{ variant_id: 1 }, { variant_id: 2 }, { variant_id: 7 }] })); // the re-read
     await addToCart(page, "7", 1);
     expect([...(await cartVariantIds(page))]).toEqual(["1", "2", "7"]);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it("cartState exposes quantities per variant and the cart's item_count; adds update both and announce the change", async () => {
+  it("cartState exposes quantities per variant and the cart's item_count; a successful add re-reads the cart (no double count) and announces it", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [{ variant_id: 1, quantity: 2 }, { variant_id: 2, quantity: 1 }], item_count: 3 }));
     const s = await cartState(page);
     expect([...s.quantities]).toEqual([["1", 2], ["2", 1]]);
@@ -166,13 +168,26 @@ describe("cartVariantIds", () => {
     const changed = vi.fn();
     window.addEventListener(CART_CHANGED, changed);
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [] })); // an add
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [{ variant_id: 1, quantity: 4 }, { variant_id: 2, quantity: 1 }], item_count: 5 })); // the read after it
     await addToCart(page, "1", 2);
     fetchMock.mockResolvedValueOnce(jsonResponse(422, {})); // a refused add
     await addToCart(page, "1", 5);
+    const now = await cartState(page);
+    await Promise.resolve();
     window.removeEventListener(CART_CHANGED, changed);
     expect(changed).toHaveBeenCalledTimes(1);
-    expect(s.quantities.get("1")).toBe(4);
-    expect(s.itemCount).toBe(5);
+    expect(now.quantities.get("1")).toBe(4);
+    expect(now.itemCount).toBe(5);
+  });
+
+  it("an add that finishes while a read is in flight is counted once", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [{ variant_id: 1, quantity: 1 }], item_count: 1 })); // the first read (already includes the add below)
+    const first = cartState(page);
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [] })); // the add
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [{ variant_id: 1, quantity: 1 }], item_count: 1 })); // the read after it
+    await addToCart(page, "1", 1);
+    await first;
+    expect((await cartState(page)).itemCount).toBe(1);
   });
 
   it("refreshCart re-reads cart.js and announces it", async () => {
@@ -208,11 +223,29 @@ describe("cartSummaryNow", () => {
   it("falls back to line_price, and is null for an empty, unreadable or currency-less cart", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [{ ...line({}), final_line_price: undefined }], total_price: 63000, currency: "USD" }));
     expect((await cartSummaryNow(page))!.items[0].price).toMatch(/^(US)?[$]630.00$/);
+    resetCartCache(); // a read this young would be reused
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [], total_price: 0, currency: "USD" }));
     expect(await cartSummaryNow(page)).toBeNull();
+    resetCartCache();
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [line({})], total_price: 63000 }));
     expect(await cartSummaryNow(page)).toBeNull();
+    resetCartCache();
     fetchMock.mockRejectedValueOnce(new TypeError("offline"));
     expect(await cartSummaryNow(page)).toBeNull();
+  });
+
+  it("reuses a read from the last few seconds (the panel just opened) and reads again after that", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      fetchMock.mockResolvedValue(jsonResponse(200, { items: [line({})], total_price: 63000, currency: "USD" }));
+      refreshCart(page); // what opening the panel does
+      await cartSummaryNow(page);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(Date.now() + 6000);
+      await cartSummaryNow(page);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

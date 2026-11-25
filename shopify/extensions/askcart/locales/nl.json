@@ -9,7 +9,7 @@
     "button": "Vraag over dit product"
   },
   "ask_ai": {
-    "eyebrow": "Jouw {{ store }}-expert",
+    "eyebrow": "Jouw AI-expert van {{ store }}",
     "heading": "Een vraag over dit product?",
     "placeholder": "Stel je vraag",
     "send": "Verstuur",
