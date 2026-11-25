@@ -88,8 +88,8 @@ export function createApi(apiBase: string, shop: string, opts: { customer?: bool
     req(path + q, { method: "POST", token, body: JSON.stringify(body), keepalive });
 
   return {
-    send({ message, token, requestId, productId, country, currency, pageUrl, cart, signal }) {
-      const body: Record<string, unknown> = { shop, message, conversationToken: token, requestId, productId, country, currency, pageUrl: pageUrlOf(pageUrl), cart };
+    send({ message, token, requestId, productId, similarTo, country, currency, pageUrl, cart, signal }) {
+      const body: Record<string, unknown> = { shop, message, conversationToken: token, requestId, productId, similarTo, country, currency, pageUrl: pageUrlOf(pageUrl), cart };
       for (const k in body) if (body[k] == null) delete body[k]; // null fields are left out
       return req("/api/chat", { method: "POST", body: JSON.stringify(body), signal });
     },

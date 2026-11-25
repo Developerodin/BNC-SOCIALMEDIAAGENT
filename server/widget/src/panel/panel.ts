@@ -10,7 +10,7 @@
 //     2 s; after that the token is kept and the shopper is told.
 // Two tabs: each shows only what it sent until the next open reloads history. `// ponytail:` a `storage` listener
 // could sync tabs live; not needed for the beta.
-import type { PageContext, WidgetApi, WidgetConfig, WidgetCtx } from "../../../src/lib/widget-contract";
+import type { Card, PageContext, WidgetApi, WidgetConfig, WidgetCtx } from "../../../src/lib/widget-contract";
 import { MAX_INPUT_CHARS as MAX } from "../../../src/lib/chat/limits"; // the server's message limit
 import { translator } from "../core/i18n";
 import { brandLogo, formatPrice, resolveHttpsUrl, safeHex, safeImageUrl, textOn } from "../core/format";
@@ -75,7 +75,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   const ui = uiState(page.shop);
   const live = liveRegion();
   const ctx: WidgetCtx = { config, page, api, t, announce: live.say };
-  const messages = createMessages(ctx, opts);
+  const messages = createMessages(ctx, opts, (card) => askSimilar(card));
 
   // --- skeleton ---
   const style = document.createElement("style");
@@ -414,7 +414,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   }
 
   // --- sending (D81) ---
-  async function runTurn(message: string, requestId: string) {
+  async function runTurn(message: string, requestId: string, similarTo: string | null = null) {
     busy = true;
     update();
     const answer = messages.answer();
@@ -423,7 +423,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     const cart = !page.hosted && cartHref ? await cartSummaryNow(page) : null; // the hosted page has no cart access
     const outcome = await runSend(
       api,
-      { message, token: tokens.get(), requestId, productId, country: page.country, currency: page.currency, pageUrl: location.href, cart, signal: ac.signal },
+      { message, token: tokens.get(), requestId, productId, similarTo, country: page.country, currency: page.currency, pageUrl: location.href, cart, signal: ac.signal },
       (e) => {
         if (e.kind === "meta") tokens.set(e.token);
         else if (e.kind === "status") answer.status(e.step);
@@ -437,7 +437,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     if (turn === ac) turn = null;
     busy = false;
     const retry = () => {
-      if (!busy) startTurn(message, requestId);
+      if (!busy) startTurn(message, requestId, similarTo);
     };
     switch (outcome.kind) {
       case "done": {
@@ -504,7 +504,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     nextMessage = null;
   }
 
-  function submit(text: string) {
+  function submit(text: string, similarTo: string | null = null) {
     const message = text.trim();
     if (busy || isOffline || !message) return;
     sugg?.remove();
@@ -512,12 +512,18 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     messages.clearErrors();
     messages.user(message);
     if (text === input.value) input.value = "";
-    startTurn(message, crypto.randomUUID());
+    startTurn(message, crypto.randomUUID(), similarTo);
+  }
+
+  /** A card's "similar products" icon: an ordinary message in the shopper's language, plus the product's id so the server
+   * searches by that product itself. Ignored while an answer is streaming or offline (submit's own guard). */
+  function askSimilar(card: Card) {
+    submit(t("similar_message", { title: card.title.slice(0, 120) }), card.id);
   }
 
   /** runTurn, with `turnDone` tracking it so Delete chat can wait for an aborted turn to settle. */
-  function startTurn(message: string, requestId: string) {
-    const p = runTurn(message, requestId);
+  function startTurn(message: string, requestId: string, similarTo: string | null = null) {
+    const p = runTurn(message, requestId, similarTo);
     const done: Promise<void> = p.finally(() => {
       if (turnDone === done) turnDone = null;
     });

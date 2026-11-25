@@ -792,3 +792,109 @@ describe("cart listeners", () => {
     remove.mockRestore();
   });
 });
+
+describe("the two icons over the image's bottom corners", () => {
+  const SIZE = variant("1", [["Size", "S"]]);
+  const SIZE_L = variant("2", [["Size", "L"]]);
+  const multi = () => card({ variants: [SIZE, SIZE_L] });
+  const withSimilar = (cards: Card[], onSimilar = vi.fn<(c: Card) => void>(), c = ctx()) => {
+    const into = document.createElement("div");
+    document.body.append(into);
+    renderCards(into, cards, c, null, undefined, onSimilar);
+    return { into, onSimilar };
+  };
+  const fabs = (el: HTMLElement) => ({
+    similar: el.querySelector<HTMLButtonElement>(".ac-fab--similar"),
+    cart: el.querySelector<HTMLButtonElement>(".ac-fab--cart"),
+  });
+
+  it("each card gets a similar-products icon and an add-to-cart icon, named for screen readers and as tooltips", () => {
+    const { into } = withSimilar([card()]);
+    const { similar, cart } = fabs(into);
+    expect(similar!.getAttribute("aria-label")).toBe("Show products similar to Linen tee");
+    expect(similar!.title).toBe("Show products similar to Linen tee");
+    expect(cart!.getAttribute("aria-label")).toBe("Add to cart");
+    expect(cart!.title).toBe("Add to cart");
+    expect(similar!.querySelector("svg")).not.toBeNull();
+    expect(cart!.querySelector("svg")).not.toBeNull();
+    // Over the image, not inside the tile (a button can't hold buttons), and the text button is still there.
+    expect(similar!.closest(".ac-tile")).toBeNull();
+    expect(into.querySelector(".ac-tile__add")!.textContent).toBe("Add to cart");
+  });
+
+  it("the labels follow the shopper's language", () => {
+    const fr = { ...ctx(), t: translator("fr") };
+    const { into } = withSimilar([card()], undefined, fr);
+    expect(fabs(into).similar!.getAttribute("aria-label")).toBe("Voir des produits similaires à Linen tee");
+    expect(fabs(into).cart!.getAttribute("aria-label")).toBe("Ajouter au panier");
+  });
+
+  it("there is no similar icon when nobody can answer it, and a sold-out product has no cart icon", () => {
+    const plain = renderRow([card()]);
+    expect(fabs(plain).similar).toBeNull();
+    expect(fabs(plain).cart).not.toBeNull();
+    const { into } = withSimilar([card({ available: false, variants: [variant("9", [["Title", "Default Title"]], false)] })]);
+    expect(fabs(into).cart).toBeNull();
+    expect(into.querySelector(".ac-tile__add")).toBeNull();
+    expect(fabs(into).similar).not.toBeNull();
+  });
+
+  it("the similar icon hands its card to the handler and does not open the detail sheet", () => {
+    const c = card();
+    const { into, onSimilar } = withSimilar([c]);
+    fabs(into).similar!.click();
+    expect(onSimilar).toHaveBeenCalledWith(c);
+    expect(into.querySelector(".ac-sheet")).toBeNull();
+  });
+
+  it("the cart icon is the same add as the Add to cart button: one request and one log, and a second click while adding does nothing", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, {}));
+    const { into } = withSimilar([card()]);
+    const { cart } = fabs(into);
+    cart!.click();
+    cart!.click(); // while the first add runs
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toEqual({ items: [{ id: 123, quantity: 1 }] });
+    expect(logCartAdd).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenCalledWith("Added");
+    expect(cart!.getAttribute("aria-label")).toBe("Added");
+    expect(into.querySelector(".ac-tile__add")!.textContent).toBe("Added"); // the text button shows it too
+  });
+
+  it("a failed add shows the store's message under the card and the icon is ready again", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(422, { description: "Sold out meanwhile" }));
+    const { into } = withSimilar([card()]);
+    fabs(into).cart!.click();
+    await flush();
+    expect(into.querySelector(".ac-tile__err")!.textContent).toBe("Sold out meanwhile");
+    expect(fabs(into).cart!.getAttribute("aria-label")).toBe("Add to cart");
+    expect(logCartAdd).not.toHaveBeenCalled();
+  });
+
+  it("a product with several variants: the cart icon is View options and opens the detail sheet, like the text button", () => {
+    const { into } = withSimilar([multi()]);
+    const { cart } = fabs(into);
+    expect(cart!.getAttribute("aria-label")).toBe("View options");
+    cart!.click();
+    expect(into.querySelector(".ac-sheet .ac-card__add")).not.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a product that goes to its own page (view options, more variants) also opens the sheet instead of adding", () => {
+    const { into } = withSimilar([card({ action: "view_options" })]);
+    expect(fabs(into).cart!.getAttribute("aria-label")).toBe("View options");
+    fabs(into).cart!.click();
+    expect(into.querySelector(".ac-sheet")).not.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("styles: a 36 px circle in a 44 px target, a visible focus ring, no animation under reduced motion, px units only", () => {
+    expect(CARDS_CSS).toMatch(/\.ac-fab\{[^}]*width:44px;height:44px/);
+    expect(CARDS_CSS).toMatch(/\.ac-fab__c\{[^}]*width:36px;height:36px;border-radius:18px;background:rgba\(255,255,255,/);
+    expect(CARDS_CSS).toMatch(/\.ac-fab:focus-visible \.ac-fab__c\{outline:2px solid/);
+    expect(CARDS_CSS).toMatch(/prefers-reduced-motion:reduce\)\{[^]*\.ac-fab__c\{transition:none\}/);
+    expect(CARDS_CSS.match(/\.ac-(?:fab|tile__tools)[^{]*\{[^}]*\}/g)!.join("")).not.toMatch(/\d(?:rem|em|vh|vw)\b/);
+  });
+});

@@ -9,6 +9,9 @@ const OUTLINE = {
   newchat: "M1 4v6h6M3.51 15a9 9 0 1 0 2.13-9.36L1 10",
   send: "M12 19V5M5 12l7-7 7 7",
   down: "M12 5v14M5 12l7 7 7-7",
+  // A magnifier with a small four-point sparkle, and a cart with a plus: the icons over a product card's image.
+  similar: "M10 5a6 6 0 1 0 0 12 6 6 0 0 0 0-12zM14.5 15.5 20 21M19 2l.8 2.2L22 5l-2.2.8L19 8l-.8-2.2L16 5l2.2-.8z",
+  cartplus: "M3 4h2.5l2 10h9.5l2-7.5H6.5M9.5 19.5h.01M16.5 19.5h.01M12 8v4M10 10h4",
 };
 
 const FILLED = {

@@ -1613,3 +1613,59 @@ describe("closing and the 'You're viewing' price", () => {
     expect(q(".vw-label")!.textContent).toBe("You're viewing");
   });
 });
+
+describe("the cards' similar-products icon", () => {
+  const card = { id: "gid://shopify/Product/7", title: "Linen tee" };
+  const answer = () => sseResponse([ev("product", card), ev("text", { delta: "Here" }), ev("done", { conversationToken: "t1", messageId: "m1" })]);
+
+  it("sends an ordinary message in the shopper's language plus the product's id, and shows it as the shopper's own message", async () => {
+    const send = vi.fn(async (_req: { similarTo?: string | null; requestId?: string }) => answer());
+    await setup(mockApi({ send }), config(), pageCtx({ locale: "fr" })).open();
+    await type("bonjour");
+    const onSimilar = renderCards.mock.calls[0][5]!; // the panel hands every answer's cards its handler
+    send.mockClear();
+
+    onSimilar(card as never);
+    await flush();
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toMatchObject({ message: "Montre-moi des produits similaires à Linen tee", similarTo: "gid://shopify/Product/7", token: "t1" });
+    expect(qa(".msg.user").map((e) => e.textContent)).toEqual(["bonjour", "Montre-moi des produits similaires à Linen tee"]);
+  });
+
+  it("an ordinary message carries no similarTo", async () => {
+    const send = vi.fn(async (_req: { similarTo?: string | null; requestId?: string }) => answer());
+    await setup(mockApi({ send })).open();
+    await type("hello");
+    expect(send.mock.calls[0][0].similarTo ?? null).toBeNull();
+  });
+
+  it("is ignored while an answer is still streaming, so nothing is sent twice", async () => {
+    const send = vi.fn(async (_req: { similarTo?: string | null; requestId?: string }) => answer());
+    await setup(mockApi({ send })).open();
+    await type("hello");
+    const onSimilar = renderCards.mock.calls[0][5]!;
+    send.mockClear();
+    send.mockImplementationOnce(() => new Promise<Response>(() => {})); // a turn that never ends
+    await type("one more");
+    onSimilar(card as never);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1); // only "one more"
+  });
+
+  it("a failed turn's Retry resends the same similarTo", async () => {
+    const send = vi.fn(async (_req: { similarTo?: string | null; requestId?: string }) => answer());
+    await setup(mockApi({ send })).open();
+    await type("hello");
+    const onSimilar = renderCards.mock.calls[0][5]!;
+    send.mockClear();
+    send.mockResolvedValue(new Response("{}", { status: 503 }));
+    onSimilar(card as never);
+    await flush();
+    send.mockImplementation(async () => answer());
+    q<HTMLButtonElement>(".retry, button.retry")!.click();
+    await flush();
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][0]).toMatchObject({ similarTo: "gid://shopify/Product/7", requestId: send.mock.calls[0][0].requestId });
+  });
+});

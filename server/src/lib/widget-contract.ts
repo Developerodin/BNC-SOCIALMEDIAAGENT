@@ -95,6 +95,8 @@ export type WidgetApi = {
     token: string | null;
     requestId: string;
     productId: string | null;
+    /** The "similar products" icon: the card's product GID. The server checks it is this store's product and seeds the search with it. */
+    similarTo?: string | null;
     country: string | null;
     currency?: string | null; // the page currency: a product priced in another one gets no price in the model's LIVE line (C26)
     pageUrl: string; // origin + pathname only

@@ -1,5 +1,5 @@
-import { and, asc, cosineDistance, eq, notInArray, sql } from "drizzle-orm";
-import { forStore } from "@/db/client";
+import { and, asc, cosineDistance, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { forStore, type Conn } from "@/db/client";
 import { chunks, products } from "@/db/schema";
 import { deadline } from "@/lib/chat/openai";
 import { embed } from "@/lib/embeddings";
@@ -29,21 +29,28 @@ const EMBED_TIMEOUT_MS = 3000;
  * Hits scoring below MIN_SCORE (or opts.minScore) are dropped (D86), so the result can be []; the current product's
  * chunks are kept whatever their score, because the shopper is looking at it.
  * Gift cards are left out unless opts.includeGiftCards is set (D74); in M4 the chat model sets it when the shopper asks for one.
+ * With opts.similarTo (a product GID of this store) the query text is ignored and the search is seeded by that product's own
+ * embedding: the product itself and opts.exclude are left out, and products of the same "Type:" line come before the rest
+ * (a preference, not a filter). A seed with no chunks returns [].
  * The query must already be masked (D41); this sends it to OpenAI as is.
  */
 export async function search(
   storeId: string,
   query: string,
   k = 8,
-  opts: { productId?: string; includeGiftCards?: boolean; minScore?: number; signal?: AbortSignal } = {},
+  opts: { productId?: string; includeGiftCards?: boolean; minScore?: number; signal?: AbortSignal; similarTo?: string; exclude?: string[] } = {},
 ): Promise<SearchHit[]> {
-  if (!query.trim()) return [];
+  const similarTo = productGid(opts.similarTo);
+  if (opts.similarTo && !similarTo) return [];
+  if (!similarTo && !query.trim()) return [];
   // The embeddings client has no retries and an SDK default timeout of 10 minutes, so a hung call would hold the turn;
   // 3s, or the caller's abort. A failure or timeout throws, like any other embed error, and the caller handles it.
-  const d = deadline(EMBED_TIMEOUT_MS, opts.signal);
-  const {
-    vectors: [q],
-  } = await embed([query], { signal: d.signal }).finally(d.clear);
+  // With opts.similarTo nothing is embedded: the query vector is that product's own first chunk, read inside the database.
+  let q: number[] = [];
+  if (!similarTo) {
+    const d = deadline(EMBED_TIMEOUT_MS, opts.signal);
+    q = (await embed([query], { signal: d.signal }).finally(d.clear)).vectors[0];
+  }
   const productId = productGid(opts.productId);
 
   // The distance is selected once and both queries order by its alias. Drizzle binds the vector again for every use, so
@@ -56,10 +63,14 @@ export async function search(
     source: sql<"product">`${chunks.source}`,
     productId: sql<string>`${chunks.productId}`,
     content: chunks.content,
-    distance: sql<number>`${cosineDistance(chunks.embedding, q)}`.as("distance"),
+    distance: sql<number>`${similarTo ? sql`${chunks.embedding} <=> (select c.embedding from chunks c where c.store_id = ${storeId} and c.product_id = ${similarTo} and c.ordinal = 0)` : cosineDistance(chunks.embedding, q)}`.as("distance"),
   };
   const toHit = ({ distance, ...h }: Omit<SearchHit, "score"> & { distance: number }): SearchHit => ({ ...h, score: 1 - distance });
   return forStore(storeId, async (tx) => {
+    if (similarTo) {
+      const [seed] = await tx.select({ id: chunks.id }).from(chunks).where(and(eq(chunks.storeId, storeId), eq(chunks.productId, similarTo), eq(chunks.ordinal, 0)));
+      if (!seed) return [];
+    }
     // D42: filter on store_id as well as RLS.
     // ponytail: exact scan (no vector index). Measured with 512-dim halfvecs in shared buffers: about 30 ms in Postgres
     // for a 20k-chunk store, linear in its chunk count. When one store is most of the table the plan is a seq scan of
@@ -69,6 +80,7 @@ export async function search(
     // ponytail: the cap filters the k*OVERFETCH nearest chunks, so when those come from fewer than k/PER_PRODUCT
     // products the result has fewer than k hits. Upgrade path: a row_number() over (partition by product_id) window,
     // at the cost of the exact scan (an HNSW index can't serve it).
+    const skip = similarTo ? [similarTo, ...(opts.exclude ?? [])] : [];
     const giftCards = tx
       .select({ id: products.shopifyId })
       .from(products)
@@ -76,7 +88,13 @@ export async function search(
     const near = await tx
       .select(cols)
       .from(chunks)
-      .where(and(eq(chunks.storeId, storeId), opts.includeGiftCards ? undefined : notInArray(chunks.productId, giftCards)))
+      .where(
+        and(
+          eq(chunks.storeId, storeId),
+          opts.includeGiftCards ? undefined : notInArray(chunks.productId, giftCards),
+          skip.length ? notInArray(chunks.productId, skip) : undefined,
+        ),
+      )
       .orderBy((f) => asc(f.distance))
       .limit(k * OVERFETCH)
       .then((rows) => rows.map(toHit));
@@ -90,6 +108,7 @@ export async function search(
         return n < PER_PRODUCT;
       })
       .slice(0, k);
+    if (similarTo) return sameTypeFirst(tx, storeId, similarTo, hits);
     if (!productId) return hits;
     const extra = await tx
       .select(cols)
@@ -106,4 +125,18 @@ export async function search(
       .then((rows) => rows.map(toHit));
     return [...hits, ...extra];
   });
+}
+
+/** The hits with the products whose "Type:" line matches the seed product's first (stable), the rest after them. */
+async function sameTypeFirst(tx: Conn, storeId: string, seed: string, hits: SearchHit[]): Promise<SearchHit[]> {
+  if (hits.length === 0) return hits;
+  const ids = [seed, ...new Set(hits.map((h) => h.productId))];
+  const rows = await tx
+    .select({ id: products.shopifyId, type: sql<string | null>`(regexp_match(${products.content}, '^Type: ([^\n]*)', 'n'))[1]` })
+    .from(products)
+    .where(and(eq(products.storeId, storeId), inArray(products.shopifyId, ids)));
+  const type = new Map(rows.map((r) => [r.id, r.type?.trim().toLowerCase() ?? ""]));
+  const want = type.get(seed);
+  if (!want) return hits;
+  return [...hits.filter((h) => type.get(h.productId) === want), ...hits.filter((h) => type.get(h.productId) !== want)];
 }
