@@ -209,7 +209,7 @@ describe("askcart-ask-ai.liquid", () => {
 
   it("always shows the AI note: no setting can switch it off, and it is escaped", () => {
     expect(liquid).not.toContain("show_note");
-    expect(liquid).toMatch(/<p class="askcart-ai__note">\{\{ 'ask_ai\.note' \| t \| escape \}\}<\/p>/);
+    expect(liquid).toMatch(/<p class="askcart-ai__note">\{\{ 'ask_ai\.note' \| t \}\}<\/p>/);
     expect(liquid.slice(0, liquid.indexOf("{% schema %}"))).not.toMatch(/\{%-?\s*if[^%]*%\}\s*<p class="askcart-ai__note"/);
   });
 
@@ -291,9 +291,13 @@ describe("askcart-ask-ai.liquid theme matching", () => {
   });
 
   it("uses Dawn-family variables, each with a fallback", () => {
-    for (const v of ["--inputs-radius", "--buttons-radius", "--askcart-fg-rgb", "--askcart-btn-rgb", "--askcart-btn-text-rgb"]) {
+    for (const v of ["--askcart-fg-rgb", "--askcart-btn-rgb", "--askcart-btn-text-rgb"]) {
       expect(css).toMatch(new RegExp(`var\\(${v},\\s*\\S`));
     }
+    // The questions and the input are fully rounded whatever the theme's own radius is.
+    expect(css).toMatch(/--askcart-radius: 28px/);
+    expect(css).not.toMatch(/--inputs-radius|--buttons-radius/);
+    expect(css).toMatch(/\.askcart-ai__send \{[^}]*border-radius: 50%/);
     // Theme colours never go into rgb() unchecked: a hex --color-button would make the send button transparent.
     expect(css).not.toMatch(/var\(--color-(button|foreground)/);
   });
@@ -301,8 +305,10 @@ describe("askcart-ask-ai.liquid theme matching", () => {
   it("text is in em (scales with the theme), touch targets are at least 44px, and nothing renders hidden", () => {
     expect(css).not.toMatch(/font-size: \d+px/);
     expect(css).toMatch(/--askcart-h: 48px/);
-    expect(css).toMatch(/\.askcart-ai__send \{[^}]*width: 44px; height: 44px/);
-    expect(liquid).toContain("{{ 'ask_ai.note' | t | escape }}");
+    expect(css).toMatch(/\.askcart-ai__send \{[^}]*width: 40px; height: 40px/);
+    expect(css).toMatch(/\.askcart-ai__send::before \{[^}]*inset: -4px/); // the hit area is 48px
+    expect(liquid).toContain("{{ 'ask_ai.note' | t }}");
+    expect(liquid).not.toMatch(/\| t \| escape/); // Shopify's t already escapes: a second escape shows &#39;
   });
 });
 
@@ -381,6 +387,13 @@ describe("the app embed's automatic copy of the block", () => {
     expect(tpl).toContain('<link rel="stylesheet"');
   });
 
+  it("the default eyebrow and heading are translated strings, the eyebrow naming the store", () => {
+    expect(embed).toContain("'ask_ai.eyebrow' | t: store: store_name");
+    expect(blockSrc).toContain("'ask_ai.eyebrow' | t: store: store_name");
+    expect(snippetSrc).toContain("{{ eyebrow | escape_once }}"); // translated (already escaped) or the merchant's own text
+    expect(snippetSrc).toContain("{{ heading | escape_once }}");
+  });
+
   it("escapes the script and stylesheet URLs", () => {
     expect(tpl).toContain("data-script=\"{{ 'askcart-ask-ai.js' | asset_url | escape }}\"");
     expect(tpl).toContain("href=\"{{ 'askcart-ask-ai.css' | asset_url | escape }}\"");
@@ -390,6 +403,6 @@ describe("the app embed's automatic copy of the block", () => {
     const body = snippetSrc.replace(/\{%-?\s*comment\s*-?%\}[\s\S]*?\{%-?\s*endcomment\s*-?%\}/, "");
     const outs = [...body.matchAll(/\{\{-?\s*([\s\S]*?)\s*-?\}\}/g)].map((m) => m[1]);
     expect(outs.length).toBeGreaterThan(8);
-    expect(outs.filter((e) => !/\|\s*escape$/.test(e))).toEqual(["shopify_attributes"]);
+    expect(outs.filter((e) => !/\|\s*(escape|escape_once)$/.test(e) && !/^'[\w.]+' \| t$/.test(e))).toEqual(["shopify_attributes"]);
   });
 });

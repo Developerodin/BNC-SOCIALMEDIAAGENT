@@ -13,7 +13,7 @@
 import type { PageContext, WidgetApi, WidgetConfig, WidgetCtx } from "../../../src/lib/widget-contract";
 import { MAX_INPUT_CHARS as MAX } from "../../../src/lib/chat/limits"; // the server's message limit
 import { translator } from "../core/i18n";
-import { resolveHttpsUrl, safeHex, safeImageUrl, textOn } from "../core/format";
+import { brandLogo, resolveHttpsUrl, safeHex, safeImageUrl, textOn } from "../core/format";
 import { tokenStore, uiState } from "../core/storage";
 import { runSend } from "../core/turn";
 import { liveRegion, trapTab } from "./a11y";
@@ -56,14 +56,16 @@ const DEFAULT_ACCENT = "#0A0A0A";
 const DELETE_RETRY_MS = [500, 1000, 2000]; // D84: the server may hold the aborted turn's lock for a moment
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-function button(cls: string, label: string, ic: Parameters<typeof icon>[0]): HTMLButtonElement {
+function button(cls: string, label: string, ic: Parameters<typeof icon>[0], size = 22): HTMLButtonElement {
   const b = document.createElement("button");
   b.type = "button";
   b.className = cls;
   b.setAttribute("aria-label", label);
-  b.append(icon(ic));
+  b.append(icon(ic, size));
   return b;
 }
+
+const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: PageContext, opts: PanelOptions): Panel {
   const { api } = opts;
@@ -92,8 +94,8 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   panel.style.setProperty("--ac-on-accent", textOn(accent));
   panel.style.setProperty("--off", Math.min(200, Math.max(0, Number(config.launcher?.offset) || 0)) + "px");
 
-  // header: a bar (back on a phone · cart · new chat · expand · menu · close) over the centred logo, "Your {store} expert"
-  // and the fixed AI line. The AI line is never hidden (docs/eu-ai-act-review.md).
+  // header: a bar (back on a phone · cart · new chat · menu · divider · close) over the centred logo and "Your {store} expert".
+  // The AI notice sits above the input and is never hidden (docs/eu-ai-act-review.md).
   const hd = document.createElement("div");
   hd.className = "hd";
   const bar = document.createElement("div");
@@ -105,7 +107,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   const cartLink = document.createElement("a");
   cartLink.className = "ib cart";
   cartLink.setAttribute("aria-label", t("cart"));
-  cartLink.append(icon("cart"));
+  cartLink.append(icon("cart", 22));
   if (cartHref) {
     cartLink.href = cartHref;
     cartLink.rel = "noopener noreferrer";
@@ -126,10 +128,11 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   };
   if (!page.hosted) window.addEventListener(CART_CHANGED, showCartCount);
   const newBtn = button("ib newchat", t("new_chat"), "newchat");
-  // Logo: the avatar, or a round monogram (the store name's first letter in the accent colour).
+  // Logo: the merchant's avatar, else the store's Shopify brand logo (shown whole), else a round monogram (the store
+  // name's first letter in the accent colour).
   const av = document.createElement("span");
   av.className = "av";
-  const avatar = safeImageUrl(config.avatarUrl);
+  const avatar = brandLogo(config.avatarUrl, page.logo);
   if (avatar) {
     const img = document.createElement("img");
     img.className = "avatar";
@@ -146,16 +149,26 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   const name = document.createElement("span");
   name.className = "name";
   name.textContent = t("expert", { store: config.name });
-  const sub = document.createElement("span");
-  sub.className = "sub";
-  sub.textContent = t("subtitle");
-  const menu = createMenu(t, [{ label: t("delete_chat"), run: () => void deleteChat() }]);
+  // Expand / Collapse lives in the menu (desktop floating panel only); the full-screen sheet and the drawer have their own size.
+  const canWiden = () => !panel.classList.contains("full") && !drawer;
+  const menu = createMenu(t, [
+    {
+      label: () => t(panel.classList.contains("wide") ? "collapse" : "expand"),
+      hidden: () => !canWiden(),
+      run: () => {
+        ui.wide.set(!ui.wide.get());
+        layout();
+      },
+    },
+    { label: () => t("delete_chat"), run: () => void deleteChat() },
+  ]);
+  const sep = document.createElement("span");
+  sep.className = "sep";
+  sep.setAttribute("aria-hidden", "true");
   const closeBtn = button("ib close", t("close"), "close");
-  const wideBtn = button("ib wide-btn", t("expand"), "expand");
-  wideBtn.setAttribute("aria-pressed", "false");
-  actions.append(cartLink, newBtn, wideBtn, menu.el, closeBtn);
+  actions.append(cartLink, newBtn, menu.el, sep, closeBtn);
   bar.append(back, actions);
-  hd.append(bar, av, name, sub);
+  hd.append(bar, av, name);
 
   // "You're viewing" (product pages): checked here, hidden when absent or invalid.
   const vw = page.viewing;
@@ -173,19 +186,15 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     }
     const txt = document.createElement("div");
     txt.className = "vw-txt";
-    const label = document.createElement("span");
-    label.className = "vw-label";
-    label.textContent = t("viewing");
     const ttl = document.createElement("span");
     ttl.className = "vw-title";
     ttl.textContent = vwTitle;
-    txt.append(label, ttl);
-    if (typeof vw.price === "string" && vw.price.trim()) {
-      const pr = document.createElement("span");
-      pr.className = "vw-price";
-      pr.textContent = vw.price.trim().slice(0, 40);
-      txt.append(pr);
-    }
+    // "<price> · You're viewing" under the title.
+    const price = typeof vw.price === "string" ? vw.price.trim().slice(0, 40) : "";
+    const label = document.createElement("span");
+    label.className = "vw-label";
+    label.textContent = price ? `${price} · ${t("viewing")}` : t("viewing");
+    txt.append(ttl, label);
     viewing.append(txt);
   }
 
@@ -204,7 +213,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   input.maxLength = MAX;
   input.placeholder = t("input_placeholder");
   input.setAttribute("aria-label", t("input_label"));
-  const send = button("send", t("send"), "send");
+  const send = button("send", t("send"), "send", 18);
   row.append(input, send);
   const count = document.createElement("div");
   count.className = "count";
@@ -223,7 +232,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     a.textContent = t("privacy");
     notice.append(" ", a);
   }
-  ft.append(row, count, notice);
+  ft.append(notice, row, count); // the AI notice sits right above the input, always visible
 
   panel.append(hd, viewing, offline, messages.log, ft, live.el);
   shadow.append(style, panel);
@@ -269,12 +278,8 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     panel.classList.toggle("full", full);
     back.hidden = !full || !!opts.inline;
     closeBtn.hidden = full;
-    wideBtn.hidden = full || drawer; // a full-screen sheet is already as large as it gets; a drawer has its own width
-    const wide = !full && !drawer && ui.wide.get();
-    panel.classList.toggle("wide", wide);
-    wideBtn.setAttribute("aria-pressed", String(wide));
-    wideBtn.setAttribute("aria-label", t(wide ? "collapse" : "expand"));
-    wideBtn.replaceChildren(icon(wide ? "collapse" : "expand"));
+    sep.hidden = full;
+    panel.classList.toggle("wide", !full && !drawer && ui.wide.get());
     lockScroll(full && !panel.hidden);
   }
 
@@ -515,10 +520,6 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   newBtn.addEventListener("click", newChat);
   closeBtn.addEventListener("click", () => close());
   back.addEventListener("click", () => close());
-  wideBtn.addEventListener("click", () => {
-    ui.wide.set(!ui.wide.get());
-    layout();
-  });
   panel.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       e.stopPropagation();
@@ -545,14 +546,19 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
 
   async function open(args: OpenArgs = {}) {
     const fromProduct = args.productId != null && args.productId !== productId;
-    if (panel.hidden) {
+    if (panel.hidden || exit) {
       const a = document.activeElement;
       opener = a instanceof HTMLElement && a !== document.body && a !== shadow.host ? a : null; // the host means our own button
     }
     if (args.productId != null) productId = args.productId;
     drawer = args.mode === "drawer";
+    ui.drawer.set(drawer); // a reload on the next page reopens it the same way
     panel.classList.toggle("drawer", drawer);
     viewing.hidden = !vwTitle || productId !== page.productId; // the card is about the page's product
+    cancelExit();
+    // Restored on a page load (focus:false): no entrance animation without a shopper action. Class changes only while hidden,
+    // so removing it later can't replay the animation.
+    if (panel.hidden) panel.classList.toggle("still", args.focus === false);
     panel.hidden = false;
     layout();
     ui.open.set(true);
@@ -585,10 +591,42 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     }
   }
 
+  let exit: Animation | null = null; // the closing animation, while it runs
+  function cancelExit() {
+    exit?.cancel();
+    exit = null;
+    panel.inert = false;
+  }
+
+  /** Hides the panel after a short exit animation (WAAPI: CSS can't animate to display:none, and a media query can't
+   * stop it, so reduced motion is checked here). Focus and state are already handled by close(). */
+  function hidePanel() {
+    const done = () => {
+      panel.hidden = true;
+      panel.classList.remove("still");
+      panel.inert = false;
+      exit?.cancel(); // drop the held end frame, or it would keep the panel invisible when it reopens
+      exit = null;
+    };
+    if (reducedMotion() || typeof panel.animate !== "function") return done();
+    const dr = panel.classList.contains("drawer");
+    const full = panel.classList.contains("full") && !dr;
+    panel.inert = true; // nothing to click while it leaves
+    const a = (exit = panel.animate(
+      dr
+        ? [{ transform: "none" }, { transform: "translateX(100%)" }]
+        : [{ opacity: 1, transform: "none" }, { opacity: 0, transform: full ? "translateY(16px)" : "translateY(8px) scale(.97)" }],
+      { duration: dr ? 220 : full ? 180 : 160, easing: "cubic-bezier(0.23,1,0.32,1)", fill: "forwards" },
+    ));
+    a.onfinish = () => {
+      if (exit === a) done();
+    };
+  }
+
   function close() {
-    if (panel.hidden || opts.inline) return;
+    if (panel.hidden || exit || opts.inline) return;
     menu.hide();
-    panel.hidden = true;
+    hidePanel();
     lockScroll(false);
     ui.open.set(false);
     setExpanded(false);
@@ -600,6 +638,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
 
   function destroy() {
     turn?.abort();
+    cancelExit();
     lockScroll(false);
     window.removeEventListener("online", onNet);
     window.removeEventListener("offline", onOffline);

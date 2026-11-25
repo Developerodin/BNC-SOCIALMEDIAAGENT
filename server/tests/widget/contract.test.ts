@@ -27,6 +27,18 @@ describe("extension locales", () => {
     expect(load("en.default").launcher.label).toBe("Ask us anything");
   });
 
+  it.each(LANGS)("%s: the block's default eyebrow names the store and the heading is a sentence-case question", (lang) => {
+    const l = load(lang);
+    expect(l.ask_ai.eyebrow).toContain("{{ store }}");
+    expect(l.ask_ai.heading).toMatch(/\?$/);
+    expect(l.ask_ai.heading).not.toBe(l.ask_ai.heading.toUpperCase());
+  });
+  it("English defaults", () => {
+    const en = load("en.default");
+    expect(en.ask_ai.eyebrow).toBe("Your {{ store }} expert");
+    expect(en.ask_ai.heading).toBe("A question about this product?");
+  });
+
   it.each(LANGS)("%s: the block note and the default teaser say it is an AI", (lang) => {
     const l = load(lang);
     const ai = /\b(AI|IA|KI)\b|AI-/;

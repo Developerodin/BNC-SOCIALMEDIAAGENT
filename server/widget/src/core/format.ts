@@ -46,10 +46,18 @@ export function resolveHttpsUrl(u: string | null, base: string = location.href):
   }
 }
 
-/** An https: image on cdn.shopify.com only, or null. */
+/** An https: image on cdn.shopify.com, or on the page's own store at /cdn/shop/ (Liquid's image_url gives
+ * `//<store>/cdn/shop/...`, protocol-relative), resolved against the page; or null. */
 export function safeImageUrl(u: unknown): string | null {
-  const href = safeHttpsUrl(u);
-  return href && new URL(href).hostname === "cdn.shopify.com" ? href : null;
+  const href = typeof u === "string" ? resolveHttpsUrl(u) : null;
+  if (!href) return null;
+  const { hostname, pathname } = new URL(href);
+  return hostname === "cdn.shopify.com" || (hostname === location.hostname && pathname.startsWith("/cdn/shop/")) ? href : null;
+}
+
+/** The chat's logo: the merchant's avatar, else the store's Shopify brand logo (page.logo), else null (the initial). */
+export function brandLogo(avatarUrl: unknown, logo: unknown): string | null {
+  return safeImageUrl(avatarUrl) ?? safeImageUrl(logo);
 }
 
 /** A #rrggbb colour, or null, before it goes into a style. */

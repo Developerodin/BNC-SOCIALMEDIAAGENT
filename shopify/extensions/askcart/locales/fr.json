@@ -9,8 +9,8 @@
     "button": "Poser une question sur ce produit"
   },
   "ask_ai": {
-    "eyebrow": "D’autres questions ?",
-    "heading": "Demandez à notre agent IA",
+    "eyebrow": "Votre expert {{ store }}",
+    "heading": "Une question sur ce produit ?",
     "placeholder": "Posez votre question",
     "send": "Envoyer",
     "note": "Les réponses sont rédigées par un assistant IA à partir des données de ce produit (description, dimensions, prix, stock, options)."

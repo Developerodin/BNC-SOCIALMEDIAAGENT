@@ -41,7 +41,7 @@ export function tokenStore(shop: string) {
   };
 }
 
-function uiField(key: string, field: "open" | "teaserSeen" | "wide"): Flag {
+function uiField(key: string, field: "open" | "teaserSeen" | "wide" | "drawer"): Flag {
   const all = (): Record<string, unknown> => {
     try {
       const v = JSON.parse(read("localStorage", key) || "{}");
@@ -65,6 +65,7 @@ export function uiState(shop: string) {
     open: uiField(key, "open"),
     teaserSeen: uiField(key, "teaserSeen"),
     wide: uiField(key, "wide"), // the shopper chose the expanded panel (desktop only)
+    drawer: uiField(key, "drawer"), // the chat was opened as the right-hand drawer (the block's chat): a reload reopens it so
     teaserShownThisVisit: flag("sessionStorage", `askcart:${shop}:teaserShown`),
   };
 }

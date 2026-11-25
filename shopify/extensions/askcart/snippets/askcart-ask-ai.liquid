@@ -2,7 +2,9 @@
   The "Ask our AI agent" markup, shared by the app block (blocks/askcart-ask-ai.liquid) and the app embed's automatic
   copy (blocks/askcart-embed.liquid), so the two cannot drift apart. Parameters: cfg (the widget config), product,
   eyebrow, heading, pill_count, question_1..3, shopify_attributes (the block's editor attributes; empty for the embed).
-  Every value leaves Liquid through `escape` (Review Focus 2).
+  Every value leaves Liquid through `escape` (Review Focus 2). Translations (`| t`) are already HTML-escaped by Shopify, so they get
+  no second `escape` (it would show &#39;); eyebrow and heading may be either a translation or a merchant setting, so they use
+  `escape_once`, which escapes what is not yet escaped.
 {%- endcomment -%}
 <div
   class="askcart-ai"
@@ -17,8 +19,8 @@
   data-q3="{{ question_3 | escape }}"
   {{ shopify_attributes }}
 >
-  <p class="askcart-ai__eyebrow" data-askcart-eyebrow>{{ eyebrow | escape }}</p>
-  <h2 class="askcart-ai__heading" data-askcart-heading>{{ heading | escape }}</h2>
+  <p class="askcart-ai__eyebrow" data-askcart-eyebrow>{{ eyebrow | escape_once }}</p>
+  <h2 class="askcart-ai__heading" data-askcart-heading>{{ heading | escape_once }}</h2>
   <div class="askcart-ai__pills" data-askcart-pills data-askcart-loading style="--askcart-pills: {{ pill_count | escape }}"></div>
   <form class="askcart-ai__form" data-askcart-form>
     <input
@@ -27,12 +29,12 @@
       name="question"
       maxlength="2000"
       autocomplete="off"
-      placeholder="{{ 'ask_ai.placeholder' | t | escape }}"
-      aria-label="{{ 'ask_ai.placeholder' | t | escape }}"
+      placeholder="{{ 'ask_ai.placeholder' | t }}"
+      aria-label="{{ 'ask_ai.placeholder' | t }}"
     >
-    <button class="askcart-ai__send" type="submit" aria-label="{{ 'ask_ai.send' | t | escape }}">
+    <button class="askcart-ai__send" type="submit" aria-label="{{ 'ask_ai.send' | t }}">
       <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 4l7 7-1.41 1.41L13 7.83V20h-2V7.83l-4.59 4.58L5 11z"/></svg>
     </button>
   </form>
-  <p class="askcart-ai__note">{{ 'ask_ai.note' | t | escape }}</p>
+  <p class="askcart-ai__note">{{ 'ask_ai.note' | t }}</p>
 </div>

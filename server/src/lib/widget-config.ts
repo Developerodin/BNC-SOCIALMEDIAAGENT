@@ -124,7 +124,7 @@ export function resolveWidgetConfig(store: StoreInput, apiBase: string): WidgetR
     accent: pick("accent", w.accent, (v) => typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v), "#0A0A0A"),
     avatarUrl: pick("avatarUrl", w.avatarUrl, isShopifyCdnUrl, null), // UD7b
     launcher: {
-      style: pick("launcher.style", launcher.style, oneOf("pill", "icon"), "pill"),
+      style: pick("launcher.style", launcher.style, oneOf("pill", "icon", "tab"), "pill"),
       label: pick("launcher.label", launcher.label, text(40), null),
       side: pick("launcher.side", launcher.side, oneOf("right", "left"), "right"),
       offset: pick("launcher.offset", launcher.offset, int(0, 200), 20),

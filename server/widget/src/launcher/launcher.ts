@@ -4,7 +4,7 @@
 // Text only: every string goes through textContent, and the accent is checked before it reaches CSS.
 import type { PageContext, WidgetConfig } from "../../../src/lib/widget-contract";
 import type { OpenArgs } from "../panel/panel"; // type only: no panel code in this bundle
-import { safeHex, textOn } from "../core/format";
+import { brandLogo, safeHex, textOn } from "../core/format";
 import { uiState } from "../core/storage";
 
 // message / mode / title come from the "Ask our AI agent" block (askcart-ask-ai.js): the drawer opens with this question sent.
@@ -19,16 +19,25 @@ const CSS =
   ".l{display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;min-width:48px;padding:0 20px 0 16px;" +
   "border:0;border-radius:24px;background:var(--ac-bg);color:var(--ac-fg);cursor:pointer;" +
   "box-shadow:0 4px 16px rgba(0,0,0,.2),0 1px 3px rgba(0,0,0,.12);font-weight:600;margin:0;text-transform:none;letter-spacing:normal;" +
-  "animation:f .35s ease-out;transition:transform .15s,box-shadow .15s}" +
-  ".l:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(0,0,0,.24),0 1px 3px rgba(0,0,0,.12)}" +
+  "touch-action:manipulation;animation:fo .2s cubic-bezier(0.22,1,0.36,1);transition:transform .15s cubic-bezier(0.22,1,0.36,1),box-shadow .15s}" +
+  "@media (hover:hover) and (prefers-reduced-motion:no-preference){.l:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(0,0,0,.24),0 1px 3px rgba(0,0,0,.12)}}" +
+  "@media (prefers-reduced-motion:no-preference){.l:active{transform:scale(.97)}}" +
   ".l.i{padding:0;width:56px;height:56px;border-radius:28px}" +
+  // The logo tab: a small white tab docked to the screen edge at mid-height, with an accent dot.
+  ".l.tab{top:50%;bottom:auto;right:0;width:56px;height:64px;min-width:0;padding:0;border-radius:12px 0 0 12px;background:#fff;color:#111;" +
+  "box-shadow:-2px 0 12px rgba(0,0,0,.14);transform:translateY(-50%)}" +
+  ".l.tab.sl{right:auto;left:0;border-radius:0 12px 12px 0;box-shadow:2px 0 12px rgba(0,0,0,.14)}" +
+  ".l.tab:hover,.l.tab:active{transform:translateY(-50%)}" +
+  ".l.tab img{display:block;max-width:44px;max-height:44px;object-fit:contain}" +
+  ".l.tab::after{content:\"\";position:absolute;top:8px;right:8px;width:8px;height:8px;border-radius:50%;background:var(--ac-bg);box-shadow:0 0 0 2px #fff}" +
   ".l:focus-visible,.t button:focus-visible{outline:3px solid var(--ac-bg);outline-offset:3px}" +
+  ".l.tab:focus-visible{outline-color:#2563eb;outline-offset:-3px}" +
   ".t{display:flex;align-items:flex-start;gap:8px;max-width:280px;padding:12px 12px 12px 16px;border-radius:12px;" +
   "background:#fff;color:#111;box-shadow:0 4px 16px rgba(0,0,0,.18);animation:f .2s ease-out}" +
   ".t button{flex:none;width:24px;height:24px;border:0;border-radius:12px;background:transparent;color:#555;" +
   "cursor:pointer;font:inherit;font-size:18px;line-height:24px;padding:0;margin:0}" +
-  "@keyframes f{from{opacity:0;transform:translateY(8px)}}" +
-  "@media (prefers-reduced-motion:reduce){.l,.t{animation:none;transition:none}.l:hover{transform:none}}";
+  "@keyframes f{from{opacity:0;transform:translateY(8px)}}@keyframes fo{from{opacity:0}}" + // the button only fades: it appears on every page
+  "@media (prefers-reduced-motion:reduce){.l,.t{animation:none;transition:none}}";
 
 function chatIcon(): SVGSVGElement {
   const ns = "http://www.w3.org/2000/svg";
@@ -62,10 +71,19 @@ export function start(): (() => void) | undefined {
   // Template content is a separate fragment, so the query below only sees blocks that are really in the page.
   const tpl = document.querySelector<HTMLTemplateElement>("template[data-askcart-ask-ai-auto]");
   if (tpl && !document.querySelector("[data-askcart-ask-ai]")) {
+    // The real buy form has a submit control; Dawn's price block also renders a hidden "installment" form before it.
     const forms = Array.from(document.querySelectorAll("form[action*='/cart/add']"));
-    const form = forms.find((f) => f.closest("main")) ?? forms[0]; // not the cart drawer's or a footer's form
+    const isBuy = (f: Element) => !f.matches("[id*='installment'],.installment") && !!f.querySelector("button:not([type=button]):not([type=reset]),[name=add],input[type=submit]");
+    const form = forms.find((f) => isBuy(f) && f.closest("main")) ?? forms.find(isBuy) ?? forms.find((f) => f.closest("main")) ?? forms[0]; // not the cart drawer's or a footer's form
     if (form) {
-      (form.closest("product-form") ?? form).after(tpl.content.cloneNode(true)); // Dawn wraps the form in <product-form>
+      let anchor: Element = form.closest("product-form") ?? form; // Dawn wraps the form in <product-form>
+      // A "Buy it now" button rendered outside that wrapper: land after it, as a child of the wrapper's parent.
+      let pay = anchor.parentElement?.querySelector(".shopify-payment-button, shopify-buy-it-now-button") ?? null;
+      if (pay && !anchor.contains(pay)) {
+        while (pay.parentElement && pay.parentElement !== anchor.parentElement) pay = pay.parentElement;
+        anchor = pay;
+      }
+      anchor.after(tpl.content.cloneNode(true));
       const s = document.createElement("script");
       s.async = true;
       s.src = tpl.dataset.script ?? "";
@@ -93,9 +111,24 @@ export function start(): (() => void) | undefined {
   btn.setAttribute("aria-haspopup", "dialog");
   btn.style.setProperty("--ac-bg", accent);
   btn.style.setProperty("--ac-fg", textOn(accent));
-  btn.style.bottom = offset + "px";
-  btn.style[left ? "left" : "right"] = "20px";
-  if (cfg.launcher.style === "icon") {
+  const tab = cfg.launcher.style === "tab";
+  if (!tab) {
+    btn.style.bottom = offset + "px";
+    btn.style[left ? "left" : "right"] = "20px";
+  }
+  if (tab) {
+    // Docked to the edge (offset doesn't apply). The accessible name is the label's translation: the tab shows no text.
+    btn.classList.add("tab");
+    if (left) btn.classList.add("sl");
+    btn.setAttribute("aria-label", d.ariaLabel || "Open the chat assistant");
+    const logo = brandLogo(cfg.avatarUrl, page.logo);
+    if (logo) {
+      const img = document.createElement("img");
+      img.alt = "";
+      img.src = logo;
+      btn.append(img);
+    } else btn.append(chatIcon());
+  } else if (cfg.launcher.style === "icon") {
     btn.classList.add("i");
     btn.setAttribute("aria-label", d.ariaLabel || "Open the chat assistant");
     btn.append(chatIcon());
@@ -167,8 +200,14 @@ export function start(): (() => void) | undefined {
       teaser = document.createElement("div");
       teaser.className = "t";
       teaser.setAttribute("role", "status");
-      teaser.style.bottom = offset + 64 + "px";
-      teaser.style[left ? "left" : "right"] = "20px";
+      if (tab) {
+        teaser.style.top = "50%";
+        teaser.style.transform = "translateY(-50%)";
+        teaser.style[left ? "left" : "right"] = "64px";
+      } else {
+        teaser.style.bottom = offset + 64 + "px";
+        teaser.style[left ? "left" : "right"] = "20px";
+      }
       const text = document.createElement("span");
       text.textContent = t.text || d.teaser || "";
       const close = document.createElement("button");
@@ -182,7 +221,7 @@ export function start(): (() => void) | undefined {
   }
 
   // --- reopen (UD13): only after the shopper used the chat, so this is the one page-view load we allow ---
-  if (ui.open.get()) openChat({ productId: null, focus: false });
+  if (ui.open.get()) openChat({ productId: null, focus: false, ...(ui.drawer.get() && { mode: "drawer" as const }) });
 
   return () => {
     clearTimeout(timer);
