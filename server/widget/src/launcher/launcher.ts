@@ -83,7 +83,13 @@ export function start(): (() => void) | undefined {
         while (pay.parentElement && pay.parentElement !== anchor.parentElement) pay = pay.parentElement;
         anchor = pay;
       }
-      anchor.after(tpl.content.cloneNode(true));
+      // End of the product details column (the user's choice): the deepest ancestor of the form that also holds the
+      // product title (<h1>) is that column in Dawn-family themes (the gallery is a sibling column, so it's never it).
+      // No such column: stay after the buy buttons.
+      let column: Element | null = form.parentElement;
+      while (column && column !== document.body && !column.querySelector("h1")) column = column.parentElement;
+      if (column && column !== document.body && column.contains(anchor)) column.append(tpl.content.cloneNode(true));
+      else anchor.after(tpl.content.cloneNode(true));
       const s = document.createElement("script");
       s.async = true;
       s.src = tpl.dataset.script ?? "";
