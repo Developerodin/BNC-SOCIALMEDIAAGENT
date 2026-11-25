@@ -6,10 +6,10 @@ per-store **mobile app key**.
 
 ## Before you start
 
-- **Base URL:** `https://<askcart-host>`. The app's public address. It changes until AskCart is hosted (for now it's
-  the `shopify app dev` tunnel), so keep it in config, not in code.
+- **Base URL:** `https://askcart.13.232.66.119.sslip.io` (the EC2 server). It will change if the server moves to its own
+  domain, so keep it in config, not in code.
 - **Shop:** the store's permanent domain, e.g. `my-store.myshopify.com`. Every request names it with `shop`.
-- **Mobile app key:** the merchant creates it in Shopify admin → Apps → AskCart → **Mobile app key** → Create key.
+- **Mobile app key:** the merchant creates it in Shopify admin → Apps → the app (**Shop Assistant** on Bois & Chiffons, **AskCart** on the CellaVei stores) → **Mobile app key** → Create key.
   It is shown once and looks like `ackm_` + 43 characters.
 
 ## Authentication
