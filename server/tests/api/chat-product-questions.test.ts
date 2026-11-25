@@ -16,6 +16,7 @@ let admin: ReturnType<typeof postgres>;
 let route: typeof import("@/app/api/chat/product-questions/route");
 let products: typeof import("@/lib/products");
 let rate: typeof import("@/lib/rate-limit");
+let pq: typeof import("@/lib/chat/product-questions");
 let client: typeof import("@/db/client");
 let storeA: string;
 let storeB: string;
@@ -38,6 +39,7 @@ beforeAll(async () => {
   route = await import("@/app/api/chat/product-questions/route");
   products = await import("@/lib/products");
   rate = await import("@/lib/rate-limit");
+  pq = await import("@/lib/chat/product-questions");
   client = await import("@/db/client");
   admin = postgres(process.env.DATABASE_ADMIN_URL!, { max: 1 });
   storeA = await newStore(admin);
@@ -54,6 +56,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   create.mockReset();
   rate.resetRateLimit();
+  pq.resetQuestionsState();
   process.env.OPENAI_API_KEY = "test";
   process.env.OPENAI_MODEL_SMALL = "small-model";
   process.env.OPENAI_MODEL_LARGE = "large-model";
@@ -169,6 +172,7 @@ test("an OpenAI error, timeout or bad JSON gives no questions, caches nothing, a
     () => create.mockResolvedValueOnce({ output_text: "not json" }),
   ];
   for (const fail of failures) {
+    pq.resetQuestionsState(); // an outage is remembered for a minute (next test)
     fail();
     const res = await get(shopA, "&product=1");
     expect(res.status).toBe(200);
@@ -176,9 +180,56 @@ test("an OpenAI error, timeout or bad JSON gives no questions, caches nothing, a
     expect(res.headers.get("cache-control")).toBe("public, max-age=60");
     expect(await cached(storeA, "1")).toHaveLength(0);
   }
+  pq.resetQuestionsState();
   create.mockResolvedValueOnce(ok(QUESTIONS));
   expect(await (await get(shopA, "&product=1")).json()).toEqual({ questions: QUESTIONS });
   expect(create).toHaveBeenCalledTimes(failures.length + 1);
+});
+
+test("after an OpenAI outage, other products don't each wait for OpenAI; a bad reply for one product doesn't count as an outage", async () => {
+  await upsert(storeA, node("5", { title: "Wool hat" }), node("6", { title: "Silk scarf" }));
+  create.mockRejectedValueOnce(apiError(500));
+  expect((await get(shopA, "&product=1")).headers.get("cache-control")).toBe("public, max-age=60");
+  const res = await get(shopA, "&product=5");
+  expect(await res.json()).toEqual({ questions: [] });
+  expect(res.headers.get("cache-control")).toBe("public, max-age=60");
+  expect(create).toHaveBeenCalledTimes(1); // the second request never reached OpenAI
+  pq.resetQuestionsState();
+  create.mockResolvedValueOnce({ output_text: "not json" }); // bad JSON for one product: not an outage
+  await get(shopA, "&product=5");
+  create.mockResolvedValueOnce(ok(QUESTIONS));
+  expect(await (await get(shopA, "&product=6")).json()).toEqual({ questions: QUESTIONS });
+});
+
+test("generations are limited per store, but answers served from the cache are not counted", async () => {
+  create.mockResolvedValue(ok(QUESTIONS));
+  expect(await (await get(shopA, "&product=1")).json()).toEqual({ questions: QUESTIONS });
+  for (let i = 0; i < 59; i++) rate.rateLimit(`questions:generate:${storeA}`); // the other 59 generations of this minute
+  // Cache hits keep working over the generation limit.
+  expect(await (await get(shopA, "&product=1")).json()).toEqual({ questions: QUESTIONS });
+  await upsert(storeA, node("7", { title: "Denim cap" }));
+  const over = await get(shopA, "&product=7");
+  expect(await over.json()).toEqual({ questions: [] });
+  expect(over.headers.get("cache-control")).toBe("public, max-age=60");
+  expect(create).toHaveBeenCalledTimes(1);
+});
+
+test("a rate-limited caller's 429 carries the CORS headers, so a browser can read it", async () => {
+  create.mockResolvedValue(ok(QUESTIONS));
+  let last: Response | undefined;
+  for (let i = 0; i < 31; i++) last = await get(shopA, "&product=1");
+  expect(last!.status).toBe(429);
+  expect(last!.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+});
+
+test("a database failure in the store lookup is an empty list, not a 500", async () => {
+  const spy = vi.spyOn(client.db, "select").mockImplementationOnce(() => {
+    throw new Error("connection refused");
+  });
+  const res = await get(shopA, "&product=1");
+  spy.mockRestore();
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ questions: [] });
 });
 
 // Real timers: fake ones would also stall the database driver. Costs the 5 s timeout.

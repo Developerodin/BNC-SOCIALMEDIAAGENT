@@ -261,8 +261,8 @@ describe("toPromptStock (C14 a, D93)", () => {
     expect(live.toPromptStock(await product([variant(1, { inventoryQuantity: 800 })]), 5)).toBe("€19.99; in stock");
   });
 
-  test("a sale shows the original price; a compare-at that is not higher is ignored", async () => {
-    expect(live.toPromptStock(await product([variant(1, { price: "629.95", compareAtPrice: "699.95" })]), 5)).toBe("€629.95 (was €699.95); in stock");
+  test("the LIVE line gives the current price only, never a was-price", async () => {
+    expect(live.toPromptStock(await product([variant(1, { price: "629.95", compareAtPrice: "699.95" })]), 5)).toBe("€629.95; in stock");
     expect(live.toPromptStock(await product([variant(1, { price: "20.00", compareAtPrice: "20.00" })]), 5)).toBe("€20.00; in stock");
     expect(live.toPromptStock(await product([variant(1, { price: "20.00", compareAtPrice: "10.00" })]), 5)).toBe("€20.00; in stock");
   });
@@ -285,12 +285,12 @@ describe("toPromptStock (C14 a, D93)", () => {
     expect(line).not.toContain("40");
   });
 
-  test("variants at different prices carry their own, with their own sale price", async () => {
+  test("variants at different prices carry their own", async () => {
     const line = live.toPromptStock(
       await product([variant(1, { title: "S", price: "19.00" }), variant(2, { title: "M", price: "29.00", compareAtPrice: "35.00" })]),
       5,
     );
-    expect(line).toBe("S: €19.00, in stock; M: €29.00 (was €35.00), in stock");
+    expect(line).toBe("S: €19.00, in stock; M: €29.00, in stock");
   });
 
   test("a sold-out product with different variant prices shows the range", async () => {
@@ -304,8 +304,8 @@ describe("toPromptStock (C14 a, D93)", () => {
   test("C26: another currency than the product's leaves the price out and keeps stock; same or unknown keeps it", async () => {
     const p = await product([variant(1, { price: "629.95", compareAtPrice: "699.95", inventoryQuantity: 3 })]);
     expect(live.toPromptStock(p, 5, "USD")).toBe("only 3 left");
-    expect(live.toPromptStock(p, 5, "EUR")).toBe("€629.95 (was €699.95); only 3 left");
-    expect(live.toPromptStock(p, 5, null)).toBe("€629.95 (was €699.95); only 3 left");
+    expect(live.toPromptStock(p, 5, "EUR")).toBe("€629.95; only 3 left");
+    expect(live.toPromptStock(p, 5, null)).toBe("€629.95; only 3 left");
     const many = await product([variant(1, { title: "S", price: "19.00" }), variant(2, { title: "M", price: "29.00", availableForSale: false })]);
     expect(live.toPromptStock(many, 5, "USD")).toBe("S: in stock; M: sold out");
     expect(live.toPromptStock(await product([variant(1, { availableForSale: false })]), 5, "USD")).toBe("sold out");

@@ -263,6 +263,51 @@ test("syncProduct upserts the product with its metafields", async () => {
   expect(rows[0].content).toContain("Collections: Summer");
 });
 
+test("syncProduct gives a stalled Admin read 15 s, then fails the job so only it is retried", async () => {
+  const storeId = await newStore();
+  gql.mockImplementation(() => new Promise(() => {})); // never answers
+  const started = Date.now();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const p = sync.syncProduct({ storeId, productId: "gid://shopify/Product/1" });
+    const failed = expect(p).rejects.toMatchObject({ name: "TimeoutError" });
+    await vi.waitFor(() => expect(gql).toHaveBeenCalled(), { timeout: 5000, interval: 20 }); // the read has started
+    await vi.advanceTimersByTimeAsync(15_100);
+    await failed;
+  } finally {
+    vi.useRealTimers();
+  }
+  expect(Date.now() - started).toBeLessThan(10_000); // fake time, not 15 real seconds
+});
+
+test("syncProduct waits while the store's Admin cost bucket is nearly empty, then reads", async () => {
+  const storeId = await newStore();
+  const throttle = await import("@/lib/shopify/throttle");
+  throttle.resetThrottle();
+  throttle.recordThrottle(storeId, { throttleStatus: { currentlyAvailable: 50, restoreRate: 100 } }); // needs 150 more points: 1.5 s
+  gql.mockResolvedValue({ product: null });
+  const started = Date.now();
+  await sync.syncProduct({ storeId, productId: "gid://shopify/Product/1" });
+  expect(Date.now() - started).toBeGreaterThanOrEqual(1300);
+  expect(gql).toHaveBeenCalledTimes(1);
+  throttle.resetThrottle();
+});
+
+test("throttleWaitMs: unknown is 0, the bucket refills at its restore rate, a THROTTLED error means empty", async () => {
+  const t = await import("@/lib/shopify/throttle");
+  t.resetThrottle();
+  expect(t.throttleWaitMs("s1", 200, 1000)).toBe(0);
+  t.recordThrottle("s1", { throttleStatus: { currentlyAvailable: 100, restoreRate: 50 } }, 1000);
+  expect(t.throttleWaitMs("s1", 200, 1000)).toBe(2000);
+  expect(t.throttleWaitMs("s1", 200, 2000)).toBe(1000);
+  expect(t.throttleWaitMs("s1", 200, 3000)).toBe(0);
+  t.recordThrottle("s1", {}, 4000); // no status: keeps the last one
+  expect(t.throttleWaitMs("s1", 200, 3000)).toBe(0);
+  t.recordThrottled("s1", 5000);
+  expect(t.throttleWaitMs("s1", 200, 5000)).toBe(4000);
+  t.resetThrottle();
+});
+
 test("syncProduct does nothing for an inactive store", async () => {
   const storeId = await newStore({ active: false });
   await sync.syncProduct({ storeId, productId: "gid://shopify/Product/1" });
