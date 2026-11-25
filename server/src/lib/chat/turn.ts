@@ -15,7 +15,7 @@ import { buildInput, LARGE_SYSTEM_PROMPT, SYSTEM_PROMPT, sanitizeData, type Orde
 import { rewriteQuery, type ChatTurn } from "./rewrite";
 import { runTool, toolDefs, type ToolContext } from "./tools";
 import type { SseEvent } from "./sse";
-import type { StatusStep } from "@/lib/widget-contract";
+import type { CartSummary, StatusStep } from "@/lib/widget-contract";
 import { mintToken, tokenHash, verifyToken } from "./token";
 
 // One chat turn (Task 19): openTurn does the DB work before the stream (one forStore), runTurn does
@@ -276,6 +276,31 @@ const MAX_CART_TITLE = 80;
 const MAX_CART_ADDED = 10;
 const cartTitle = (t: string) => sanitizeData(t).replace(/\s+/g, " ").trim().slice(0, MAX_CART_TITLE);
 
+const MAX_CART_LINES = 20;
+const MAX_CART_MONEY = 40;
+const isStr = (v: unknown, max: number): v is string => typeof v === "string" && v.length <= max;
+
+/**
+ * The request's optional `cart` (widget-contract CartSummary), checked strictly: at most 20 lines, short strings, whole
+ * quantities of 1-999. Anything else (wrong type, too long, too many lines, extra shapes) gives null and the cart is
+ * ignored, never an error: it is a hint from the shopper's browser, not data we depend on.
+ */
+export function parseCartSummary(v: unknown): CartSummary | null {
+  if (!v || typeof v !== "object") return null;
+  const { items, total } = v as { items?: unknown; total?: unknown };
+  if (!Array.isArray(items) || !items.length || items.length > MAX_CART_LINES || !isStr(total, MAX_CART_MONEY) || !total.trim()) return null;
+  const out: CartSummary["items"] = [];
+  for (const i of items) {
+    if (!i || typeof i !== "object") return null;
+    const { title, variant, quantity, price } = i as Record<string, unknown>;
+    if (!isStr(title, MAX_CART_TITLE) || !title.trim() || !isStr(price, MAX_CART_MONEY) || !price.trim()) return null;
+    if (variant != null && !isStr(variant, MAX_CART_TITLE)) return null;
+    if (typeof quantity !== "number" || !Number.isInteger(quantity) || quantity < 1 || quantity > 999) return null;
+    out.push({ title, ...(variant ? { variant } : {}), quantity, price });
+  }
+  return { items: out, total };
+}
+
 /** The titles of the products added to the cart from this conversation's cards, most recent first, each product once (at most 10). */
 async function cartAddedTitles(storeId: string, conversationId: string): Promise<string[]> {
   const at = sql`max(${cartEvents.createdAt})`;
@@ -470,6 +495,8 @@ export async function runTurn(t: {
   country?: string;
   /** The shopper's page currency (ISO 4217) when the widget sent one; a product priced in another currency gets no price in its LIVE line (C26). */
   currency?: string;
+  /** The shopper's whole current cart from their browser or app (route.ts parseCartSummary). A prompt line only: never saved. */
+  cart?: CartSummary | null;
   /** The verified customer GID of the signed session (route.ts customerOf); absent for a guest. */
   customer?: string;
   /** From openTurn: the verified customer owns this conversation. Order details are only offered and saved then. */
@@ -531,7 +558,7 @@ export async function runTurn(t: {
     const note = catalog?.degraded ? [CATALOG_DEGRADED, priced.note].filter(Boolean).join(" ") : priced.note;
     const hits = wide ? topProducts(priced.hits, live, PROMPT_PRODUCTS) : priced.hits;
     const cartAdded = catalog ? [] : await cartAddedTitles(storeId, t.conversationId).catch(() => []); // a hint: never fails the turn
-    const { input, allowed } = buildInput({ hits, live, currentProductId, history: t.history, message: t.message, threshold, shopperCurrency: t.currency, note, cartAdded });
+    const { input, allowed } = buildInput({ hits, live, currentProductId, history: t.history, message: t.message, threshold, shopperCurrency: t.currency, note, cartAdded, cart: t.cart });
 
     const cards: Card[] = [];
     // The MCP tools (tools.ts) add the products they find to `live` and `allowed`, so onProduct below finds them too.

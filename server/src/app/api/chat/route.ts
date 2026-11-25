@@ -3,7 +3,7 @@ import { customerOf } from "@/lib/chat/customer";
 import { MAX_INPUT_CHARS } from "@/lib/chat/limits";
 import { PING, PING_MS, SSE_HEADERS, sseEvent } from "@/lib/chat/sse";
 import { UUID } from "@/lib/chat/token";
-import { openTurn, runTurn } from "@/lib/chat/turn";
+import { openTurn, parseCartSummary, runTurn } from "@/lib/chat/turn";
 import type { StatusEvent } from "@/lib/widget-contract";
 
 // POST /api/chat: one chat turn, streamed as SSE (§7.6, Task 19). No `runtime` export: cacheComponents
@@ -88,6 +88,7 @@ export async function POST(req: Request) {
         productId: typeof body.productId === "string" ? body.productId : undefined,
         country: typeof body.country === "string" ? body.country : undefined,
         currency: typeof body.currency === "string" && /^[A-Z]{3}$/.test(body.currency) ? body.currency : undefined,
+        cart: parseCartSummary(body.cart),
         customer: who.customer,
         owned: opened.owned,
         signal: ac.signal,

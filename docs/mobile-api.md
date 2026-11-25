@@ -127,6 +127,14 @@ Request body (JSON, `Content-Type: application/json`):
   **same** `requestId`: you get the saved answer back instead of a second answer.
 - `productId` (optional): the numeric id of the product the shopper is looking at, so "is this waterproof?" works.
 - `country` (optional): ISO country code, for prices and availability in the shopper's market.
+- `cart` (optional): the shopper's whole current cart, so "what's in my cart?" is answered with its items and prices.
+  The storefront widget sends it from the store's `/cart.js`; a mobile app may send its own cart in the same shape:
+  `{ "items": [{ "title": "Wax", "variant": "Large", "quantity": 2, "price": "$13.99" }], "total": "$20.29" }`.
+  At most 20 items; `title` and `variant` (optional, leave it out for a default variant) at most 80 characters;
+  `quantity` a whole number from 1 to 999; `price` (the line total) and `total` are display strings of at most 40
+  characters, already formatted in the shopper's currency. It is only used for that message and is never saved. If any
+  part is invalid or too long the whole field is ignored: the request still succeeds, with no error. The assistant can
+  read the cart but never change it.
 
 The answer is a **Server-Sent Events** stream (`Content-Type: text/event-stream`). Each event is
 

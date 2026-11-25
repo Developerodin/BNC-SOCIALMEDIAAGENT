@@ -2,7 +2,7 @@
 // C21: on a theme that configured Shopify's `updateCart` action itself (`isDefault()` is false), that action is used
 // instead, so the theme's cart icon refreshes in place. Shopify's default handler is never called: on a theme it doesn't
 // recognise it reloads the whole page mid-chat.
-import type { PageContext } from "../../src/lib/widget-contract";
+import type { CartSummary, PageContext } from "../../src/lib/widget-contract";
 
 // Only the add url is needed, so the embed's bridge (embed.ts) can reuse this on a storefront without a full PageContext.
 export type CartTarget = Pick<PageContext, "cartAddUrl">;
@@ -32,25 +32,71 @@ function onCartPage(page: CartTarget): boolean {
 let inCart: Promise<CartState> | null = null;
 
 /** What the theme's cart.js says: quantity per variant id, and the total item count (the header badge). */
-export type CartState = { quantities: Map<string, number>; itemCount: number };
+export type CartState = { quantities: Map<string, number>; itemCount: number; summary: CartSummary | null };
 
 /** Fired on window after our own add and after a re-read, so cards and the header badge redraw. */
 export const CART_CHANGED = "askcart:cart";
+
+type CartJson = {
+  items?: { variant_id?: unknown; quantity?: unknown; product_title?: unknown; variant_title?: unknown; final_line_price?: unknown; line_price?: unknown }[];
+  item_count?: unknown;
+  total_price?: unknown;
+  currency?: unknown;
+};
+
+const MAX_SUMMARY_LINES = 20;
+const MAX_SUMMARY_TITLE = 80;
+const short = (v: unknown) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, MAX_SUMMARY_TITLE) : "");
+
+/** cart.js prices are in minor units (cents): formatted as the shopper sees money, e.g. "₹1,399.90". */
+function money(cents: unknown, currency: string): string {
+  const n = Number(cents) / 100;
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(n);
+  } catch {
+    return `${n.toFixed(2)} ${currency}`;
+  }
+}
+
+/** The compact cart the chat request carries (CartSummary), or null when there is nothing to say. */
+function summaryOf(c: CartJson): CartSummary | null {
+  const currency = typeof c.currency === "string" && /^[A-Z]{3}$/.test(c.currency) ? c.currency : null;
+  if (!currency || !Array.isArray(c.items) || !c.items.length || !Number.isFinite(Number(c.total_price))) return null;
+  const items: CartSummary["items"] = [];
+  for (const i of c.items.slice(0, MAX_SUMMARY_LINES)) {
+    const title = short(i.product_title);
+    const quantity = Number(i.quantity);
+    const price = i.final_line_price ?? i.line_price;
+    if (!title || !(quantity >= 1) || !Number.isFinite(Number(price))) continue;
+    const variant = short(i.variant_title);
+    items.push({ title, ...(variant && variant !== "Default Title" ? { variant } : {}), quantity: Math.floor(quantity), price: money(price, currency) });
+  }
+  return items.length ? { items, total: money(c.total_price, currency) } : null;
+}
 
 function readCart(page: CartTarget): Promise<CartState> {
   return Promise.resolve() // a fetch that throws synchronously is caught too
     .then(() => fetch(cartPath(page) + ".js", { headers: { Accept: "application/json" }, credentials: "same-origin" }))
     .then((r) => (r.ok ? r.json() : null))
-    .then((c: { items?: { variant_id?: unknown; quantity?: unknown }[]; item_count?: unknown } | null) => {
+    .then((c: CartJson | null) => {
       const quantities = new Map<string, number>();
       for (const i of c?.items ?? []) {
         const id = String(i.variant_id);
         quantities.set(id, (quantities.get(id) ?? 0) + (Number(i.quantity) || 0));
       }
       const itemCount = typeof c?.item_count === "number" ? c.item_count : [...quantities.values()].reduce((a, n) => a + n, 0);
-      return { quantities, itemCount };
+      return { quantities, itemCount, summary: c ? summaryOf(c) : null };
     })
-    .catch(() => ({ quantities: new Map<string, number>(), itemCount: 0 }));
+    .catch(() => ({ quantities: new Map<string, number>(), itemCount: 0, summary: null }));
+}
+
+/**
+ * The cart as it is right now, for a chat message: one cart.js read (the same one cartState uses), which also refreshes the
+ * cached state. Null when it can't be read, is empty, or takes over 1.5 s: the message is never held up by the cart.
+ */
+export function cartSummaryNow(page: CartTarget): Promise<CartSummary | null> {
+  const read = (inCart = readCart(page));
+  return Promise.race([read.then((s) => s.summary), new Promise<null>((r) => setTimeout(() => r(null), 1500))]);
 }
 
 /**

@@ -79,6 +79,15 @@ export type HistoryItem = {
   cartAdds?: { title: string }[]; // adds made from this answer's cards, for the "added to your cart" note
 };
 
+/**
+ * The shopper's cart as the client read it (storefront widget: cart.js; a mobile app may send its own). Untrusted text:
+ * the server validates it strictly (chat route) and drops it whole when it isn't in this shape. Prices are display strings.
+ */
+export type CartSummary = {
+  items: { title: string; variant?: string; quantity: number; price: string }[]; // at most 20 lines
+  total: string;
+};
+
 /** The client Task 25's `createApi(apiBase, shop)` returns. Every request omits cookies; the token never goes in a URL. */
 export type WidgetApi = {
   send(args: {
@@ -89,6 +98,7 @@ export type WidgetApi = {
     country: string | null;
     currency?: string | null; // the page currency: a product priced in another one gets no price in the model's LIVE line (C26)
     pageUrl: string; // origin + pathname only
+    cart?: CartSummary | null; // the shopper's whole current cart, for "what's in my cart" (storefront only; not saved)
     signal?: AbortSignal;
   }): Promise<Response>;
   /** "reset": the token is dead (401/404), drop it. null: any other failure, keep the token. */
