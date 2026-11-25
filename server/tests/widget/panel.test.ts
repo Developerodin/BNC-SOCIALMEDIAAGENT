@@ -1353,6 +1353,17 @@ describe("panel motion", () => {
     expect((fn.mock.calls[0] as unknown[])[1]).toMatchObject({ duration: 240 });
   });
 
+  it("keeps the page locked while the drawer slides out, and unlocks when it is gone", async () => {
+    const { anims } = animate();
+    motionOk();
+    await setup(mockApi()).open({ mode: "drawer" });
+    expect(document.documentElement.style.overflow).toBe("hidden");
+    panel.close();
+    expect(document.documentElement.style.overflow).toBe("hidden");
+    anims[0].onfinish!();
+    expect(document.documentElement.style.overflow).toBe("");
+  });
+
   it("the phone's drawer (full screen) leaves by 100%, in 220ms", async () => {
     const { fn } = animate();
     motionOk();
@@ -1490,6 +1501,17 @@ describe("the desktop drawer: backdrop, scroll lock, modal semantics", () => {
     await setup(mockApi()).open();
     expect(q(".panel")!.getAttribute("aria-modal")).toBe("true");
     expect(scrim().hidden).toBe(true); // full screen has nothing behind it
+  });
+
+  it("hides the launcher while the desktop drawer is open (the edge tab would show in its gutter) and shows it again on close", async () => {
+    await setup(mockApi()).open({ mode: "drawer" });
+    expect(launcher.style.visibility).toBe("hidden");
+    panel.close();
+    expect(launcher.style.visibility).toBe("");
+    await panel.open({ mode: "drawer" });
+    expect(launcher.style.visibility).toBe("hidden");
+    await panel.open({ mode: "floating" }); // a floating panel leaves it alone
+    expect(launcher.style.visibility).toBe("");
   });
 
   it("a phone's drawer is the full-screen sheet: no backdrop, still modal and locked", async () => {

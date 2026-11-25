@@ -308,6 +308,8 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     if (full || drawer) panel.setAttribute("aria-modal", "true");
     else panel.removeAttribute("aria-modal");
     scrim.hidden = !drawer || full || panel.hidden;
+    // The launcher (the edge tab sits at the very edge) would show in the drawer's 16px gutter: out of sight while the card is open.
+    if (opts.launcher) opts.launcher.style.visibility = drawer && !full && !panel.hidden ? "hidden" : "";
     lockScroll((full || drawer) && !panel.hidden);
   }
 
@@ -652,6 +654,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     const done = () => {
       panel.hidden = true;
       scrim.hidden = true;
+      if (opts.launcher) opts.launcher.style.visibility = "";
       panel.classList.remove("still");
       scrim.classList.remove("still");
       lockScroll(false); // a resize while it was leaving may have locked the page again
@@ -679,9 +682,10 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     if (panel.hidden || exit || opts.inline) return;
     menu.hide();
     hidePanel();
-    lockScroll(false);
+    if (!exit) lockScroll(false); // while it slides out the page stays locked: unlocking would bring the scrollbar back and shift the page under it (done() unlocks)
     ui.open.set(false);
     setExpanded(false);
+    if (opts.launcher) opts.launcher.style.visibility = ""; // visible again (and focusable) before focus goes back to it
     window.dispatchEvent(new Event(CLOSED)); // the launcher docks as the edge tab (launcher.ts)
     // Back to where the shopper was; the launcher when that is gone (it has no button on pages the scope hides it from).
     const restore = opener?.isConnected ? opener : opts.launcher?.isConnected ? opts.launcher : null;
@@ -693,6 +697,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     turn?.abort();
     cancelExit();
     lockScroll(false);
+    if (opts.launcher) opts.launcher.style.visibility = "";
     window.removeEventListener("online", onNet);
     window.removeEventListener("offline", onOffline);
     window.removeEventListener("resize", layout);
