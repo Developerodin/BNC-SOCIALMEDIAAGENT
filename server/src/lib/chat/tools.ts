@@ -4,6 +4,7 @@ import { searchProducts } from "@/lib/search-provider";
 import { getProduct } from "@/lib/shopify/catalog-mcp";
 import { CATALOG_DEGRADED, catalogProduct, type TurnCatalog } from "@/lib/shopify/catalog-turn";
 import { askPolicies, POLICY_TYPES, type PolicyType } from "@/lib/shopify/storefront-mcp";
+import { applyBudget, type Budget, type PriceSort } from "./budget";
 import { ORDER_STATUS_DEF, orderStatus } from "./orders";
 import { ADMIN_TOOL_DEFS, ADMIN_TOOL_NAMES, runAdminTool } from "./admin-tools";
 import { MAX_DESCRIPTION_CHARS, numberProducts, productNumber } from "./number-products";
@@ -104,6 +105,8 @@ export type ToolContext = {
   catalog?: TurnCatalog;
   /** The verified customer GID from the signed session (never from the model or the shopper's text); order_status reads only this customer's orders. */
   customer?: string;
+  /** D87: this turn's budget and price order. Product searches made by a tool apply them too, since a budget turn has no search_products of its own. */
+  budget?: { budget: Budget | null; sort: PriceSort | null; currency: string | null };
 };
 
 const data = (body: string) => `<store_data>\n${body}\n</store_data>`;
@@ -193,21 +196,38 @@ async function productDetails(arg: unknown, ctx: ToolContext): Promise<string> {
  * same Shopify API seconds apart.
  */
 async function searchMore(query: string, ctx: ToolContext): Promise<string> {
+  return (await searchProductBlocks(query, ctx)).text;
+}
+
+/** searchMore's text, and whether it holds any product (browse_collection's fallback needs to know). */
+export async function searchProductBlocks(query: string, ctx: ToolContext): Promise<{ text: string; found: boolean; budgetEmpty?: boolean }> {
+  const none = (text: string) => ({ text, found: false });
+  const priced = !!ctx.budget && (!!ctx.budget.budget || !!ctx.budget.sort);
   const hits = await searchProducts(ctx.store, query, TOOL_SEARCH_K, { includeGiftCards: ctx.includeGiftCards, signal: ctx.signal, catalog: ctx.catalog });
-  if (ctx.catalog?.degraded) return CATALOG_DEGRADED; // an outage is not "no products match"
+  if (ctx.catalog?.degraded) return none(CATALOG_DEGRADED); // an outage is not "no products match"
   const known = new Set(ctx.allowed.values());
+  // With a budget the cap comes after the price filter (below), so all the hits are checked first.
+  const cap = priced ? TOOL_SEARCH_K : TOOL_PRODUCTS;
   const texts = new Map<string, string[]>();
   for (const h of hits as SearchHit[]) {
-    if (!known.has(h.productId) && !texts.has(h.productId) && texts.size >= TOOL_PRODUCTS) continue;
+    if (!known.has(h.productId) && !texts.has(h.productId) && texts.size >= cap) continue;
     texts.set(h.productId, [...(texts.get(h.productId) ?? []), h.content]);
   }
-  if (texts.size === 0) return "No products match this search.";
+  if (texts.size === 0) return none("No products match this search.");
 
   const numberOf = await numberProducts([...texts.keys()], ctx);
-  if (!numberOf) return "Product search is unavailable right now.";
+  if (!numberOf) return none("Product search is unavailable right now.");
 
-  const blocks = [...texts]
-    .filter(([id]) => numberOf.has(id))
-    .map(([id, t]) => productBlock({ n: numberOf.get(id)!, id, texts: t, live: ctx.live, threshold: ctx.threshold, shopperCurrency: ctx.shopperCurrency }));
-  return blocks.length ? blocks.join("\n\n") : "No products match this search.";
+  let ids = [...texts.keys()].filter((id) => numberOf.has(id));
+  let note = "";
+  if (priced) {
+    // The turn's own budget filter and price order (D87), by the live price.
+    const r = applyBudget({ hits: ids.map((productId) => ({ productId }) as SearchHit), live: ctx.live, budget: ctx.budget!.budget, sort: ctx.budget!.sort, currency: ctx.budget!.currency });
+    const kept = r.live.ok ? r.live.products : null;
+    ids = r.hits.map((h) => h.productId).filter((id) => !kept || kept.has(id)).slice(0, TOOL_PRODUCTS);
+    note = r.note ? `${r.note}\n\n` : "";
+    if (ids.length === 0 && !r.note) return { text: "No products from this search are within the shopper's budget.", found: false, budgetEmpty: true };
+  }
+  const blocks = ids.map((id) => productBlock({ n: numberOf.get(id)!, id, texts: texts.get(id)!, live: ctx.live, threshold: ctx.threshold, shopperCurrency: ctx.shopperCurrency }));
+  return blocks.length ? { text: note + blocks.join("\n\n"), found: true } : { text: note || "No products match this search.", found: false, budgetEmpty: priced };
 }

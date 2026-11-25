@@ -169,15 +169,25 @@ export async function openTurn(
       }
     }
     const rows = await tx
-      .select({ role: messages.role, content: messages.content })
+      .select({ role: messages.role, content: messages.content, cards: messages.cards })
       .from(messages)
       .where(earlier ? and(inConversation, lt(messages.createdAt, createdAtOf(earlier.id))) : inConversation)
       .orderBy(desc(messages.createdAt))
       .limit(HISTORY_MESSAGES);
-    if (earlier) return { ok: true, conversationId, token, history: rows.reverse(), message: earlier.content, owned };
+    const history = rows.reverse().map(historyTurn);
+    if (earlier) return { ok: true, conversationId, token, history, message: earlier.content, owned };
     await tx.insert(messages).values({ storeId: store.id, conversationId, role: "user", content: message, requestId: opts.requestId });
-    return { ok: true, conversationId, token, history: rows.reverse(), message, owned };
+    return { ok: true, conversationId, token, history, message, owned };
   });
+}
+
+/**
+ * A history row as the model and the rewrite see it. The saved text has its [[product:n]] markers stripped, so "the second
+ * one" or "that one" would point at nothing: an answer's card titles, in the order shown, are added after its text.
+ */
+function historyTurn(r: { role: "user" | "assistant"; content: string; cards: unknown }): ChatTurn {
+  const titles = r.role === "assistant" && Array.isArray(r.cards) ? (r.cards as Card[]).map((c, i) => `${i + 1}. ${cartTitle(c.title)}`) : [];
+  return { role: r.role, content: titles.length ? `${r.content}\n(Product cards shown with this answer, in order: ${titles.join("; ")})` : r.content };
 }
 
 /** Why an owned conversation refuses a request: no/expired session (401, the client re-authenticates) or another customer's (404). */
@@ -536,6 +546,7 @@ export async function runTurn(t: {
       check: (ids, o) => checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal, catalog, ...o }),
       catalog,
       customer: t.customer,
+      budget: wide ? { budget: rw.budget, sort: rw.sort, currency: store.currencyCode } : undefined,
     };
     // The Admin tools (admin-tools.ts) and order lookups need an installed store's token, so an mcp store gets neither.
     const admin = store.mode !== "mcp";
