@@ -140,6 +140,8 @@ OPENAI_MODEL_LARGE=<model>
 UCP_AGENT_PROFILE_URL=https://app.askcart.example/ucp-agent-profile.json   # turns on Shopify Catalog MCP tools; also powers policy answers via ask_business (old policies tool is the fallback until 2027-01-15)
 # Legacy partner access only, if the Social Media Agent still uses it:
 # PARTNER_STORE_DOMAIN=...  PARTNER_API_SECRET=...
+# PARTNER_STORE_DOMAIN must be the permanent myshopify handle (BnC: 687541-22.myshopify.com), not
+# boisandchiffons.myshopify.com or boisetchiffons.fr; otherwise every call is 503 store_not_connected.
 ```
 
 To generate a secret: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.
