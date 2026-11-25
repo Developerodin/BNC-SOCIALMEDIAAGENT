@@ -281,6 +281,17 @@ test("a valid country is passed to liveCheck; a malformed or missing one is trea
   }
 });
 
+test("C26: a page currency reaches the prompt: a different one hides the price from the model, a malformed one is ignored", async () => {
+  for (const [currency, price] of [["USD", false], ["EUR", true], ["eur", true], [undefined, true]] as const) {
+    create.mockClear();
+    search.mockResolvedValueOnce([{ chunkId: "c", source: "product", productId: gid("1"), content: "x", score: 1 }]);
+    liveCheck.mockResolvedValueOnce({ ok: true, products: new Map([[gid("1"), live("1")]]) });
+    await readAll(await post({ shop: shopA, message: "hi", currency }));
+    const sent = JSON.stringify(create.mock.calls[0][0].input);
+    expect(/LIVE: [^"]*\d[\d.,]*/.test(sent.replace(/\\n/g, "\n")) && sent.includes("€")).toBe(price);
+  }
+});
+
 // --- failures ---
 
 test("cancelling the response body mid-stream aborts the OpenAI request, saves the cut-off answer and logs no unhandled rejection (Review Focus 7)", async () => {

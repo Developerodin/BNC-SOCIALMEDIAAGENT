@@ -446,6 +446,8 @@ export async function runTurn(t: {
   message: string;
   productId?: string;
   country?: string;
+  /** The shopper's page currency (ISO 4217) when the widget sent one; a product priced in another currency gets no price in its LIVE line (C26). */
+  currency?: string;
   /** The verified customer GID of the signed session (route.ts customerOf); absent for a guest. */
   customer?: string;
   /** From openTurn: the verified customer owns this conversation. Order details are only offered and saved then. */
@@ -496,7 +498,7 @@ export async function runTurn(t: {
     const note = catalog?.degraded ? [CATALOG_DEGRADED, priced.note].filter(Boolean).join(" ") : priced.note;
     const hits = wide ? topProducts(priced.hits, live, PROMPT_PRODUCTS) : priced.hits;
     const cartAdded = catalog ? [] : await cartAddedTitles(storeId, t.conversationId).catch(() => []); // a hint: never fails the turn
-    const { input, allowed } = buildInput({ hits, live, currentProductId, history: t.history, message: t.message, threshold, note, cartAdded });
+    const { input, allowed } = buildInput({ hits, live, currentProductId, history: t.history, message: t.message, threshold, shopperCurrency: t.currency, note, cartAdded });
 
     const cards: Card[] = [];
     // The MCP tools (tools.ts) add the products they find to `live` and `allowed`, so onProduct below finds them too.
@@ -505,6 +507,7 @@ export async function runTurn(t: {
       live,
       allowed,
       threshold,
+      shopperCurrency: t.currency,
       includeGiftCards: rw.includeGiftCards,
       signal,
       check: (ids, o) => checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal, catalog, ...o }),

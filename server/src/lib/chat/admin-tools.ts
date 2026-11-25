@@ -288,7 +288,7 @@ async function browse(collectionArg: unknown, pageArg: unknown, ctx: ToolContext
 
   const numberOf = await numberProducts(ids, ctx);
   if (!numberOf) return UNAVAILABLE;
-  const blocks = ids.filter((id) => numberOf.has(id)).map((id) => productBlock({ n: numberOf.get(id)!, id, texts: [], live: ctx.live, threshold: ctx.threshold }));
+  const blocks = ids.filter((id) => numberOf.has(id)).map((id) => productBlock({ n: numberOf.get(id)!, id, texts: [], live: ctx.live, threshold: ctx.threshold, shopperCurrency: ctx.shopperCurrency }));
 
   const more = !hasMore ? "this is the last page" : page === MAX_PAGE ? "more products exist but can't be listed here" : `more on page ${page + 1}`;
   const head = sanitizeData(`Collection "${c.title.slice(0, 80)}" (${c.count} products), page ${page}: ${more}.`);

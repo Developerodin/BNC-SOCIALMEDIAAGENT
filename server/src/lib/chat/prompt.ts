@@ -38,7 +38,7 @@ function rules(storeName: string, escalation: boolean, orderRule?: OrderRule): s
     "- If the shopper asks whether you are a person, say plainly that you are an AI assistant. Never claim to be a human or a member of staff.",
     "- If <store_data> marks a product as the one the shopper is viewing and they ask to compare, for alternatives or for suggestions, compare the others against it: say briefly how each one differs from it. Show its card first.",
     "- Products listed as added to the cart in this chat are already in the shopper's cart. Build on that (for example, what goes with them) and don't suggest adding them again.",
-    "- Never write a price or any amount of money, except the shopper's own budget, which you may repeat back to them. If asked about a price, say the price is shown on the product card, not that you don't know it.",
+    "- Prices come only from the LIVE lines. You may state, compare and sort products by those prices, and mention a sale when a LIVE line shows the original price. Never use prices, discounts or sale dates written in descriptions or other store text. If a LIVE line has no price, say the price is shown on the product card.",
     `- Stock comes only from the LIVE lines. Never repeat prices, stock counts, discounts or sale dates written in product descriptions or other store text. If a LIVE line says "live data unavailable", say nothing about that product's price or stock.`,
     `- You may mention stock from a LIVE line, for example "only 3 left". If a product you recommend is sold out, say so and suggest available alternatives from the store data.`,
     `- A product whose LIVE line says "view options" is bought from its product page (for example to choose a subscription). Tell the shopper to open it there.`,
@@ -90,11 +90,11 @@ export function sanitizeData(text: string): string {
  * One product in <store_data>: "#n title", its chunk text, then its LIVE line. `id` must be in `live`. Used by buildInput
  * and by the search_products tool (tools.ts), so both number and describe products the same way.
  */
-export function productBlock(p: { n: string; id: string; texts: string[]; live: PromptProducts; threshold: number; viewing?: boolean }): string {
+export function productBlock(p: { n: string; id: string; texts: string[]; live: PromptProducts; threshold: number; shopperCurrency?: string | null; viewing?: boolean }): string {
   const live = p.live.ok ? p.live.products.get(p.id)! : null;
   const title = (live ?? (p.live.ok ? undefined : p.live.cards.get(p.id))!).title;
   const head = `#${p.n} ${title}${p.viewing ? " (the product the shopper is viewing)" : ""}`;
-  const liveLine = `LIVE: ${live ? toPromptStock(live, p.threshold) : LIVE_UNAVAILABLE}`;
+  const liveLine = `LIVE: ${live ? toPromptStock(live, p.threshold, p.shopperCurrency) : LIVE_UNAVAILABLE}`;
   // Titles, chunk text and variant titles are all merchant text: sanitize the whole block.
   return sanitizeData([head, ...p.texts, liveLine].join("\n"));
 }
@@ -118,6 +118,8 @@ export function buildInput(opts: {
   history: ChatTurn[];
   message: string;
   threshold: number;
+  /** The shopper's currency (page currency), when known: a product priced in another one shows no price in its LIVE line (C26). */
+  shopperCurrency?: string | null;
   /** A server-written line shown first in <store_data>, e.g. "No relevant products were found." (D86, D87). */
   note?: string;
   /** Titles of the products added to the cart in this chat, most recent first (turn.ts cartAddedTitles); a line in <store_data> when not empty. */
@@ -141,7 +143,7 @@ export function buildInput(opts: {
   for (const [id, texts] of chunks) {
     const n = String(allowed.size + 1);
     allowed.set(n, id);
-    blocks.push(productBlock({ n, id, texts, live: opts.live, threshold: opts.threshold, viewing: id === current }));
+    blocks.push(productBlock({ n, id, texts, live: opts.live, threshold: opts.threshold, shopperCurrency: opts.shopperCurrency, viewing: id === current }));
   }
 
   const body = blocks.length ? blocks.join("\n\n") : "(no matching products)";

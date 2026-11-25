@@ -94,6 +94,8 @@ export type ToolContext = {
   /** n → GID, shared with the marker parser; new products are added to it. */
   allowed: Map<string, string>;
   threshold: number;
+  /** The shopper's currency, when known (C26): see toPromptStock. */
+  shopperCurrency?: string | null;
   includeGiftCards: boolean;
   signal: AbortSignal;
   /** The turn's live check (turn.ts checkProducts). */
@@ -206,6 +208,6 @@ async function searchMore(query: string, ctx: ToolContext): Promise<string> {
 
   const blocks = [...texts]
     .filter(([id]) => numberOf.has(id))
-    .map(([id, t]) => productBlock({ n: numberOf.get(id)!, id, texts: t, live: ctx.live, threshold: ctx.threshold }));
+    .map(([id, t]) => productBlock({ n: numberOf.get(id)!, id, texts: t, live: ctx.live, threshold: ctx.threshold, shopperCurrency: ctx.shopperCurrency }));
   return blocks.length ? blocks.join("\n\n") : "No products match this search.";
 }

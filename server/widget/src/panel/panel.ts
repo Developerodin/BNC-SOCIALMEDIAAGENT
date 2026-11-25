@@ -349,7 +349,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     turn = ac;
     const outcome = await runSend(
       api,
-      { message, token: tokens.get(), requestId, productId, country: page.country, pageUrl: location.href, signal: ac.signal },
+      { message, token: tokens.get(), requestId, productId, country: page.country, currency: page.currency, pageUrl: location.href, signal: ac.signal },
       (e) => {
         if (e.kind === "meta") tokens.set(e.token);
         else if (e.kind === "text") answer.append(e.delta);

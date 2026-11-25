@@ -234,16 +234,49 @@ function stockWord(s: Stock, threshold: number): string {
   return "in stock";
 }
 
+/** "€629.95" in the product's currency (locale "en"); a code Intl doesn't know falls back to "629.95 XYZ". null for an unparsable amount. */
+function moneyText(amount: string, currency: string): string | null {
+  if (!amount || !Number.isFinite(Number(amount))) return null;
+  try {
+    return new Intl.NumberFormat("en", { style: "currency", currency }).format(Number(amount));
+  } catch {
+    return `${amount} ${currency}`;
+  }
+}
+
+/** "€629.95 (was €699.95)": the "was" part only when the original price is higher. null when there is no usable price. */
+function priceText(v: LiveVariant, currency: string): string | null {
+  const now = moneyText(v.price, currency);
+  if (!now) return null;
+  const was = v.compareAtPrice && Number(v.compareAtPrice) > Number(v.price) ? moneyText(v.compareAtPrice, currency) : null;
+  return was ? `${now} (was ${was})` : now;
+}
+
+/** "€19.00–€29.00" (one amount when they match): the lowest to the highest variant price; null when none parses. */
+function priceRange(p: LiveProduct): string | null {
+  const nums = p.variants.map((v) => Number(v.price)).filter(Number.isFinite);
+  const lo = nums.length ? moneyText(String(Math.min(...nums)), p.currency) : null;
+  const hi = nums.length ? moneyText(String(Math.max(...nums)), p.currency) : null;
+  return lo && hi ? (lo === hi ? lo : `${lo}–${hi}`) : null;
+}
+
 /**
- * The product's `LIVE:` line for the model. C14 (a): the model sees what the card shows, a count only below the
- * threshold (UD10, default 5), otherwise "in stock". No prices (D37).
+ * The product's `LIVE:` line for the model (D93). C14 (a): stock as the card shows it, a count only below the threshold
+ * (UD10, default 5), otherwise "in stock". The price comes first ("€629.95 (was €699.95); in stock"). When variants differ
+ * in price each carries its own ("S: €19.00, in stock; M: €29.00, in stock"); a sold-out product keeps its price (a range
+ * when variants differ). C26: when the shopper's currency is known and differs from the product's, the price is left out
+ * (the card shows it) and only stock remains; unknown means include.
  */
-export function toPromptStock(p: LiveProduct, threshold: number): string {
-  if (!p.available) return "sold out";
-  let line =
+export function toPromptStock(p: LiveProduct, threshold: number, shopperCurrency?: string | null): string {
+  const priced = !shopperCurrency || shopperCurrency === p.currency;
+  const prices = p.variants.map((v) => (priced ? priceText(v, p.currency) : null));
+  const uniform = prices.every((t) => t === prices[0]);
+  if (!p.available) return [uniform ? prices[0] : priced ? priceRange(p) : null, "sold out"].filter(Boolean).join("; ");
+  const stock =
     p.hasOnlyDefaultVariant || p.variants.length === 1
       ? stockWord(p.variants[0].stock, threshold)
-      : p.variants.map((v) => `${v.title}: ${stockWord(v.stock, threshold)}`).join("; ");
+      : p.variants.map((v, i) => `${v.title}: ${!uniform && prices[i] ? `${prices[i]}, ` : ""}${stockWord(v.stock, threshold)}`).join("; ");
+  let line = [uniform ? prices[0] : null, stock].filter(Boolean).join("; ");
   if (p.moreVariants) line += "; more variants on the product page";
   if (p.action === "view_options") line += "; view options (subscription)";
   return line;

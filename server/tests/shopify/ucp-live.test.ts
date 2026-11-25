@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { toPromptStock } from "@/lib/shopify/live-products";
 import { moneyOf, toLiveProduct } from "@/lib/shopify/ucp-live";
 import { money, pgid, ucpProduct, ucpVariant } from "../helpers/ucp";
 
@@ -37,6 +38,16 @@ test("compare-at only when the list price is higher and in the same currency", (
   expect(v(money(2000))).toBeNull();
   expect(v(money(1000))).toBeNull();
   expect(v(money(9000, "EUR"))).toBeNull();
+});
+
+test("D93: the MCP path's LIVE line carries the same price, sale price and currency guard as the installed path", () => {
+  const sale = live(ucpProduct(1, { variants: [ucpVariant(11, { price: money(62995, "EUR"), list: money(69995, "EUR") })] }))!;
+  expect(toPromptStock(sale, 5)).toBe("€629.95 (was €699.95); in stock");
+  expect(toPromptStock(sale, 5, "USD")).toBe("in stock");
+  const jpy = live(ucpProduct(2, { variants: [ucpVariant(21, { price: money(4800, "JPY") })] }))!;
+  expect(toPromptStock(jpy, 5)).toBe("¥4,800; in stock");
+  const range = live(ucpProduct(3, { variants: [ucpVariant(31, { title: "S", price: money(1900, "EUR") }), ucpVariant(32, { title: "M", price: money(2900, "EUR") })] }))!;
+  expect(toPromptStock(range, 5)).toBe("S: €19.00, in stock; M: €29.00, in stock");
 });
 
 test("stock is only in_stock or sold_out, never a count; the product is available when any variant is", () => {

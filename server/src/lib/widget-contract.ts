@@ -78,6 +78,7 @@ export type WidgetApi = {
     requestId: string;
     productId: string | null;
     country: string | null;
+    currency?: string | null; // the page currency: a product priced in another one gets no price in the model's LIVE line (C26)
     pageUrl: string; // origin + pathname only
     signal?: AbortSignal;
   }): Promise<Response>;

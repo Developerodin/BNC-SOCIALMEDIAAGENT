@@ -86,6 +86,7 @@ export async function POST(req: Request) {
         message: opened.message,
         productId: typeof body.productId === "string" ? body.productId : undefined,
         country: typeof body.country === "string" ? body.country : undefined,
+        currency: typeof body.currency === "string" && /^[A-Z]{3}$/.test(body.currency) ? body.currency : undefined,
         customer: who.customer,
         owned: opened.owned,
         signal: ac.signal,
