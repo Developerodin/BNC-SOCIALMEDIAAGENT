@@ -24,6 +24,10 @@ function init(): Promise<void> {
     }
     await boss.createQueue("resync-scan", { retryLimit: 5, retryBackoff: true });
     await boss.createQueue("retention-scan", { retryLimit: 3, retryBackoff: true });
+    await boss.createQueue("sales-scan", { retryLimit: 3, retryBackoff: true });
+    // stately + singletonKey storeId, like store-sync: a repeated scan or a retry can not stack two runs for one store.
+    await boss.createQueue("sales-snapshot", { policy: "stately", ...retry });
+    await boss.updateQueue("sales-snapshot", retry);
   })());
 }
 
@@ -112,6 +116,14 @@ export async function startWorkers(): Promise<void> {
     await retentionScan();
   });
   await boss.schedule("retention-scan", "30 3 * * *"); // daily, 03:30 UTC
+  const { salesScan, snapshotSales } = await import("@/lib/sales");
+  await boss.work("sales-scan", async () => {
+    await salesScan();
+  });
+  await boss.work<{ storeId: string }>("sales-snapshot", async (jobs) => {
+    for (const job of jobs) console.info("sales-snapshot done", { storeId: job.data.storeId, ...(await snapshotSales(job.data)) });
+  });
+  await boss.schedule("sales-scan", "0 3 * * *"); // daily, 03:00 UTC; each store starts at a random moment in the next hour
 }
 
 export async function enqueue(name: string, data: object, opts?: SendOptions): Promise<string | null> {

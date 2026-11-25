@@ -162,6 +162,20 @@
       "when": 1795582973081,
       "tag": "0022_product_questions_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1795607103811,
+      "tag": "0023_sales_and_ratings",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795607109169,
+      "tag": "0024_product_sales_rls",
+      "breakpoints": true
     }
   ]
 }

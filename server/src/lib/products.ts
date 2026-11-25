@@ -3,6 +3,7 @@ import { and, eq, lt, sql } from "drizzle-orm";
 import { db, forStore, type Conn } from "@/db/client";
 import { products, stores } from "@/db/schema";
 import { splitsPair } from "@/lib/chunking";
+import { parseRating } from "@/lib/ratings";
 
 export type ShopifyProduct = {
   id: string;
@@ -153,6 +154,7 @@ export async function upsertProducts(storeId: string, ps: ShopifyProduct[], conn
     : [];
   const rows = ps.map((p) => {
     const content = buildContent(p);
+    const rating = parseRating(p.metafields);
     return {
       storeId,
       shopifyId: p.id,
@@ -167,6 +169,8 @@ export async function upsertProducts(storeId: string, ps: ShopifyProduct[], conn
       // webhook or resync (daily by default).
       published: p.publishedAt != null && new Date(p.publishedAt).getTime() <= Date.now(),
       isGiftCard: p.isGiftCard,
+      rating: rating?.rating ?? null,
+      ratingCount: rating?.count ?? null,
       content,
       contentHash: createHash("sha256").update(content).digest("hex"),
       shopifyUpdatedAt: new Date(p.updatedAt),
@@ -188,6 +192,8 @@ export async function upsertProducts(storeId: string, ps: ShopifyProduct[], conn
             status: sql`excluded.status`,
             published: sql`excluded.published`,
             isGiftCard: sql`excluded.is_gift_card`,
+            rating: sql`excluded.rating`,
+            ratingCount: sql`excluded.rating_count`,
             content: sql`excluded.content`,
             contentHash: sql`excluded.content_hash`,
             shopifyUpdatedAt: sql`excluded.shopify_updated_at`,

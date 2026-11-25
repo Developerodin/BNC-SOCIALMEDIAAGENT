@@ -8,6 +8,8 @@ import { refreshProduct } from "@/lib/sync";
 import { MAX_DESCRIPTION_CHARS, numberProducts, productNumber } from "./number-products";
 import { withTimeout } from "./openai";
 import { productBlock, sanitizeData } from "./prompt";
+import { featuredCollection, type FeaturedKind } from "./featured-collection";
+import { topRatedProducts, trendingProducts } from "./ranking-tools";
 import { searchProductBlocks, type ToolContext } from "./tools";
 
 // Tools that read the store live through the Admin API, offered only for installed stores (mode 'app', so an Admin token
@@ -78,6 +80,35 @@ export const ADMIN_TOOL_DEFS: FunctionTool[] = [
       additionalProperties: false,
     },
   },
+  {
+    type: "function",
+    name: "trending_products",
+    description:
+      "List the store's best-selling products of the last 30 days, from its own orders, so they can be shown as cards. Call it when the shopper asks for best sellers, trending or popular products. If the store has no sales data it says so.",
+    strict: true,
+    parameters: { type: "object", properties: {}, required: [], additionalProperties: false },
+  },
+  {
+    type: "function",
+    name: "top_rated_products",
+    description:
+      "List the store's best-rated products by customer review rating (only products with at least 3 reviews), best first, so they can be shown as cards. Call it when the shopper asks for top-rated or best-reviewed products. If the store has no rating data it says so.",
+    strict: true,
+    parameters: { type: "object", properties: {}, required: [], additionalProperties: false },
+  },
+  {
+    type: "function",
+    name: "featured_collection",
+    description:
+      "List the first products of the store's best-sellers collection or its sale collection (promotions, offers, Black Friday), found by name in any language, so they can be shown as cards. Call it when the shopper asks for the best sellers or for sale items, promotions or offers. If the store has no such collection it says so.",
+    strict: true,
+    parameters: {
+      type: "object",
+      properties: { kind: { type: "string", enum: ["best_sellers", "sale"], description: "best_sellers for the store's best sellers; sale for sale items, promotions and offers." } },
+      required: ["kind"],
+      additionalProperties: false,
+    },
+  },
 ];
 export const ADMIN_TOOL_NAMES: ReadonlySet<string> = new Set(ADMIN_TOOL_DEFS.map((d) => d.name));
 
@@ -86,6 +117,9 @@ export async function runAdminTool(name: string, args: Record<string, unknown>, 
   try {
     if (name === "store_overview") return await storeOverview(ctx);
     if (name === "refresh_product") return await refresh(args.product, args.outdated === true, ctx);
+    if (name === "trending_products") return await trendingProducts(ctx);
+    if (name === "top_rated_products") return await topRatedProducts(ctx);
+    if (name === "featured_collection") return await featured(args.kind, ctx);
     return await browse(args.collection, args.page, ctx);
   } catch (e) {
     // No shopper text in the log: only the store, the tool and Shopify's/our own error message.
@@ -111,7 +145,7 @@ const OVERVIEW = `query StoreOverview {
   productsCount(query: "status:active published_status:published") { count precision }
   collections(first: ${MAX_LISTED}, sortKey: TITLE, query: "published_status:published") {
     pageInfo { hasNextPage }
-    nodes { id title productsCount { count } }
+    nodes { id title handle productsCount { count } }
   }
   products(first: ${SAMPLE_SIZE}, query: "status:active published_status:published") {
     nodes { title productType tags }
@@ -121,7 +155,7 @@ const OVERVIEW = `query StoreOverview {
 type Overview = {
   total: number;
   atLeast: boolean;
-  collections: { id: string; title: string; count: number }[];
+  collections: { id: string; title: string; handle?: string; count: number }[];
   moreCollections: boolean;
   sample: { title: string; productType: string; tags: string[] }[];
 };
@@ -167,7 +201,7 @@ async function fetchOverview(ctx: ToolContext): Promise<Overview> {
   const d = await withTimeout(
     adminGraphql<{
       productsCount: { count: number; precision: string };
-      collections: { pageInfo: { hasNextPage: boolean }; nodes: { id: string; title: string; productsCount: { count: number } }[] };
+      collections: { pageInfo: { hasNextPage: boolean }; nodes: { id: string; title: string; handle?: string; productsCount: { count: number } }[] };
       products: { nodes: { title: string; productType: string; tags: string[] }[] };
     }>(ctx.store.id, ctx.store.shopDomain, OVERVIEW),
     TIMEOUT_MS,
@@ -175,7 +209,7 @@ async function fetchOverview(ctx: ToolContext): Promise<Overview> {
   return {
     total: d.productsCount.count,
     atLeast: d.productsCount.precision === "AT_LEAST",
-    collections: d.collections.nodes.map((c) => ({ id: c.id, title: c.title, count: c.productsCount.count })),
+    collections: d.collections.nodes.map((c) => ({ id: c.id, title: c.title, handle: c.handle, count: c.productsCount.count })),
     moreCollections: d.collections.pageInfo.hasNextPage,
     sample: d.products.nodes,
   };
@@ -330,7 +364,11 @@ async function browse(collectionArg: unknown, pageArg: unknown, ctx: ToolContext
     const titles = o.collections.map((x) => x.title.slice(0, 80)).join("; ");
     return sanitizeData(`No collection matches that name. The store's collections: ${titles || "none"}${o.moreCollections ? "; and more not listed" : ""}. Ask the shopper which one they mean.`).slice(0, MAX_RESULT_CHARS);
   }
+  return collectionPage(c, page, ctx);
+}
 
+/** One page of a collection's products, live-checked and numbered (browse_collection, featured_collection). `note` is added to the heading. */
+async function collectionPage(c: { id: string; title: string; count: number }, page: number, ctx: ToolContext, note = ""): Promise<string> {
   const d = await gql<{ collection: { products: { nodes: { id: string; status: string }[] } } | null }>(ctx, COLLECTION_PRODUCTS, { id: c.id, first: page * PAGE_SIZE + 1 });
   const active = (d.collection?.products.nodes ?? []).filter((p) => p.status === "ACTIVE").map((p) => p.id);
   const hasMore = active.length > page * PAGE_SIZE;
@@ -341,7 +379,7 @@ async function browse(collectionArg: unknown, pageArg: unknown, ctx: ToolContext
   const blocks = ids.filter((id) => numberOf.has(id)).map((id) => productBlock({ n: numberOf.get(id)!, id, texts: [], live: ctx.live, threshold: ctx.threshold, shopperCurrency: ctx.shopperCurrency }));
 
   const more = !hasMore ? "this is the last page" : page === MAX_PAGE ? "more products exist but can't be listed here" : `more on page ${page + 1}`;
-  const head = sanitizeData(`Collection "${c.title.slice(0, 80)}" (${c.count} products), page ${page}: ${more}.`);
+  const head = sanitizeData(`Collection "${c.title.slice(0, 80)}" (${c.count} products), page ${page}: ${more}.`) + note;
   if (blocks.length === 0) return `${head}\n${page === 1 ? "No products from it can be shown right now." : "No more products to show."}`;
 
   // Whole products only: a block that doesn't fit is left out, and the model is told how many.
@@ -353,4 +391,23 @@ async function browse(collectionArg: unknown, pageArg: unknown, ctx: ToolContext
     shown++;
   }
   return shown < blocks.length ? `${out}\n\n(${blocks.length - shown} more products on this page are not listed.)` : out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// featured_collection
+
+const NO_FEATURED: Record<FeaturedKind, string> = {
+  best_sellers: "The store has no best-sellers collection. Do not say any product is a best seller; offer to help the shopper find a product another way.",
+  sale: "The store has no sale or offers collection, so there is nothing to list. Do not say any product is on sale or discounted; offer to help the shopper find a product, or suggest checking the store's website for current offers.",
+};
+const SALE_NOTE = "\n(The collection's name is the store's own. Do not state any discount, percentage, price cut or end date; prices come only from the LIVE lines.)";
+
+/** The first page of the store's best-sellers or sale collection, found by title or handle (featured-collection.ts). */
+async function featured(kindArg: unknown, ctx: ToolContext): Promise<string> {
+  const kind: FeaturedKind | null = kindArg === "best_sellers" || kindArg === "sale" ? kindArg : null;
+  if (!kind) return "Invalid arguments: kind must be best_sellers or sale.";
+  const o = await overviewOf(ctx);
+  const c = featuredCollection(kind, o.collections);
+  if (!c) return o.moreCollections ? `${NO_FEATURED[kind]} (Only the first ${MAX_LISTED} collections were checked.)` : NO_FEATURED[kind];
+  return collectionPage(c, 1, ctx, kind === "sale" ? SALE_NOTE : "");
 }

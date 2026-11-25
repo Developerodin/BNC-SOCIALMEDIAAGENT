@@ -111,7 +111,7 @@ afterEach(() => {
 test("toolDefs adds the Admin tools for installed stores and order_status only with orders", () => {
   vi.stubEnv("UCP_AGENT_PROFILE_URL", "");
   expect(toolDefs({ orders: true })).toBe(TOOL_DEFS); // orders never applies without admin
-  expect(toolDefs({ admin: true }).map((d) => d.name)).toEqual([...TOOL_DEFS.map((d) => d.name), "store_overview", "refresh_product", "browse_collection"]);
+  expect(toolDefs({ admin: true }).map((d) => d.name)).toEqual([...TOOL_DEFS.map((d) => d.name), "store_overview", "refresh_product", "browse_collection", "trending_products", "top_rated_products", "featured_collection"]);
   expect(toolDefs({ admin: true, orders: true }).map((d) => d.name).at(-1)).toBe("order_status");
 });
 

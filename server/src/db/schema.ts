@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, foreignKey, halfvec, index, integer, jsonb, pgTable, primaryKey, smallint, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, foreignKey, halfvec, index, integer, jsonb, pgTable, primaryKey, real, smallint, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { EMBEDDING_DIMS } from "../lib/embedding-config";
 
 export const accounts = pgTable("accounts", {
@@ -41,6 +41,8 @@ export const stores = pgTable(
   // 'app' = installed through Shopify (synced catalog, Admin API). 'mcp' = served only through Shopify's public UCP
   // endpoints, no install: no sync, no embeddings, no Admin calls (provision-mcp-store.mts creates these rows).
   mode: text("mode").$type<"app" | "mcp">().notNull().default("app"),
+  // D95: when product_sales was last rebuilt from the store's orders; null = never (no snapshot yet).
+  salesSnapshotAt: timestamp("sales_snapshot_at", { withTimezone: true }),
   },
   (t) => [check("stores_mode_chk", sql`${t.mode} in ('app', 'mcp')`)],
 );
@@ -79,6 +81,9 @@ export const products = pgTable(
     published: boolean("published").notNull(),
     // D74: gift cards are searched only when the shopper asks for one.
     isGiftCard: boolean("is_gift_card").notNull().default(false),
+    // D95: average rating (0-5 scale) and review count, normalized at sync time from review-app metafields (ratings.ts); null when the product has none.
+    rating: real("rating"),
+    ratingCount: integer("rating_count"),
     content: text("content").notNull(),
     contentHash: text("content_hash").notNull(),
     shopifyUpdatedAt: timestamp("shopify_updated_at", { withTimezone: true }).notNull(),
@@ -234,6 +239,21 @@ export const productQuestions = pgTable(
     // Named: the generated name is over Postgres' 63-character limit.
     foreignKey({ name: "product_questions_product_fk", columns: [t.storeId, t.shopifyId], foreignColumns: [products.storeId, products.shopifyId] }).onDelete("cascade"),
   ],
+);
+
+// D95: the latest 30-day sales per product, rebuilt daily from the store's orders (sales.ts). Aggregates only: no order id,
+// customer or order date. Replaced as a whole each run. No FK to products: a sold product may not be synced (or be gone).
+export const productSales = pgTable(
+  "product_sales",
+  {
+    storeId: uuid("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
+    productId: text("product_id").notNull(),
+    // Net units: the orders' currentQuantity, after refunds and removed items.
+    units: integer("units").notNull(),
+    orderCount: integer("order_count").notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.storeId, t.productId] })],
 );
 
 // --- Partner connect (plan 2026-11-24, Task P1) ---
