@@ -65,6 +65,7 @@ export type HistoryItem = {
   status: "ok" | "cut_off";
   cards: Card[];
   rating: -1 | 1 | null;
+  cartAdds?: { title: string }[]; // adds made from this answer's cards, for the "added to your cart" note
 };
 
 /** The client Task 25's `createApi(apiBase, shop)` returns. Every request omits cookies; the token never goes in a URL. */

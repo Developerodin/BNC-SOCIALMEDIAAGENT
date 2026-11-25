@@ -2,13 +2,18 @@
   "Ask our AI agent": an inline section below the Buy buttons. The merchant's own questions become pills; with none,
   askcart-ask-ai.js fetches AI-written questions for this product from our server. Tapping a pill or sending the input
   asks the AskCart embed to open the chat as a drawer with that question sent (`askcart:open`, see ask-ai-block.ts).
-  It renders hidden: the script shows it only when the AskCart embed is on, so with the embed off nothing is left
-  that does nothing. Every value leaves Liquid through `escape` (Review Focus 2); the script builds the pills with textContent.
+  It renders visible so the page doesn't jump when the script loads; the script hides it when the AskCart embed is off,
+  so nothing is left that does nothing. The pills' space is reserved (data-askcart-loading) until they arrive. Every value leaves Liquid through `escape` (Review Focus 2); the script builds the pills with textContent.
 {%- endcomment -%}
 {%- assign cfg = app.metafields.askcart.widget.value -%}
 {%- if product and cfg.enabled and cfg.apiBase != blank -%}
   {%- assign eyebrow = block.settings.eyebrow -%}
   {%- if eyebrow == blank -%}{%- assign eyebrow = 'ask_ai.eyebrow' | t -%}{%- endif -%}
+  {%- assign pill_count = 0 -%}
+  {%- if block.settings.question_1 != blank -%}{%- assign pill_count = pill_count | plus: 1 -%}{%- endif -%}
+  {%- if block.settings.question_2 != blank -%}{%- assign pill_count = pill_count | plus: 1 -%}{%- endif -%}
+  {%- if block.settings.question_3 != blank -%}{%- assign pill_count = pill_count | plus: 1 -%}{%- endif -%}
+  {%- if pill_count == 0 -%}{%- assign pill_count = 3 -%}{%- endif -%}
   {%- assign heading = block.settings.heading -%}
   {%- if heading == blank -%}{%- assign heading = 'ask_ai.heading' | t -%}{%- endif -%}
   <div
@@ -23,11 +28,10 @@
     data-q2="{{ block.settings.question_2 | escape }}"
     data-q3="{{ block.settings.question_3 | escape }}"
     {{ block.shopify_attributes }}
-    hidden
   >
     <p class="askcart-ai__eyebrow" data-askcart-eyebrow>{{ eyebrow | escape }}</p>
     <h2 class="askcart-ai__heading" data-askcart-heading>{{ heading | escape }}</h2>
-    <div class="askcart-ai__pills" data-askcart-pills></div>
+    <div class="askcart-ai__pills" data-askcart-pills data-askcart-loading style="--askcart-pills: {{ pill_count | escape }}"></div>
     <form class="askcart-ai__form" data-askcart-form>
       <input
         class="askcart-ai__input"
@@ -43,27 +47,34 @@
       </button>
     </form>
     {%- if block.settings.show_note -%}
-      <p class="askcart-ai__note">{{ 'ask_ai.note' | t }}</p>
+      <p class="askcart-ai__note">{{ 'ask_ai.note' | t | escape }}</p>
     {%- endif -%}
   </div>
 {%- endif -%}
 
 {% stylesheet %}
-  .askcart-ai { margin: 24px 0; font: inherit; color: inherit; }
+  /* Theme-DOM block, not the widget's shadow-DOM panel: the px-only rule does not apply. Text is in em so it scales
+     with the theme's own font size (themes that set html { font-size: 62.5% } break rem); only the 44px touch targets
+     are px. Dawn-family variables are used when the theme has them (--font-heading-*, --color-foreground,
+     --color-button*, --inputs-radius, --buttons-radius); every one has a neutral fallback or inherits. */
+  .askcart-ai { --askcart-gap: 0.75em; --askcart-h: 48px; --askcart-radius: var(--inputs-radius, 8px); --askcart-line: rgba(var(--color-foreground, 127, 127, 127), 0.35); box-sizing: border-box; width: 100%; max-width: 100%; margin: 1.5em 0; font-family: inherit; color: inherit; line-height: 1.4; }
+  .askcart-ai *, .askcart-ai *::before, .askcart-ai *::after { box-sizing: border-box; }
   .askcart-ai[hidden] { display: none; }
-  .askcart-ai__eyebrow { margin: 0 0 4px; font-size: 14px; line-height: 20px; font-weight: 700; opacity: 0.65; }
-  .askcart-ai__heading { margin: 0 0 16px; font-size: 26px; line-height: 30px; font-weight: 700; text-transform: uppercase; }
-  .askcart-ai__pills { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
-  .askcart-ai__pills:empty { display: none; }
-  .askcart-ai__pill { display: flex; align-items: center; gap: 10px; width: 100%; margin: 0; padding: 13px 18px; border: 1px solid rgba(127, 127, 127, 0.55); border-radius: 999px; background: transparent; color: inherit; font: inherit; font-size: 15px; line-height: 20px; text-align: left; text-transform: none; letter-spacing: normal; cursor: pointer; }
+  .askcart-ai__eyebrow { margin: 0 0 0.25em; font-size: 0.875em; line-height: 1.4; font-weight: 700; opacity: 0.65; }
+  .askcart-ai__heading { margin: 0 0 var(--askcart-gap); font-family: var(--font-heading-family, inherit); font-weight: var(--font-heading-weight, 700); font-size: 1.6em; line-height: 1.2; text-transform: uppercase; overflow-wrap: anywhere; }
+  .askcart-ai__pills { display: flex; flex-direction: column; gap: var(--askcart-gap); margin: 0 0 var(--askcart-gap); }
+  .askcart-ai__pills[data-askcart-loading] { min-height: calc(var(--askcart-pills, 3) * var(--askcart-h) + (var(--askcart-pills, 3) - 1) * var(--askcart-gap)); }
+  .askcart-ai__pills:empty:not([data-askcart-loading]) { display: none; }
+  .askcart-ai__pill { display: flex; align-items: center; gap: 0.75em; width: 100%; min-height: var(--askcart-h); margin: 0; padding: 0.5em 1.1em; border: 1px solid var(--askcart-line); border-radius: var(--askcart-radius); background: transparent; color: inherit; font: inherit; line-height: 1.35; text-align: left; text-transform: none; letter-spacing: normal; cursor: pointer; }
+  .askcart-ai__pill span { min-width: 0; overflow-wrap: anywhere; }
   .askcart-ai__pill:hover { border-color: currentColor; }
-  .askcart-ai__pill svg { flex: none; width: 18px; height: 18px; }
-  .askcart-ai__form { display: flex; align-items: center; gap: 8px; margin: 0; padding: 5px 5px 5px 18px; border: 1px solid rgba(127, 127, 127, 0.55); border-radius: 999px; }
+  .askcart-ai__pill svg { flex: none; width: 1.2em; height: 1.2em; }
+  .askcart-ai__form { display: flex; align-items: center; gap: 0.5em; width: 100%; min-height: var(--askcart-h); margin: 0; padding: 0 2px 0 1.1em; border: 1px solid var(--askcart-line); border-radius: var(--askcart-radius); }
   .askcart-ai__form:focus-within { border-color: currentColor; }
-  .askcart-ai__input { flex: 1; min-width: 0; margin: 0; padding: 8px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: inherit; font: inherit; font-size: 16px; line-height: 24px; outline: 0; }
-  .askcart-ai__send { flex: none; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: var(--askcart-ai-accent, #0a0a0a); color: var(--askcart-ai-on, #fff); cursor: pointer; }
+  .askcart-ai__input { flex: 1; min-width: 0; margin: 0; padding: 0.5em 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: inherit; font: inherit; font-size: max(1em, 16px); line-height: 1.4; outline: 0; }
+  .askcart-ai__send { flex: none; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin: 0; padding: 0; border: 0; border-radius: var(--buttons-radius, var(--askcart-radius)); background: rgb(var(--color-button, var(--askcart-ai-accent-rgb, 10, 10, 10))); color: rgb(var(--color-button-text, var(--askcart-ai-on-rgb, 255, 255, 255))); cursor: pointer; }
   .askcart-ai__pill:focus-visible, .askcart-ai__send:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
-  .askcart-ai__note { margin: 12px 0 0; font-size: 12px; line-height: 16px; opacity: 0.65; }
+  .askcart-ai__note { margin: var(--askcart-gap) 0 0; font-size: 0.8em; line-height: 1.4; opacity: 0.65; }
 {% endstylesheet %}
 
 {% schema %}

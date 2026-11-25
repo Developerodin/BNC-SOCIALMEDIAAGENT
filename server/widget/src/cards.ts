@@ -26,7 +26,10 @@ function link(href: string, cls: string, text: string): HTMLAnchorElement {
 
 const optionValue = (v: Variant, name: string) => v.options.find((o) => o.name === name)?.value;
 
-function cardEl(card: Card, ctx: WidgetCtx, messageId: string | null): HTMLElement {
+/** Called once per confirmed add from a card, with the store's cart URL (null when there is none). */
+export type OnAdded = (title: string, cartHref: string | null) => void;
+
+function cardEl(card: Card, ctx: WidgetCtx, messageId: string | null, onAdded?: OnAdded): HTMLElement {
   const { t, page } = ctx;
   const root = el("div", "ac-card");
   const url = safeHttpsUrl(card.url);
@@ -103,7 +106,7 @@ function cardEl(card: Card, ctx: WidgetCtx, messageId: string | null): HTMLEleme
   }
   if (card.action !== "add" || card.variants.length === 0) return root;
 
-  body.append(addControls(card, ctx, messageId, setPrice, setStock));
+  body.append(addControls(card, ctx, messageId, setPrice, setStock, onAdded));
   return root;
 }
 
@@ -113,6 +116,7 @@ function addControls(
   messageId: string | null,
   setPrice: (price: string, compareAt: string | null) => void,
   setStock: (s: Card["stock"]) => void,
+  onAdded?: OnAdded,
 ): HTMLElement {
   const { t, page } = ctx;
   const box = el("div", "ac-card__actions");
@@ -264,6 +268,7 @@ function addControls(
         status.append(" · ", a);
       }
       ctx.announce(t(unconfirmed ? "check_cart" : "added"));
+      if (!unconfirmed) onAdded?.(card.title, cartHref); // an unconfirmed add is not claimed in the chat log
       const token = tokenStore(page.shop).get();
       // Fire and forget; the eventId is fixed per add, so a replayed log is counted once. An acked add is logged here, at
       // the end of this one click: the bridge listener is gone by now, so a late reply can't log it a second time.
@@ -287,11 +292,11 @@ function addControls(
  * UD9, UD12: one card full width, two or more in a scroll-snap carousel with arrows, keyboard and "n of m" labels.
  * `messageId` is the answer the cards came with; a cart add logs it (null for an answer the server sent without one).
  */
-export function renderCards(into: HTMLElement, cards: Card[], ctx: WidgetCtx, messageId: string | null = null): void {
+export function renderCards(into: HTMLElement, cards: Card[], ctx: WidgetCtx, messageId: string | null = null, onAdded?: OnAdded): void {
   if (cards.length === 0) return;
   const wrap = el("div", `ac-cards ${cards.length === 1 ? "ac-cards--single" : "ac-cards--carousel"}`);
   if (cards.length === 1) {
-    wrap.append(cardEl(cards[0], ctx, messageId));
+    wrap.append(cardEl(cards[0], ctx, messageId, onAdded));
     into.append(wrap);
     return;
   }
@@ -300,7 +305,7 @@ export function renderCards(into: HTMLElement, cards: Card[], ctx: WidgetCtx, me
   track.tabIndex = 0;
   cards.forEach((c, i) => {
     const li = el("li", "ac-cards__slide");
-    const card = cardEl(c, ctx, messageId);
+    const card = cardEl(c, ctx, messageId, onAdded);
     card.setAttribute("role", "group");
     card.setAttribute("aria-roledescription", "slide");
     card.setAttribute("aria-label", `${i + 1} / ${cards.length}`);

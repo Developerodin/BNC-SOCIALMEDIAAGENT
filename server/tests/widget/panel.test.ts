@@ -896,3 +896,106 @@ describe("drawer mode and send-on-open (the Ask our AI agent block)", () => {
     expect(CSS).toMatch(/prefers-reduced-motion:reduce\).*\.panel\.drawer\{animation:none\}/);
   });
 });
+
+describe("a second question while an answer streams, offline, and focus", () => {
+  const title = { eyebrow: "More questions?", heading: "Ask our AI agent" };
+  const answer = (text: string, id: string) => sseResponse([ev("text", { delta: text }), ev("done", { conversationToken: "t", messageId: id })]);
+
+  it("a message from the block while an answer streams is sent when that answer is done (latest wins)", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const send = vi.fn()
+      .mockImplementationOnce(async () => (await gate, answer("one", "m1")))
+      .mockImplementation(async () => answer("two", "m2"));
+    const p = setup(mockApi({ send }));
+    await p.open({ productId: "42", mode: "drawer", title, message: "First?" });
+    await flush();
+    await p.open({ productId: "42", mode: "drawer", title, message: "Second?" });
+    await p.open({ productId: "42", mode: "drawer", title, message: "Third?" });
+    expect(send).toHaveBeenCalledTimes(1);
+    release();
+    await flush();
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][0].message).toBe("Third?");
+  });
+
+  it("offline: the message is put into the input box instead of being dropped", async () => {
+    const send = vi.fn();
+    const p = setup(mockApi({ send }));
+    await p.open();
+    window.dispatchEvent(new Event("offline"));
+    await p.open({ message: "Is it in stock?" });
+    expect(send).not.toHaveBeenCalled();
+    expect(input().value).toBe("Is it in stock?");
+  });
+
+  it("a failed turn leaves the waiting question in the input", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const send = vi.fn().mockImplementation(async () => (await gate, new Response(null, { status: 500 })));
+    const p = setup(mockApi({ send }));
+    await p.open({ message: "First?" });
+    await flush();
+    await p.open({ message: "Second?" });
+    release();
+    await flush(60);
+    expect(input().value).toBe("Second?");
+  });
+
+  it("closing gives focus back to the element that had it when the panel opened, else the launcher", async () => {
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    const p = setup(mockApi());
+    outside.focus();
+    await p.open({ focus: false });
+    p.close();
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+    await p.open({ focus: false });
+    const spy = vi.spyOn(launcher, "focus");
+    p.close();
+    expect(spy).toHaveBeenCalled(); // nothing on the page had focus: the launcher
+  });
+});
+
+describe("the \"added to your cart\" note", () => {
+  const cart = "https://demo.myshopify.com/cart";
+  const notes = () => qa(".note");
+  const reply = () => vi.fn(async () => sseResponse([ev("text", { delta: "Here" }), ev("product", { id: "p" }), ev("done", { conversationToken: "t", messageId: "m1" })]));
+
+  it("a live add appends the note right after that answer, with View cart, announced politely", async () => {
+    renderCards = vi.fn<Renderers["renderCards"]>((into, _cards, _ctx, _id, onAdded) => {
+      const b = document.createElement("button");
+      b.className = "fake-add";
+      b.addEventListener("click", () => onAdded?.("<b>Mug</b>", cart));
+      into.append(b);
+    });
+    await setup(mockApi({ send: reply() }), config(), pageCtx({ cartUrl: cart })).open();
+    await type("mug?");
+    expect(notes()).toHaveLength(0);
+    q<HTMLButtonElement>(".fake-add")!.click();
+    expect(notes()).toHaveLength(1);
+    expect(notes()[0].textContent).toBe("✓ <b>Mug</b> added to your cart · View cart");
+    expect(notes()[0].getAttribute("role")).toBe("status");
+    expect(notes()[0].previousElementSibling!.classList.contains("msg")).toBe(true);
+    expect(notes()[0].querySelector("a")!.getAttribute("href")).toBe(cart);
+    expect(notes()[0].querySelector("b")).toBeNull(); // the title is text, not markup
+    q<HTMLButtonElement>(".fake-add")!.click();
+    expect(notes()).toHaveLength(2);
+  });
+
+  it("history renders one note per cartAdds entry after that answer, and none without", async () => {
+    const item = (id: string, over: Partial<HistoryItem> = {}): HistoryItem => ({ id, role: "assistant", content: "ok", status: "ok", cards: [], rating: null, ...over });
+    const history = [
+      { id: "u", role: "user", content: "hi", status: "ok", cards: [], rating: null } as HistoryItem,
+      item("a1", { cartAdds: [{ title: "Mug" }, { title: "Tee <i>x</i>" }] }),
+      item("a2"),
+    ];
+    localStorage.setItem(TOKEN_KEY, "tok");
+    await setup(mockApi({ history: vi.fn(async () => history) }), config(), pageCtx({ cartUrl: cart })).open();
+    expect(notes().map((n) => n.textContent)).toEqual(["✓ Mug added to your cart · View cart", "✓ Tee <i>x</i> added to your cart · View cart"]);
+    expect(notes()[0].querySelector("a")!.getAttribute("href")).toBe(cart);
+    expect(notes()[1].nextElementSibling!.classList.contains("msg")).toBe(true); // a2's bubble follows
+    expect(sh().querySelector(".note i")).toBeNull();
+  });
+});

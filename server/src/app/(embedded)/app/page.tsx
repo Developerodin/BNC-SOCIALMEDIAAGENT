@@ -134,6 +134,19 @@ export default function AppHome() {
 
 type Onboarding = { chatConfirmed: boolean; dismissed: boolean; themeLink: string | null; productBlockLink: string | null };
 
+/** Opens the theme editor with the "Ask our AI agent" block added to the product template. Used in the setup guide and in the Chat widget card. */
+function ProductBlockButton({ link }: { link: string }) {
+  return (
+    <s-stack direction="block" gap="small">
+      <s-stack direction="inline" gap="base">
+        {/* target _top: the theme editor can't open inside the admin iframe. */}
+        <s-button onClick={() => window.open(link, "_top")}>Add to product pages</s-button>
+      </s-stack>
+      <s-paragraph>Then drag it below the Buy buttons.</s-paragraph>
+    </s-stack>
+  );
+}
+
 /** One checklist row: a status badge, the step, and its actions on their own line. */
 function Step({ done, title, children }: { done: boolean; title: string; children?: React.ReactNode }) {
   return (
@@ -226,10 +239,7 @@ function SetupGuideCard({ sync }: { sync: SyncState | null }) {
                 {/* Link only: Shopify can't tell us whether the block was placed, so there is no done state. */}
                 <s-stack direction="block" gap="small">
                   <s-text>Add &apos;Ask our AI agent&apos; to product pages</s-text>
-                  <s-stack direction="inline" gap="base">
-                    <s-button onClick={() => window.open(state.productBlockLink!, "_blank")}>Add to product pages</s-button>
-                  </s-stack>
-                  <s-paragraph>Then drag it below the Buy buttons.</s-paragraph>
+                  <ProductBlockButton link={state.productBlockLink} />
                 </s-stack>
               </>
             )}
@@ -571,6 +581,19 @@ function WidgetSettingsCard() {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ tone: "success" | "critical"; text: string } | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
+  const [blockLink, setBlockLink] = useState<string | null>(null);
+
+  // The setup guide hides once setup is done, so the product-block link is offered here as well.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await authed("/api/app/onboarding");
+        if (res.ok) setBlockLink(((await res.json()) as Onboarding).productBlockLink);
+      } catch {
+        // no link shown
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -666,6 +689,7 @@ function WidgetSettingsCard() {
           <s-option value="product">On product pages only</s-option>
           <s-option value="none">Hidden (product block only)</s-option>
         </s-select>
+        {blockLink && <ProductBlockButton link={blockLink} />}
         <s-text-field label="Button label" value={form.label} maxLength={40} details="Empty uses the theme's default." error={err("launcher.label")} onInput={(e) => set("label", valueOf(e))} />
         <s-text-area label="Welcome message" details="Leave empty to use the default greeting in your store's language." value={form.welcome} maxLength={300} rows={3} error={err("welcome")} onInput={(e) => set("welcome", valueOf(e))} />
         <s-divider />

@@ -1,15 +1,16 @@
 // askcart-ask-ai.js: the "Ask our AI agent" app block. Shopify loads it once per page for every instance.
-// The block renders hidden. This script shows it when the AskCart embed is on, fills the pills (the merchant's
-// questions, else AI-written ones from GET {apiBase}/api/chat/product-questions) and, on a tap or a send, asks the
+// The block renders visible (so the page doesn't jump when this script loads); this script hides it when the AskCart
+// embed is off, fills the pills (the merchant's questions, else AI-written ones from
+// GET {apiBase}/api/chat/product-questions, fetched when the block nears the viewport) and, on a tap or a send, asks the
 // launcher to open the chat as a drawer with that question sent:
 //   window.dispatchEvent(new CustomEvent("askcart:open", { detail: { productId, message, mode: "drawer", title } }))
 // title is the block's own eyebrow and heading, as shown. All text goes in through textContent; the accent is
 // checked by safeHex before it reaches CSS. Any failure of the questions request just means no pills; the input
 // never waits for it.
+import { MAX_INPUT_CHARS as MAX } from "../../src/lib/chat/limits"; // the chat's message limit; the file has no imports, so no panel code comes along
 import { safeHex, textOn } from "./core/format";
 
 const SEL = "[data-askcart-ask-ai]";
-const MAX = 2000; // the chat input's limit (panel.ts MAX); not imported so the panel code stays out of this bundle
 const MAX_PILLS = 3;
 const NS = "http://www.w3.org/2000/svg";
 
@@ -17,6 +18,9 @@ function hide(el: HTMLElement) {
   el.hidden = true;
   el.style.display = "none"; // `hidden` alone can lose to theme rules on the wrapper
 }
+
+/** "#112233" → "17, 34, 51": the form Dawn-family themes use for colours, so the CSS can mix theme and accent in one rgb(). */
+const triplet = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ");
 
 function sparkle(): SVGSVGElement {
   const svg = document.createElementNS(NS, "svg");
@@ -33,7 +37,7 @@ async function fetchQuestions(block: HTMLElement): Promise<string[]> {
   const { api, shop, product, locale } = block.dataset;
   if (!api || !api.startsWith("https://") || !shop || !product) return [];
   try {
-    const url = `${api.replace(/\/+$/, "")}/api/chat/product-questions?shop=${encodeURIComponent(shop)}&product=${encodeURIComponent(product)}&locale=${encodeURIComponent(locale || "")}`;
+    const url = `${api.replace(/\/+$/, "")}/api/chat/product-questions?shop=${encodeURIComponent(shop)}&product=${encodeURIComponent(product)}${locale ? `&locale=${encodeURIComponent(locale)}` : ""}`;
     const res = await fetch(url);
     if (!res.ok) return [];
     const qs = ((await res.json()) as { questions?: unknown } | null)?.questions;
@@ -43,11 +47,27 @@ async function fetchQuestions(block: HTMLElement): Promise<string[]> {
   }
 }
 
+/** Runs `fn` once the block is within a screen or so of the viewport (right away where IntersectionObserver is missing). */
+function whenNear(block: HTMLElement, fn: () => void) {
+  if (typeof IntersectionObserver === "undefined") return fn();
+  const io = new IntersectionObserver(
+    (entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      io.disconnect();
+      fn();
+    },
+    { rootMargin: "800px 0px" },
+  );
+  io.observe(block);
+}
+
 function setup(block: HTMLElement) {
   const accent = safeHex(block.dataset.accent);
   if (accent) {
     block.style.setProperty("--askcart-ai-accent", accent);
     block.style.setProperty("--askcart-ai-on", textOn(accent));
+    block.style.setProperty("--askcart-ai-accent-rgb", triplet(accent)); // fallbacks for the theme's own button colours
+    block.style.setProperty("--askcart-ai-on-rgb", triplet(textOn(accent)));
   }
 
   const ask = (message: string) => {
@@ -63,6 +83,7 @@ function setup(block: HTMLElement) {
   const pills = block.querySelector<HTMLElement>("[data-askcart-pills]");
   const render = (qs: string[]) => {
     if (!pills) return;
+    pills.removeAttribute("data-askcart-loading"); // Liquid reserved the pills' space until now
     pills.replaceChildren(
       ...qs.map((q) => {
         const b = document.createElement("button");
@@ -78,7 +99,7 @@ function setup(block: HTMLElement) {
   };
   const own = [block.dataset.q1, block.dataset.q2, block.dataset.q3].map((q) => (q ?? "").trim()).filter(Boolean);
   if (own.length) render(own.slice(0, MAX_PILLS));
-  else void fetchQuestions(block).then(render);
+  else whenNear(block, () => void fetchQuestions(block).then(render));
 
   const form = block.querySelector<HTMLFormElement>("[data-askcart-form]");
   const input = form?.querySelector<HTMLInputElement>("input");
@@ -98,7 +119,7 @@ export function initAskAiBlocks(doc: Document = document): void {
       if (!hasRoot) return hide(block); // embed off: nobody listens for askcart:open
       if (block.dataset.askcartBound) return; // re-runs (theme editor section reloads) must not bind or fetch twice
       block.dataset.askcartBound = "1";
-      block.hidden = false;
+      block.hidden = false; // a re-run after the embed was off must show it again
       block.style.display = "";
       setup(block);
     });

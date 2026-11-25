@@ -409,3 +409,21 @@ describe("already in the cart", () => {
     expect(cartReads).toBe(1);
   });
 });
+
+describe("onAdded (the note in the chat log)", () => {
+  it("is called once with the title and cart link after a successful add, not after a failed one", async () => {
+    const onAdded = vi.fn();
+    const into = document.createElement("div");
+    document.body.append(into);
+    renderCards(into, [card()], ctx(), "m1", onAdded);
+    fetchMock.mockResolvedValueOnce(jsonResponse(422, { status: 422, message: "Cart Error", description: "No." }));
+    addButton(into)!.click();
+    await flush();
+    expect(onAdded).not.toHaveBeenCalled();
+    fetchMock.mockResolvedValue(jsonResponse(200, {}));
+    addButton(into)!.click();
+    await flush();
+    expect(onAdded).toHaveBeenCalledTimes(1);
+    expect(onAdded).toHaveBeenCalledWith("Linen tee", "https://demo.myshopify.com/cart");
+  });
+});

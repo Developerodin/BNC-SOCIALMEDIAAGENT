@@ -3,17 +3,11 @@
 // an `askcart:open` event (UD5 block), or when the panel was open on the previous page (UD13).
 // Text only: every string goes through textContent, and the accent is checked before it reaches CSS.
 import type { PageContext, WidgetConfig } from "../../../src/lib/widget-contract";
+import type { OpenArgs } from "../panel/panel"; // type only: no panel code in this bundle
 import { safeHex, textOn } from "../core/format";
 import { uiState } from "../core/storage";
 
 // message / mode / title come from the "Ask our AI agent" block (askcart-ask-ai.js): the drawer opens with this question sent.
-type OpenArgs = {
-  productId: string | null;
-  focus?: boolean;
-  message?: string;
-  mode?: "floating" | "drawer";
-  title?: { eyebrow: string; heading: string };
-};
 type AskCartApi = { open(a: OpenArgs): void };
 
 const DEFAULT_ACCENT = "#0A0A0A";

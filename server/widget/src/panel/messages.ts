@@ -2,6 +2,7 @@
 // Text only: every string from the model, the merchant or the server goes through textContent (§7.7, D36); answers get
 // bold and bullets from rich.ts, which builds nodes the same way.
 import type { Card, CardsRenderer, FeedbackRenderer, HistoryItem, WidgetCtx } from "../../../src/lib/widget-contract";
+import { resolveHttpsUrl } from "../core/format";
 import { renderRich } from "./rich";
 
 const el = (tag: string, cls: string, text?: string) => {
@@ -14,7 +15,7 @@ const el = (tag: string, cls: string, text?: string) => {
 /** renderCards also gets the answer's message id, so a cart add from a card is linked to that answer. Cards are only
  * drawn once the id is known: at `done` for a streamed answer (UD12), or from history. */
 export type Renderers = {
-  renderCards: (...a: [...Parameters<CardsRenderer>, messageId?: string | null]) => void;
+  renderCards: (...a: [...Parameters<CardsRenderer>, messageId?: string | null, onAdded?: (title: string, cartHref: string | null) => void]) => void;
   renderFeedback: FeedbackRenderer;
 };
 
@@ -47,8 +48,27 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
     return add(el("div", "msg user", text));
   }
 
+  /** "✓ <title> added to your cart · View cart": a system line (not a bubble) right after the answer's bubble and the
+   * notes already there. Text and the link are built from nodes; a title is never markup. Skipped when the chat was cleared. */
+  function addedNote(after: HTMLElement, title: string, cartHref: string | null, live: boolean) {
+    if (!after.isConnected) return;
+    const note = el("div", "note", ctx.t("added_note", { title }));
+    if (live) note.setAttribute("role", "status"); // polite; history notes are not announced again on load
+    if (cartHref) {
+      const a = el("a", "", ctx.t("view_cart")) as HTMLAnchorElement;
+      a.href = cartHref;
+      a.rel = "noopener noreferrer";
+      if (ctx.page.hosted) a.target = "_top"; // leave the iframe: the cart is the store's page
+      note.append(" · ", a);
+    }
+    let at = after;
+    while (at.nextElementSibling?.classList.contains("note")) at = at.nextElementSibling as HTMLElement;
+    at.after(note);
+    scroll();
+  }
+
   /** An assistant bubble: text, then cards, then thumbs. `cutOff` adds the note and skips thumbs. */
-  function bot(text: string, cards: Card[], id: string | null, rating: -1 | 1 | null, cutOff: boolean): HTMLElement {
+  function bot(text: string, cards: Card[], id: string | null, rating: -1 | 1 | null, cutOff: boolean, cartAdds: { title: string }[] = []): HTMLElement {
     const wrap = el("div", "msg bot");
     if (text) {
       const txt = el("div", "txt");
@@ -59,16 +79,20 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
     if (cards.length) {
       const box = el("div", "cards");
       wrap.append(box);
-      r.renderCards(box, cards, ctx, id);
+      r.renderCards(box, cards, ctx, id, (title, href) => addedNote(wrap, title, href, true));
     }
     if (id && !cutOff) r.renderFeedback(wrap, id, rating, ctx);
-    return add(wrap);
+    add(wrap);
+    // The hosted page can't tell the store's cart URL from history (live adds learn it from the bridge's reply).
+    const href = ctx.page.hosted ? null : resolveHttpsUrl(ctx.page.cartUrl);
+    for (const a of cartAdds) if (a && typeof a.title === "string" && a.title) addedNote(wrap, a.title, href, false);
+    return wrap;
   }
 
   function history(items: HistoryItem[]) {
     for (const m of items) {
       if (m.role === "user") user(m.content);
-      else bot(m.content, m.cards, m.id, m.rating, m.status === "cut_off");
+      else bot(m.content, m.cards, m.id, m.rating, m.status === "cut_off", m.cartAdds);
     }
   }
 
@@ -109,7 +133,7 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
         if (cards.length) {
           const box = el("div", "cards");
           wrap.append(box);
-          r.renderCards(box, cards, ctx, messageId);
+          r.renderCards(box, cards, ctx, messageId, (title, href) => addedNote(wrap, title, href, true));
         }
         if (messageId) r.renderFeedback(wrap, messageId, null, ctx);
         if (!wrap.childElementCount) wrap.remove();

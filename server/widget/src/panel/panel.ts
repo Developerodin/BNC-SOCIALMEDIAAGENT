@@ -11,6 +11,7 @@
 // Two tabs: each shows only what it sent until the next open reloads history. `// ponytail:` a `storage` listener
 // could sync tabs live; not needed for the beta.
 import type { PageContext, WidgetApi, WidgetConfig, WidgetCtx } from "../../../src/lib/widget-contract";
+import { MAX_INPUT_CHARS as MAX } from "../../../src/lib/chat/limits"; // the server's message limit
 import { translator } from "../core/i18n";
 import { resolveHttpsUrl, safeHex, safeImageUrl, textOn } from "../core/format";
 import { tokenStore, uiState } from "../core/storage";
@@ -49,7 +50,6 @@ export type Panel = {
   destroy(): void;
 };
 
-const MAX = 2000; // the server's message limit
 const COUNT_FROM = 1800;
 const DEFAULT_ACCENT = "#0A0A0A";
 const DELETE_RETRY_MS = [500, 1000, 2000]; // D84: the server may hold the aborted turn's lock for a moment
@@ -187,6 +187,8 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   let drawer = false;
   let loadP: Promise<void> | null = null; // the first open's load, while it runs
   let queued: string | null = null; // a message waiting for loadP; a second open() replaces it instead of sending twice
+  let nextMessage: string | null = null; // a message from a pill or the block that came in while an answer streamed (latest wins)
+  let opener: HTMLElement | null = null; // what had focus on the page when the panel opened, to give it back on close
 
   function update() {
     offline.hidden = !isOffline;
@@ -241,7 +243,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
       const b = document.createElement("button");
       b.type = "button";
       b.textContent = q;
-      b.addEventListener("click", () => submit(q));
+      b.addEventListener("click", () => sendOrQueue(q));
       sugg.append(b);
     }
     messages.add(sugg);
@@ -289,6 +291,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     turn?.abort();
     messages.log.replaceChildren();
     sugg = null;
+    nextMessage = null;
     showWelcome();
     showSuggestions([...merchantSuggested(), ...faqQs]);
     update();
@@ -351,6 +354,36 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
         answer.remove();
     }
     update();
+    if (outcome.kind === "done") flushNext();
+    else if (outcome.kind === "aborted") nextMessage = null;
+    else holdNext(); // the turn failed: leave the waiting question in the input for the shopper to send
+  }
+
+  /** A message from outside the input box (a pill, the block). It is never dropped: sent when the running answer is
+   * done, or put in the input box when offline. One slot: a newer message replaces an older waiting one. */
+  function sendOrQueue(text: string) {
+    const message = text.trim();
+    if (!message) return;
+    if (isOffline) {
+      input.value = message;
+      update();
+      input.focus();
+    } else if (busy) nextMessage = message;
+    else submit(message);
+  }
+
+  function flushNext() {
+    const m = nextMessage;
+    nextMessage = null;
+    if (m) sendOrQueue(m);
+  }
+
+  function holdNext() {
+    if (nextMessage && !input.value) {
+      input.value = nextMessage;
+      update();
+    }
+    nextMessage = null;
   }
 
   function submit(text: string) {
@@ -401,6 +434,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
       update();
       if (!ok) {
         messages.error(t("delete_failed"));
+        flushNext();
         return;
       }
     }
@@ -458,6 +492,10 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
 
   async function open(args: OpenArgs = {}) {
     const fromProduct = args.productId != null && args.productId !== productId;
+    if (panel.hidden) {
+      const a = document.activeElement;
+      opener = a instanceof HTMLElement && a !== document.body && a !== shadow.host ? a : null; // the host means our own button
+    }
     if (args.productId != null) productId = args.productId;
     drawer = args.mode === "drawer";
     panel.classList.toggle("drawer", drawer);
@@ -476,14 +514,14 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
       });
     }
     if (args.message) {
-      if (!loadP) return submit(args.message);
+      if (!loadP) return sendOrQueue(args.message);
       const waiting = queued !== null;
       queued = args.message; // the latest request wins; only the first caller sends it
       if (waiting) return;
       await loadP;
       const m = queued;
       queued = null;
-      if (m) submit(m);
+      if (m) sendOrQueue(m);
     } else if (first) {
       await loadP;
     } else if (fromProduct) {
@@ -500,7 +538,10 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     lockScroll(false);
     ui.open.set(false);
     setExpanded(false);
-    opts.launcher?.focus();
+    // Back to where the shopper was; the launcher when that is gone (it has no button on pages the scope hides it from).
+    const restore = opener?.isConnected ? opener : opts.launcher?.isConnected ? opts.launcher : null;
+    opener = null;
+    restore?.focus();
   }
 
   function destroy() {

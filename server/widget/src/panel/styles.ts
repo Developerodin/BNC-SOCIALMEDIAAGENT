@@ -14,7 +14,8 @@ export const CSS =
   ":where(.panel) *{box-sizing:border-box;font:inherit;color:inherit;margin:0}" +
   ".panel.left{right:auto;left:20px}" +
   ".panel.drawer{top:0;bottom:0;right:0;left:auto;width:420px;max-width:100vw;height:100vh;height:100dvh;max-height:none;border-radius:0;animation:sl .25s ease-out}" +
-  ".panel.titled .av{display:none}.panel.titled .sub{order:-1;font-size:12px;opacity:.85}.panel.titled .name{font-size:18px;line-height:24px}" +
+  ".panel.titled .av{display:none}.panel.titled .sub{order:-1;font-size:12px;font-weight:700;opacity:.85}" +
+  ".panel.titled .name{font-family:var(--font-heading-family,inherit);font-weight:var(--font-heading-weight,700);font-size:18px;line-height:24px;text-transform:uppercase}" +
   ".panel.full{inset:0;width:100%;height:100vh;height:100dvh;max-height:none;border-radius:0}" +
   ".panel.wide{width:min(760px,92vw);height:min(88vh,900px)}" + // expanded: still anchored to the launcher's side
   ".panel.wide .ac-cards__slide{flex-basis:calc((100% - 20px) / 3)}" + // three cards per row instead of cramped one-and-a-bit
@@ -50,6 +51,8 @@ export const CSS =
   ".msg.bot{align-self:flex-start;display:flex;flex-direction:column;gap:8px;width:88%}" +
   ".msg.bot .txt{align-self:flex-start;padding:9px 13px;border-radius:16px 16px 16px 4px;background:#fff;border:1px solid #ececec}" +
   ".cut{font-size:13px;color:#666}" +
+  ".note{align-self:flex-start;max-width:88%;padding:0 4px;font-size:13px;line-height:18px;color:#555;overflow-wrap:anywhere}" +
+  ".note a{color:inherit;text-decoration:underline}" +
   ".cards{max-width:100%}" +
   ".typing{display:flex;gap:4px;padding:13px 14px;border-radius:16px 16px 16px 4px;background:#fff;border:1px solid #ececec;align-self:flex-start}" +
   ".typing span{width:6px;height:6px;border-radius:3px;background:#777;animation:b 1s infinite}" +

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { initAskAiBlocks } from "../../widget/src/ask-ai-block";
@@ -41,6 +41,18 @@ function submit(b: HTMLElement, text: string) {
   b.querySelector<HTMLFormElement>("form")!.dispatchEvent(new Event("submit", { cancelable: true }));
   return input;
 }
+
+// The block waits for its scroll position before fetching; most tests want it right away.
+class ImmediateIO {
+  constructor(private cb: (e: { isIntersecting: boolean }[]) => void) {}
+  observe() {
+    queueMicrotask(() => this.cb([{ isIntersecting: true }]));
+  }
+  disconnect() {}
+}
+beforeEach(() => {
+  vi.stubGlobal("IntersectionObserver", ImmediateIO);
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -192,9 +204,87 @@ describe("askcart-ask-ai.liquid", () => {
     expect(schema.settings.find((s: { id?: string }) => s.id === "show_note")).toMatchObject({ type: "checkbox", default: true });
   });
 
-  it("falls back to the storefront locale strings and renders hidden", () => {
+  it("falls back to the storefront locale strings and renders visible (the script hides it when the embed is off)", () => {
     for (const k of ["ask_ai.eyebrow", "ask_ai.heading", "ask_ai.placeholder", "ask_ai.send", "ask_ai.note"]) expect(liquid).toContain(`'${k}' | t`);
-    expect(liquid).toMatch(/\r?\n\s+hidden\r?\n/); // a Windows checkout has CRLF line endings
+    expect(liquid).not.toMatch(/\r?\n\s+hidden\r?\n/); // no `hidden` attribute: it would shift the page when the script reveals it (CRLF-tolerant)
+    expect(liquid).toContain("data-askcart-loading"); // the pills' space is reserved until they arrive
     expect(liquid).toContain("{%- if product and cfg.enabled and cfg.apiBase != blank -%}");
+  });
+});
+
+describe("lazy questions fetch", () => {
+  class FakeIO {
+    static last: FakeIO | null = null;
+    disconnected = false;
+    constructor(public cb: (e: { isIntersecting: boolean }[]) => void, public opts?: IntersectionObserverInit) {
+      FakeIO.last = this;
+    }
+    observe() {}
+    disconnect() {
+      this.disconnected = true;
+    }
+    fire(isIntersecting: boolean) {
+      this.cb([{ isIntersecting }]);
+    }
+  }
+
+  it("waits until the block nears the viewport, then fetches once", async () => {
+    vi.stubGlobal("IntersectionObserver", FakeIO);
+    const f = mockFetch(json({ questions: ["Is it waterproof?"] }));
+    const b = page();
+    initAskAiBlocks(document);
+    await settle();
+    expect(f).not.toHaveBeenCalled();
+    expect(FakeIO.last!.opts?.rootMargin).toMatch(/^\d+px/);
+    FakeIO.last!.fire(false);
+    expect(f).not.toHaveBeenCalled();
+    FakeIO.last!.fire(true);
+    await settle();
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(FakeIO.last!.disconnected).toBe(true);
+    expect(pills(b)).toHaveLength(1);
+  });
+
+  it("omits locale when the dataset is empty", async () => {
+    const f = mockFetch(json({ questions: [] }));
+    const b = page();
+    b.dataset.locale = "";
+    initAskAiBlocks(document);
+    await settle();
+    expect(String((f.mock.calls[0] as unknown[])[0])).toBe(`${API}/api/chat/product-questions?shop=s.myshopify.com&product=8123`);
+  });
+
+  it("the reserved pill space is released when the questions arrive", async () => {
+    mockFetch(json({ questions: ["A?"] }));
+    const b = page();
+    b.querySelector("[data-askcart-pills]")!.setAttribute("data-askcart-loading", "");
+    initAskAiBlocks(document);
+    await settle();
+    expect(b.querySelector("[data-askcart-pills]")!.hasAttribute("data-askcart-loading")).toBe(false);
+  });
+});
+
+describe("askcart-ask-ai.liquid theme matching", () => {
+  const liquid = readFileSync(path.resolve(__dirname, "../../../shopify/extensions/askcart/blocks/askcart-ask-ai.liquid"), "utf8");
+  const css = liquid.split("{% stylesheet %}")[1].split("{% endstylesheet %}")[0];
+
+  it("takes font and colour from the theme", () => {
+    expect(css).toMatch(/\.askcart-ai \{[^}]*font-family: inherit;[^}]*color: inherit;/);
+    expect(css).not.toMatch(/font-family: (?!inherit|var\()/);
+    expect(css).toContain("var(--font-heading-family, inherit)");
+    expect(css).toContain("var(--font-heading-weight, 700)");
+  });
+
+  it("uses Dawn-family variables, each with a fallback", () => {
+    for (const v of ["--inputs-radius", "--buttons-radius", "--color-foreground", "--color-button", "--color-button-text"]) {
+      expect(css).toMatch(new RegExp(`var\\(${v},\\s*\\S`));
+    }
+  });
+
+  it("text is in em (scales with the theme), touch targets are at least 44px, and nothing renders hidden", () => {
+    expect(css).not.toMatch(/font-size: \d+px/);
+    expect(css).toMatch(/--askcart-h: 48px/);
+    expect(css).toMatch(/\.askcart-ai__send \{[^}]*width: 44px; height: 44px/);
+    expect(liquid).toContain("{{ 'ask_ai.note' | t | escape }}");
   });
 });
