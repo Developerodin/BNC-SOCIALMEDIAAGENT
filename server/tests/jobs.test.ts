@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import postgres from "postgres";
 
 let admin: ReturnType<typeof postgres>;
@@ -55,4 +55,27 @@ test("shop-redact keeps a store that reinstalled before the job ran", async () =
 
   expect(await admin`select id from stores where id = ${s.id}`).toHaveLength(1);
   expect(await admin`select id from accounts where id = ${acc.id}`).toHaveLength(1);
+});
+
+test("a product-sync batch runs every job and fails only the one that threw, which pg-boss retries alone", async () => {
+  // A throwaway queue with the product-sync worker options, so the real pg-boss settles the batch.
+  const queue = `settle-test-${Date.now()}`;
+  await jobs.enqueue("store-sync", { storeId: "00000000-0000-0000-0000-000000000000" }, { startAfter: 3600 }); // starts boss
+  await jobs.boss.createQueue(queue, { retryLimit: 1, retryDelay: 3600 });
+  const ids = await Promise.all(["a", "bad", "c"].map((p) => jobs.boss.send(queue, { p })));
+  const ran: string[] = [];
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const worker = await jobs.boss.work<{ p: string }, void, typeof jobs.PRODUCT_SYNC_WORK>(queue, jobs.PRODUCT_SYNC_WORK, (batch) =>
+    jobs.settleEach(batch, async ({ p }) => {
+      ran.push(p);
+      if (p === "bad") throw new Error("boom");
+    }),
+  );
+  const state = async () => Object.fromEntries((await admin`select id, state from pgboss.job where name = ${queue}`).map((r) => [r.id, r.state]));
+  await vi.waitFor(async () => expect(Object.values(await state()).filter((s) => s !== "created" && s !== "active")).toHaveLength(3), { timeout: 10_000 });
+  await jobs.boss.offWork(queue, { id: worker });
+
+  expect(ran.sort()).toEqual(["a", "bad", "c"]);
+  expect(await state()).toEqual({ [ids[0]!]: "completed", [ids[1]!]: "retry", [ids[2]!]: "completed" });
+  await admin`delete from pgboss.job where name = ${queue} or (name = 'store-sync' and data->>'storeId' = '00000000-0000-0000-0000-000000000000')`;
 });

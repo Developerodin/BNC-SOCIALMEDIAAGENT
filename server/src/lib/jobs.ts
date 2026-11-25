@@ -1,4 +1,4 @@
-import { PgBoss, type SendOptions } from "pg-boss";
+import { PgBoss, type Job, type JobResult, type SendOptions } from "pg-boss";
 import { and, eq, notExists } from "drizzle-orm";
 import { db } from "@/db/client";
 import { accounts, partnerConnectRequests, stores } from "@/db/schema";
@@ -45,6 +45,34 @@ export async function shopRedact({ shopDomain }: { shopDomain: string }): Promis
   });
 }
 
+/**
+ * product-sync worker options. A bulk edit fires one products/update webhook per product, and with pg-boss's defaults
+ * (one job per fetch, a fetch every 2 s) the queue drained at 0.5 jobs/s: 5,000 edited products took about 3 hours.
+ * Batches of 10, fetched back to back while they come back full, drain at the speed of the Admin reads (~3/s measured
+ * with a 300 ms read). The reads stay one at a time, so the store's rate-limit bucket sees no more than one in-flight
+ * product query from this process. perJobResults settles each job on its own (settleEach), so one failing product
+ * doesn't fail or retry the other nine.
+ * ponytail: still serial per process, ~3 jobs/s, so 20k edits take about 2 hours. Upgrade path: localConcurrency, sized
+ * against Shopify's per-store cost limit (by estimate each read requests ~75 points: metafields first 50 + collections
+ * first 20; the live check spends from the same bucket).
+ */
+export const PRODUCT_SYNC_WORK = { batchSize: 10, burstWhenBatchFull: true, perJobResults: true } as const;
+
+/** Runs each job of a perJobResults batch in turn; a job that throws is logged and failed alone, so pg-boss retries just it. */
+export async function settleEach<T>(jobs: Job<T>[], run: (data: T) => Promise<unknown>): Promise<JobResult[]> {
+  const out: JobResult[] = [];
+  for (const job of jobs) {
+    try {
+      await run(job.data);
+      out.push({ id: job.id, status: "completed" });
+    } catch (e) {
+      console.error("job failed", { queue: job.name, id: job.id }, e);
+      out.push({ id: job.id, status: "failed", output: { message: e instanceof Error ? e.message : String(e) } });
+    }
+  }
+  return out;
+}
+
 export async function startWorkers(): Promise<void> {
   await init();
   await boss.work<{ shopDomain: string }>("shop-redact", async (jobs) => {
@@ -61,9 +89,9 @@ export async function startWorkers(): Promise<void> {
   await boss.work<{ storeId: string }, void, { includeMetadata: true }>("sync-poll", { includeMetadata: true }, async (jobs) => {
     for (const job of jobs) await runSyncJob(job, pollSync);
   });
-  await boss.work<{ storeId: string; productId: string }>("product-sync", async (jobs) => {
-    for (const job of jobs) await syncProduct(job.data);
-  });
+  await boss.work<{ storeId: string; productId: string }, void, typeof PRODUCT_SYNC_WORK>("product-sync", PRODUCT_SYNC_WORK, (jobs) =>
+    settleEach(jobs, syncProduct),
+  );
   const { embedStore } = await import("@/lib/indexing");
   await boss.work<{ storeId: string }>("embed-products", async (jobs) => {
     for (const job of jobs) {

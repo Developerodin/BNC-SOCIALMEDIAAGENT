@@ -227,9 +227,10 @@ export async function syncProduct({ storeId, productId }: { storeId: string; pro
  * The docs promise only that "nested connections appear after their parents in the file", not right after
  * (https://shopify.dev/docs/api/usage/bulk-operations/queries), so products are held in a map until the file ends.
  * Keying by id also means a batch can't contain one product twice (which ON CONFLICT DO UPDATE rejects).
- * ponytail: memory ceiling is the whole catalog in memory, roughly a few KB per product (up to 50 metafields of
- * 500+ chars each), so ~100k products is hundreds of MB. Upgrade path: run the query with `groupObjects: true`
- * and flush each product when the next parent line starts.
+ * ponytail: memory ceiling is the whole catalog in memory. Measured with ~2 KB product lines and 7 child lines each:
+ * 20k products took 6 s and raised peak RSS by ~200 MB (5k: 1.5 s, ~120 MB), so ~100k products is about 1 GB and
+ * products with many long metafields need more. Upgrade path: run the query with `groupObjects: true` and flush each
+ * product when the next parent line starts.
  */
 export async function importJsonl(storeId: string, lines: AsyncIterable<string>): Promise<number> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

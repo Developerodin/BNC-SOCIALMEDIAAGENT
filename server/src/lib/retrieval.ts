@@ -46,18 +46,26 @@ export async function search(
   } = await embed([query], { signal: d.signal }).finally(d.clear);
   const productId = productGid(opts.productId);
 
-  const distance = cosineDistance(chunks.embedding, q);
+  // The distance is selected once and both queries order by its alias. Drizzle binds the vector again for every use, so
+  // a score in the select list plus the distance in ORDER BY sent the 512 floats twice and Postgres computed every chunk's
+  // distance twice. Measured at 20k chunks: 39 ms -> 29 ms in Postgres, and 78 ms -> 30 ms wall on local Docker, where the
+  // second ~6 KB parameter alone cost ~45 ms per query in TCP stalls. Ordering by the bare distance, not by a score,
+  // keeps an HNSW index usable later.
   const cols = {
     chunkId: chunks.id,
     source: sql<"product">`${chunks.source}`,
     productId: sql<string>`${chunks.productId}`,
     content: chunks.content,
-    score: sql<number>`1 - (${distance})`,
+    distance: sql<number>`${cosineDistance(chunks.embedding, q)}`.as("distance"),
   };
+  const toHit = ({ distance, ...h }: Omit<SearchHit, "score"> & { distance: number }): SearchHit => ({ ...h, score: 1 - distance });
   return forStore(storeId, async (tx) => {
     // D42: filter on store_id as well as RLS.
-    // ponytail: exact scan, fine below 20k chunks per store. Above that, add an HNSW index and
-    // set hnsw.iterative_scan = relaxed_order so the store filter still returns k rows (§7.5, C9).
+    // ponytail: exact scan (no vector index). Measured with 512-dim halfvecs in shared buffers: about 30 ms in Postgres
+    // for a 20k-chunk store, linear in its chunk count. When one store is most of the table the plan is a seq scan of
+    // every store's chunks, so the total table size counts too. Upgrade path past ~50k chunks per store: an HNSW index
+    // with hnsw.iterative_scan = relaxed_order so the store filter still returns k rows (§7.5, C9); check the recall of
+    // small stores, whose rows are a sliver of one shared index.
     // ponytail: the cap filters the k*OVERFETCH nearest chunks, so when those come from fewer than k/PER_PRODUCT
     // products the result has fewer than k hits. Upgrade path: a row_number() over (partition by product_id) window,
     // at the cost of the exact scan (an HNSW index can't serve it).
@@ -69,8 +77,9 @@ export async function search(
       .select(cols)
       .from(chunks)
       .where(and(eq(chunks.storeId, storeId), opts.includeGiftCards ? undefined : notInArray(chunks.productId, giftCards)))
-      .orderBy(asc(distance))
-      .limit(k * OVERFETCH);
+      .orderBy((f) => asc(f.distance))
+      .limit(k * OVERFETCH)
+      .then((rows) => rows.map(toHit));
     const minScore = opts.minScore ?? MIN_SCORE;
     const perProduct = new Map<string, number>();
     const hits = near
@@ -92,8 +101,9 @@ export async function search(
           hits.length ? notInArray(chunks.id, hits.map((h) => h.chunkId)) : undefined,
         ),
       )
-      .orderBy(asc(distance))
-      .limit(2);
+      .orderBy((f) => asc(f.distance))
+      .limit(2)
+      .then((rows) => rows.map(toHit));
     return [...hits, ...extra];
   });
 }
