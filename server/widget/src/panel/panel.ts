@@ -40,7 +40,7 @@ export type OpenArgs = {
   message?: string;
   /** "drawer": a full-height panel on the right (the block's chat). Anything else is the floating panel. */
   mode?: "floating" | "drawer";
-  /** Drawer header: replaces the assistant's name and subtitle. */
+  /** Accepted for the block's open contract; the header is the same everywhere now, so it is not shown. */
   title?: { eyebrow: string; heading: string };
 };
 
@@ -91,12 +91,27 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   panel.style.setProperty("--ac-on-accent", textOn(accent));
   panel.style.setProperty("--off", Math.min(200, Math.max(0, Number(config.launcher?.offset) || 0)) + "px");
 
-  // header: back (mobile) · avatar · name · menu · close (desktop)
+  // header: a bar (back on a phone · cart · new chat · expand · menu · close) over the centred logo, "Your {store} expert"
+  // and the fixed AI line. The AI line is never hidden (docs/eu-ai-act-review.md).
   const hd = document.createElement("div");
   hd.className = "hd";
+  const bar = document.createElement("div");
+  bar.className = "bar";
   const back = button("ib back", t("back"), "back");
-  hd.append(back);
-  // Avatar (or the store name's initial when there is none) with a small online dot; name and subtitle beside it.
+  const actions = document.createElement("div");
+  actions.className = "actions";
+  const cartHref = resolveHttpsUrl(page.cartUrl);
+  const cartLink = document.createElement("a");
+  cartLink.className = "ib cart";
+  cartLink.setAttribute("aria-label", t("cart"));
+  cartLink.append(icon("cart"));
+  if (cartHref) {
+    cartLink.href = cartHref;
+    cartLink.rel = "noopener noreferrer";
+    if (page.hosted) cartLink.target = "_top"; // leave the iframe: the cart is the store's page
+  } else cartLink.hidden = true;
+  const newBtn = button("ib newchat", t("new_chat"), "newchat");
+  // Logo: the avatar, or a round monogram (the store name's first letter in the accent colour).
   const av = document.createElement("span");
   av.className = "av";
   const avatar = safeImageUrl(config.avatarUrl);
@@ -113,31 +128,51 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     ini.textContent = (Array.from(config.name.trim())[0] ?? "?").toUpperCase();
     av.append(ini);
   }
-  const dot = document.createElement("span");
-  dot.className = "dot";
-  dot.setAttribute("aria-hidden", "true");
-  av.append(dot);
-  const who = document.createElement("div");
-  who.className = "who";
   const name = document.createElement("span");
   name.className = "name";
-  name.textContent = config.name;
+  name.textContent = t("expert", { store: config.name });
   const sub = document.createElement("span");
   sub.className = "sub";
   sub.textContent = t("subtitle");
-  // Drawer header: the merchant's eyebrow and heading replace the name and subtitle, so the AI line is kept as a fixed third line.
-  const aiLine = document.createElement("span");
-  aiLine.className = "ai";
-  aiLine.textContent = t("subtitle");
-  who.append(name, sub, aiLine);
-  const menu = createMenu(t, [
-    { label: t("new_chat"), run: newChat },
-    { label: t("delete_chat"), run: () => void deleteChat() },
-  ]);
+  const menu = createMenu(t, [{ label: t("delete_chat"), run: () => void deleteChat() }]);
   const closeBtn = button("ib close", t("close"), "close");
   const wideBtn = button("ib wide-btn", t("expand"), "expand");
   wideBtn.setAttribute("aria-pressed", "false");
-  hd.append(av, who, menu.el, wideBtn, closeBtn);
+  actions.append(cartLink, newBtn, wideBtn, menu.el, closeBtn);
+  bar.append(back, actions);
+  hd.append(bar, av, name, sub);
+
+  // "You're viewing" (product pages): checked here, hidden when absent or invalid.
+  const vw = page.viewing;
+  const vwTitle = typeof vw?.title === "string" ? vw.title.trim().slice(0, 200) : "";
+  const viewing = document.createElement("div");
+  viewing.className = "viewing";
+  viewing.hidden = !vwTitle;
+  if (vw && vwTitle) {
+    const vwImg = safeImageUrl(vw.image);
+    if (vwImg) {
+      const i = document.createElement("img");
+      i.alt = "";
+      i.src = vwImg;
+      viewing.append(i);
+    }
+    const txt = document.createElement("div");
+    txt.className = "vw-txt";
+    const label = document.createElement("span");
+    label.className = "vw-label";
+    label.textContent = t("viewing");
+    const ttl = document.createElement("span");
+    ttl.className = "vw-title";
+    ttl.textContent = vwTitle;
+    txt.append(label, ttl);
+    if (typeof vw.price === "string" && vw.price.trim()) {
+      const pr = document.createElement("span");
+      pr.className = "vw-price";
+      pr.textContent = vw.price.trim().slice(0, 40);
+      txt.append(pr);
+    }
+    viewing.append(txt);
+  }
 
   const offline = document.createElement("div");
   offline.className = "offline";
@@ -175,7 +210,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   }
   ft.append(row, count, notice);
 
-  panel.append(hd, offline, messages.log, ft, live.el);
+  panel.append(hd, viewing, offline, messages.log, ft, live.el);
   shadow.append(style, panel);
 
   // --- state ---
@@ -198,6 +233,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
 
   function update() {
     offline.hidden = !isOffline;
+    input.placeholder = t(hasMessages() ? "continue_placeholder" : "input_placeholder");
     send.disabled = busy || isOffline || !input.value.trim();
     const n = input.value.length;
     count.hidden = n <= COUNT_FROM;
@@ -291,6 +327,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     const faq = await loadFaq();
     if (!hasMessages()) showSuggestions([...merchantSuggested(), ...faq]);
     else if (faq.length) showSuggestions(faq);
+    update(); // the placeholder follows whether history was loaded
   }
 
   function resetChat() {
@@ -459,6 +496,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     }
   });
   send.addEventListener("click", () => submit(input.value));
+  newBtn.addEventListener("click", newChat);
   closeBtn.addEventListener("click", () => close());
   back.addEventListener("click", () => close());
   wideBtn.addEventListener("click", () => {
@@ -489,13 +527,6 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     opts.launcher?.setAttribute("aria-expanded", String(on));
   }
 
-  function setHeader(title: OpenArgs["title"]) {
-    name.textContent = title ? title.heading : config.name;
-    sub.textContent = title ? title.eyebrow : t("subtitle");
-    panel.setAttribute("aria-label", title ? title.heading : config.name);
-    panel.classList.toggle("titled", !!title);
-  }
-
   async function open(args: OpenArgs = {}) {
     const fromProduct = args.productId != null && args.productId !== productId;
     if (panel.hidden) {
@@ -505,7 +536,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     if (args.productId != null) productId = args.productId;
     drawer = args.mode === "drawer";
     panel.classList.toggle("drawer", drawer);
-    setHeader(drawer ? args.title : undefined);
+    viewing.hidden = !vwTitle || productId !== page.productId; // the card is about the page's product
     panel.hidden = false;
     layout();
     ui.open.set(true);

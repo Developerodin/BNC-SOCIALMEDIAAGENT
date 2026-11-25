@@ -22,6 +22,12 @@ describe("i18n", () => {
     }
   });
 
+  it.each(["en", "fr", "de", "es", "it", "nl"] as const)("%s has the editorial panel strings", (lang) => {
+    const dict: Record<string, string> = DICTS[lang];
+    for (const k of ["expert", "viewing", "continue_placeholder", "cart", "product_details", "view_product"]) expect(dict[k]?.trim(), `${lang}.${k}`).toBeTruthy();
+    expect(dict.expert).toContain("{store}");
+  });
+
   it("fills variables, falls back to English, and to the key", () => {
     expect(translator("en")("only_left", { n: 3 })).toBe("Only 3 left");
     expect(translator("fr-FR")("only_left", { n: 3 })).toBe(DICTS.fr.only_left.replace("{n}", "3"));

@@ -6,6 +6,8 @@ import { requestAdd } from "./bridge";
 import { addToCart, cartVariantIds } from "./cart";
 import { formatPrice, resolveHttpsUrl, safeHttpsUrl, safeImageUrl, stockLabel } from "./core/format";
 import { tokenStore, uiState } from "./core/storage";
+import { trapTab } from "./panel/a11y";
+import { icon } from "./panel/icons";
 import { FULL_BELOW } from "./panel/styles";
 
 type Variant = Card["variants"][number];
@@ -29,21 +31,23 @@ const optionValue = (v: Variant, name: string) => v.options.find((o) => o.name =
 /** Called once per confirmed add from a card, with the store's cart URL (null when there is none). */
 export type OnAdded = (title: string, cartHref: string | null) => void;
 
+/** The shopper chose this product: on a phone, where the panel is full screen (UD4), don't reopen it over the product's
+ * page. Set before the navigation. On a desktop the floating panel stays open; other links (View cart, the theme's own)
+ * keep the UD13 reopen. */
+function productAnchor(page: WidgetCtx["page"], href: string, cls: string, text: string): HTMLAnchorElement {
+  const a = link(href, cls, text);
+  if (page.hosted) a.target = "_blank"; // inside the embed iframe a same-tab link would replace the chat
+  a.addEventListener("click", () => {
+    if (window.innerWidth < FULL_BELOW) uiState(page.shop).open.set(false);
+  });
+  return a;
+}
+
 function cardEl(card: Card, ctx: WidgetCtx, messageId: string | null, onAdded?: OnAdded): HTMLElement {
   const { t, page } = ctx;
   const root = el("div", "ac-card");
   const url = safeHttpsUrl(card.url);
-  // The shopper chose this product: on a phone, where the panel is full screen (UD4), don't reopen it over the product's
-  // page. Set before the navigation. On a desktop the floating panel stays open; other links (View cart, the theme's own)
-  // keep the UD13 reopen.
-  const productLink = (href: string, cls: string, text: string) => {
-    const a = link(href, cls, text);
-    if (page.hosted) a.target = "_blank"; // inside the embed iframe a same-tab link would replace the chat
-    a.addEventListener("click", () => {
-      if (window.innerWidth < FULL_BELOW) uiState(page.shop).open.set(false);
-    });
-    return a;
-  };
+  const productLink = (href: string, cls: string, text: string) => productAnchor(page, href, cls, text);
 
   const img = safeImageUrl(card.imageUrl);
   if (img) {
@@ -288,50 +292,108 @@ function addControls(
   return box;
 }
 
+/** The price line under a thumbnail: nothing for a fallback card or another currency (C26), "Sold out" when it is (D72). */
+function tilePrice(card: Card, ctx: WidgetCtx): string | null {
+  if (card.available === false) return ctx.t("sold_out");
+  const { page } = ctx;
+  if (card.price === null || !card.currency || (!!page.currency && card.currency !== page.currency)) return null;
+  return formatPrice(card.price, card.currency, page.locale);
+}
+
+/** The inline detail sheet: covers the panel (or `into` when there is no panel), shows the full card and gives focus back
+ * to the thumbnail on close. The rest of the panel is inert meanwhile. */
+function openSheet(into: HTMLElement, tile: HTMLElement, card: Card, full: HTMLElement, ctx: WidgetCtx) {
+  const host = into.closest<HTMLElement>(".panel") ?? into;
+  const sheet = el("div", "ac-sheet");
+  sheet.setAttribute("role", "group");
+  sheet.setAttribute("aria-label", card.title);
+  const bar = el("div", "ac-sheet__bar");
+  const back = el("button", "ac-sheet__back");
+  back.type = "button";
+  back.setAttribute("aria-label", ctx.t("back"));
+  back.append(icon("back"));
+  bar.append(back, el("span", "ac-sheet__heading", ctx.t("product_details")));
+  const body = el("div", "ac-sheet__body");
+  body.append(full);
+  const url = safeHttpsUrl(card.url);
+  if (url) body.append(productAnchor(ctx.page, url, "ac-sheet__view", ctx.t("view_product")));
+  sheet.append(bar, body);
+  const covered = [...host.children].filter((c): c is HTMLElement => c instanceof HTMLElement);
+  for (const c of covered) c.inert = true;
+  host.append(sheet);
+  const close = () => {
+    for (const c of covered) c.inert = false;
+    sheet.remove();
+    if (tile.isConnected) tile.focus();
+  };
+  back.addEventListener("click", close);
+  sheet.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.stopPropagation(); // Esc closes the sheet, not the panel
+      close();
+    } else if (trapTab(e, sheet, (sheet.getRootNode() as Document | ShadowRoot).activeElement)) e.stopPropagation();
+  });
+  back.focus();
+}
+
 /**
- * UD9, UD12: one card full width, two or more in a scroll-snap carousel with arrows, keyboard and "n of m" labels.
+ * UD9, UD12: a row of square thumbnails with name and price. A thumbnail opens the inline detail sheet with the full card
+ * (pickers, Add to cart, View product). Arrows appear only when the row overflows.
  * `messageId` is the answer the cards came with; a cart add logs it (null for an answer the server sent without one).
  */
 export function renderCards(into: HTMLElement, cards: Card[], ctx: WidgetCtx, messageId: string | null = null, onAdded?: OnAdded): void {
   if (cards.length === 0) return;
-  const wrap = el("div", `ac-cards ${cards.length === 1 ? "ac-cards--single" : "ac-cards--carousel"}`);
-  if (cards.length === 1) {
-    wrap.append(cardEl(cards[0], ctx, messageId, onAdded));
-    into.append(wrap);
-    return;
-  }
-
+  const wrap = el("div", "ac-cards");
   const track = el("ul", "ac-cards__track");
-  track.tabIndex = 0;
-  cards.forEach((c, i) => {
+  for (const c of cards) {
     const li = el("li", "ac-cards__slide");
-    const card = cardEl(c, ctx, messageId, onAdded);
-    card.setAttribute("role", "group");
-    card.setAttribute("aria-roledescription", "slide");
-    card.setAttribute("aria-label", `${i + 1} / ${cards.length}`);
-    li.append(card);
+    const tile = el("button", "ac-tile");
+    tile.type = "button";
+    tile.setAttribute("aria-haspopup", "dialog");
+    const img = safeImageUrl(c.imageUrl);
+    if (img) {
+      const i = el("img", "ac-tile__img");
+      i.src = img;
+      i.alt = ""; // the name right below names the product
+      i.loading = "lazy";
+      tile.append(i);
+    } else {
+      const ph = el("span", "ac-tile__img ac-tile__img--placeholder");
+      ph.setAttribute("aria-hidden", "true");
+      tile.append(ph);
+    }
+    tile.append(el("span", "ac-tile__title", c.title));
+    const price = tilePrice(c, ctx);
+    if (price) tile.append(el("span", "ac-tile__price", price));
+    let full: HTMLElement | null = null; // built on the first open, then kept so a chosen option and "Added" survive closing
+    tile.addEventListener("click", () => openSheet(into, tile, c, (full ??= cardEl(c, ctx, messageId, onAdded)), ctx));
+    li.append(tile);
     track.append(li);
-  });
+  }
   const step = (dir: 1 | -1) => {
-    const w = (track.firstElementChild as HTMLElement | null)?.offsetWidth || track.clientWidth;
+    const w = track.clientWidth * 0.8 || 200;
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     track.scrollBy?.({ left: dir * w, behavior: reduced ? "auto" : "smooth" });
   };
-  track.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-      e.preventDefault();
-      step(e.key === "ArrowRight" ? 1 : -1);
-    }
-  });
   const nav = (dir: 1 | -1, label: string, glyph: string) => {
     const b = el("button", `ac-cards__nav ac-cards__nav--${dir === 1 ? "next" : "prev"}`, glyph);
     b.type = "button";
+    b.hidden = true;
     b.setAttribute("aria-label", label);
     b.addEventListener("click", () => step(dir));
     return b;
   };
-  wrap.append(nav(-1, ctx.t("previous"), "‹"), track, nav(1, ctx.t("next"), "›"));
+  const prev = nav(-1, ctx.t("previous"), "‹");
+  const next = nav(1, ctx.t("next"), "›");
+  const sync = () => {
+    const over = track.scrollWidth > track.clientWidth + 1;
+    prev.hidden = !over || track.scrollLeft <= 1;
+    next.hidden = !over || track.scrollLeft + track.clientWidth >= track.scrollWidth - 1;
+  };
+  track.addEventListener("scroll", sync);
+  wrap.append(prev, track, next);
   into.append(wrap);
+  requestAnimationFrame(sync); // the sizes are known only once it is in the page
 }
 // Compile-time check that it still fits the shared seam.
 const _contract: CardsRenderer = renderCards;
@@ -340,14 +402,30 @@ void _contract;
 /** Card styles for the panel's shadow root (Task 30 owns styles.ts and includes this). px only (Global Constraints). */
 export const CARDS_CSS = `
 .ac-cards{position:relative;margin:4px 0}
-.ac-cards__track{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;list-style:none;margin:0;padding:0 0 6px;scrollbar-width:thin}
-.ac-cards__slide{flex:0 0 74%;scroll-snap-align:start}
-.ac-cards__nav{position:absolute;top:70px;width:30px;height:30px;border-radius:15px;border:1px solid #d0d0d0;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.14);cursor:pointer;z-index:1}
+.ac-cards__track{display:flex;gap:12px;overflow-x:auto;list-style:none;margin:0;padding:0 0 6px;scrollbar-width:thin}
+.ac-cards__slide{flex:0 0 96px;width:96px}
+.ac-tile{display:flex;flex-direction:column;gap:6px;width:96px;text-align:left;font-size:13px;line-height:17px;color:inherit}
+.ac-tile__img{display:block;width:96px;height:96px;border-radius:12px;object-fit:cover;background:#f2f2f2}
+.ac-tile:hover .ac-tile__img{filter:brightness(.94)}
+.ac-tile__title{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;overflow-wrap:anywhere;font-weight:500}
+.ac-tile__price{color:#6b6b6b}
+.ac-cards__nav{position:absolute;top:33px;width:30px;height:30px;border-radius:15px;border:1px solid #d0d0d0;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.14);cursor:pointer;z-index:1}
+.ac-cards__nav[hidden]{display:none}
 .ac-cards__nav--prev{left:-8px}.ac-cards__nav--next{right:-8px}
-.ac-card{display:flex;flex-direction:column;height:100%;border:1px solid #e3e3e3;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.06)}
-.ac-card__img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:#f2f2f2}
-.ac-card__body{display:flex;flex-direction:column;gap:6px;flex:1;padding:10px 12px 12px;font-size:13px;line-height:18px}
-.ac-card__title{font-weight:600;font-size:14px;line-height:19px;color:inherit;text-decoration:none;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ac-sheet{position:absolute;top:0;right:0;bottom:0;left:0;z-index:5;display:flex;flex-direction:column;background:#fff;color:#111}
+.ac-sheet__bar{display:flex;align-items:center;gap:8px;padding:10px 12px;flex:none;border-bottom:1px solid #eee}
+.ac-sheet__back{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:18px;cursor:pointer;border:0;background:none;color:inherit}
+.ac-sheet__back:hover{background:#f2f2f2}
+.ac-sheet__heading{font-weight:600;font-size:15px}
+.ac-sheet__body{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+.ac-sheet__view{display:block;text-align:center;font-size:14px;color:inherit;text-decoration:underline}
+.ac-sheet .ac-card{border:0;box-shadow:none;border-radius:0;overflow:visible;height:auto}
+.ac-sheet .ac-card__img{aspect-ratio:1;max-height:320px;border-radius:12px;object-fit:cover}
+.ac-sheet .ac-card__body{padding:14px 0 0}
+.ac-card{display:flex;flex-direction:column;background:#fff}
+.ac-card__img{width:100%;display:block;background:#f2f2f2}
+.ac-card__body{display:flex;flex-direction:column;gap:6px;flex:1;font-size:13px;line-height:18px}
+.ac-card__title{font-weight:600;font-size:16px;line-height:21px;color:inherit;text-decoration:none}
 a.ac-card__title:hover{text-decoration:underline}
 .ac-card__prices{display:flex;gap:6px;align-items:baseline}
 .ac-card__price{font-weight:700;font-size:15px}
@@ -356,7 +434,7 @@ a.ac-card__title:hover{text-decoration:underline}
 .ac-card__actions{display:flex;flex-direction:column;gap:8px;margin-top:auto}
 .ac-card__picker{display:flex;flex-direction:column;gap:2px;font-size:12px;color:#444}
 .ac-card__select{font:inherit;font-size:13px;padding:6px 8px;border:1px solid #8a8a8a;border-radius:8px;background:#fff;color:#111}
-.ac-card__add{font:inherit;font-size:14px;font-weight:600;width:100%;padding:10px 12px;border:0;border-radius:10px;cursor:pointer;background:var(--ac-accent,#111);color:var(--ac-on-accent,#fff)}
+.ac-card__add{font:inherit;font-size:14px;font-weight:600;width:100%;padding:11px 12px;border:0;border-radius:22px;cursor:pointer;background:var(--ac-accent,#111);color:var(--ac-on-accent,#fff)}
 .ac-card__add:hover:not(:disabled){filter:brightness(.92)}
 .ac-card__add:disabled{opacity:.5;cursor:default}
 .ac-card__options{display:block;text-align:center;font-weight:600;color:inherit;padding:9px 12px;border:1px solid #8a8a8a;border-radius:10px;text-decoration:none}

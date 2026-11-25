@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
 // @vitest-environment-options {"url":"https://demo.myshopify.com/products/tee"}
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { renderCards } from "../../widget/src/cards";
+import { CARDS_CSS, renderCards } from "../../widget/src/cards";
 import { resetCartCache } from "../../widget/src/cart";
 import { translator } from "../../widget/src/core/i18n";
 import { tokenStore } from "../../widget/src/core/storage";
 import type { Card, PageContext, WidgetApi, WidgetConfig, WidgetCtx } from "@/lib/widget-contract";
-import { jsonResponse } from "./core/helpers";
+import { jsonResponse, openSheets } from "./core/helpers";
 
 const SHOP = "demo.myshopify.com";
 const IMG = "https://cdn.shopify.com/s/files/1/tee.jpg";
@@ -45,7 +45,13 @@ function ctx(over: Partial<PageContext> = {}): WidgetCtx {
     config, page: { ...page, ...over }, api: { logCartAdd } as unknown as WidgetApi, t: translator("en"), announce,
   };
 }
+/** Renders the thumbnails and opens every detail sheet, so the full cards can be queried. */
 function render(cards: Card[], c = ctx(), messageId?: string | null) {
+  const into = renderRow(cards, c, messageId);
+  openSheets(into);
+  return into;
+}
+function renderRow(cards: Card[], c = ctx(), messageId?: string | null) {
   const into = document.createElement("div");
   document.body.append(into);
   renderCards(into, cards, c, messageId);
@@ -78,24 +84,47 @@ afterEach(() => {
 });
 
 describe("layout (UD9, UD12)", () => {
-  it("1 card → the single full-width layout", () => {
-    const el = render([card()]);
-    expect(el.querySelector(".ac-cards--single")).not.toBeNull();
-    expect(el.querySelector(".ac-cards--carousel")).toBeNull();
-    expect(el.querySelectorAll(".ac-card")).toHaveLength(1);
+  it("cards are a row of thumbnails with name and price; the full card is not built until a thumbnail is tapped", () => {
+    const el = renderRow([card(), card({ id: "gid://shopify/Product/2", title: "Wool hat", price: "9.50" })]);
+    const tiles = [...el.querySelectorAll<HTMLElement>(".ac-tile")];
+    expect(tiles.map((t) => t.querySelector(".ac-tile__title")!.textContent)).toEqual(["Linen tee", "Wool hat"]);
+    expect(tiles.map((t) => t.querySelector(".ac-tile__price")!.textContent)).toEqual(["$20.00", "$9.50"]);
+    expect(tiles[0].querySelector("img")!.getAttribute("src")).toBe(IMG);
+    expect(el.querySelector(".ac-card")).toBeNull();
+    expect(CARDS_CSS).toMatch(/\.ac-tile__title\{[^}]*-webkit-line-clamp:2/);
   });
 
-  it("3 cards → a carousel with n of m labels and prev/next", () => {
-    const el = render([card(), card({ id: "gid://shopify/Product/2" }), card({ id: "gid://shopify/Product/3" })]);
-    expect(el.querySelector(".ac-cards--carousel")).not.toBeNull();
-    const slides = [...el.querySelectorAll(".ac-card")];
-    expect(slides.map((s) => s.getAttribute("aria-label"))).toEqual(["1 / 3", "2 / 3", "3 / 3"]);
-    for (const s of slides) {
-      expect(s.getAttribute("role")).toBe("group");
-      expect(s.getAttribute("aria-roledescription")).toBe("slide");
-    }
-    expect(el.querySelector('button[aria-label="Next product"]')).not.toBeNull();
-    expect(el.querySelector('button[aria-label="Previous product"]')).not.toBeNull();
+  it("a thumbnail opens the detail sheet; Back closes it, keeps the card state and returns focus to the thumbnail", () => {
+    const el = renderRow([card({ variants: [variant("1", [["Size", "S"]]), variant("2", [["Size", "M"]])] })]);
+    const tile = el.querySelector<HTMLButtonElement>(".ac-tile")!;
+    tile.click();
+    const sheet = el.querySelector(".ac-sheet")!;
+    expect(sheet.querySelector(".ac-card__img")).not.toBeNull();
+    expect(sheet.querySelector<HTMLAnchorElement>(".ac-sheet__view")!.href).toBe("https://demo.myshopify.com/products/tee");
+    const select = sheet.querySelector<HTMLSelectElement>("select")!;
+    select.value = "M";
+    select.dispatchEvent(new Event("change"));
+    sheet.querySelector<HTMLButtonElement>(".ac-sheet__back")!.click();
+    expect(el.querySelector(".ac-sheet")).toBeNull();
+    expect(tile.getAttribute("aria-haspopup")).toBe("dialog");
+    tile.click();
+    expect(el.querySelector<HTMLSelectElement>(".ac-sheet select")!.value).toBe("M");
+  });
+
+  it("Escape closes the sheet only", () => {
+    const el = renderRow([card()]);
+    el.querySelector<HTMLElement>(".ac-tile")!.click();
+    const outer = vi.fn();
+    el.addEventListener("keydown", outer);
+    el.querySelector(".ac-sheet")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(el.querySelector(".ac-sheet")).toBeNull();
+    expect(outer).not.toHaveBeenCalled();
+  });
+
+  it("the arrows stay hidden while the row fits", () => {
+    const el = renderRow([card(), card({ id: "gid://shopify/Product/2" }), card({ id: "gid://shopify/Product/3" })]);
+    expect(el.querySelector<HTMLElement>('button[aria-label="Next product"]')!.hidden).toBe(true);
+    expect(el.querySelector<HTMLElement>('button[aria-label="Previous product"]')!.hidden).toBe(true);
   });
 
   it("the arrows scroll smoothly, or instantly when the shopper prefers reduced motion", () => {
@@ -416,6 +445,7 @@ describe("onAdded (the note in the chat log)", () => {
     const into = document.createElement("div");
     document.body.append(into);
     renderCards(into, [card()], ctx(), "m1", onAdded);
+    openSheets(into);
     fetchMock.mockResolvedValueOnce(jsonResponse(422, { status: 422, message: "Cart Error", description: "No." }));
     addButton(into)!.click();
     await flush();

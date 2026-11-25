@@ -5,6 +5,7 @@ import { buildSync } from "esbuild";
 import path from "node:path";
 import { renderCards } from "../../widget/src/cards";
 import { translator } from "../../widget/src/core/i18n";
+import { openSheets } from "./core/helpers";
 import type { Card, PageContext, WidgetApi, WidgetConfig, WidgetCtx } from "@/lib/widget-contract";
 
 // Outside Shopify: the card opens the product on the store (docs/embed.md), and public/embed.js adds the launcher + iframe.
@@ -50,6 +51,7 @@ describe("cards on the hosted page", () => {
   it("the button is labelled for the store and opens the product with the chosen variant in a new tab, no cart call", () => {
     const into = document.createElement("div");
     renderCards(into, [card], ctx());
+    openSheets(into);
     const btn = into.querySelector<HTMLButtonElement>("button.ac-card__add")!;
     expect(btn.textContent).toBe("Buy on the store");
     pick(into, "M");
@@ -62,12 +64,14 @@ describe("cards on the hosted page", () => {
   it("product links open in a new tab, so they can't replace the chat inside the iframe", () => {
     const into = document.createElement("div");
     renderCards(into, [card], ctx());
+    openSheets(into);
     expect(into.querySelector<HTMLAnchorElement>("a.ac-card__title")!.target).toBe("_blank");
   });
 
   it("an existing query on the product url is kept", () => {
     const into = document.createElement("div");
     renderCards(into, [{ ...card, url: "https://demo.myshopify.com/products/tee?utm=x" }], ctx());
+    openSheets(into);
     pick(into, "S");
     into.querySelector<HTMLButtonElement>("button.ac-card__add")!.click();
     expect(open.mock.calls[0][0]).toBe("https://demo.myshopify.com/products/tee?utm=x&variant=11");
@@ -77,6 +81,7 @@ describe("cards on the hosted page", () => {
     fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
     const into = document.createElement("div");
     renderCards(into, [card], ctx({ hosted: undefined, cartAddUrl: "/cart/add" }));
+    openSheets(into);
     const btn = into.querySelector<HTMLButtonElement>("button.ac-card__add")!;
     expect(btn.textContent).toBe("Add to cart");
     expect(into.querySelector<HTMLAnchorElement>("a.ac-card__title")!.target).toBe("");

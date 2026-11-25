@@ -6,8 +6,9 @@
 {%- assign cfg = app.metafields.askcart.widget.value -%}
 {%- if cfg.enabled -%}
   {%- capture product_id -%}{%- if request.page_type == 'product' and product -%}{{ product.id | append: '' | json }}{%- else -%}null{%- endif -%}{%- endcapture -%}
+  {%- capture viewing -%}{%- if request.page_type == 'product' and product -%}{"title":{{ product.title | json }},"image":{% if product.featured_image %}{{ product.featured_image | image_url: width: 160 | json }}{% else %}null{% endif %},"price":{{ product.price | money | json }}}{%- else -%}null{%- endif -%}{%- endcapture -%}
   {%- capture ctx -%}
-    {"shop":{{ shop.permanent_domain | json }},"locale":{{ request.locale.iso_code | json }},"country":{{ localization.country.iso_code | json }},"currency":{{ cart.currency.iso_code | json }},"productId":{{ product_id }},"cartAddUrl":{{ routes.cart_add_url | json }},"cartUrl":{{ routes.cart_url | json }},"privacyUrl":{{ shop.privacy_policy.url | json }},"designMode":{{ request.design_mode | json }},"loggedIn":{% if customer %}true{% else %}false{% endif %}}
+    {"shop":{{ shop.permanent_domain | json }},"locale":{{ request.locale.iso_code | json }},"country":{{ localization.country.iso_code | json }},"currency":{{ cart.currency.iso_code | json }},"productId":{{ product_id }},"cartAddUrl":{{ routes.cart_add_url | json }},"cartUrl":{{ routes.cart_url | json }},"privacyUrl":{{ shop.privacy_policy.url | json }},"designMode":{{ request.design_mode | json }},"loggedIn":{% if customer %}true{% else %}false{% endif %},"viewing":{{ viewing }}}
   {%- endcapture -%}
   {%- comment -%} C20: the chat script is an extension asset on Shopify's CDN; the launcher injects it on first click. {%- endcomment -%}
   <div

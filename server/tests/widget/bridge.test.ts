@@ -5,6 +5,7 @@ import { buildSync } from "esbuild";
 import path from "node:path";
 import { renderCards } from "../../widget/src/cards";
 import { translator } from "../../widget/src/core/i18n";
+import { openSheets } from "./core/helpers";
 import type { Card, PageContext, WidgetApi, WidgetConfig, WidgetCtx } from "@/lib/widget-contract";
 
 // The cart bridge (docs/embed.md): embed.js on the store's page answers the hosted chat's "add to cart" requests.
@@ -163,6 +164,7 @@ describe("hosted page side (cards)", () => {
     const into = document.createElement("div");
     const ctx: WidgetCtx = { config: { stockThreshold: 5 } as WidgetConfig, page: { ...base, ...over }, api: {} as WidgetApi, t: translator("en"), announce: () => {} };
     renderCards(into, [card], ctx);
+    openSheets(into);
     return { btn: into.querySelector<HTMLButtonElement>("button.ac-card__add")!, status: into.querySelector(".ac-card__status")! };
   }
   const click = (btn: HTMLElement, trusted = true) => {
@@ -261,6 +263,7 @@ describe("hosted page side (cards)", () => {
       const into = document.createElement("div");
       const ctx: WidgetCtx = { config: { stockThreshold: 5 } as WidgetConfig, page: { ...base, ...bridged }, api: { logCartAdd: log } as unknown as WidgetApi, t: translator("en"), announce: () => {} };
       renderCards(into, [card], ctx, "m1");
+      openSheets(into);
       return { btn: into.querySelector<HTMLButtonElement>("button.ac-card__add")!, status: into.querySelector(".ac-card__status")! };
     }
     afterEach(() => localStorage.clear());

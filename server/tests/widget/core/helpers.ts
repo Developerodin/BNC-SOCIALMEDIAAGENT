@@ -20,3 +20,8 @@ export function sseResponse(chunks: string[], opts: { error?: boolean } = {}): R
 
 export const jsonResponse = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+/** Cards are thumbnails until tapped: opens each one's detail sheet so its controls can be queried. */
+export function openSheets(into: HTMLElement): void {
+  into.querySelectorAll<HTMLElement>(".ac-tile").forEach((t) => t.click());
+}

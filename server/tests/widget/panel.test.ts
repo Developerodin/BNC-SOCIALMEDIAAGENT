@@ -8,6 +8,7 @@ import { CSS } from "../../widget/src/panel/styles";
 import type { Renderers } from "../../widget/src/panel/messages";
 import type { FeedbackRenderer, HistoryItem, PageContext, WidgetApi, WidgetConfig } from "@/lib/widget-contract";
 import { ev, jsonResponse, sseResponse } from "./core/helpers";
+import { translator } from "../../widget/src/core/i18n";
 
 const SHOP = "demo.myshopify.com";
 const TOKEN_KEY = `askcart:${SHOP}:token`;
@@ -113,7 +114,7 @@ describe("rendering safety (Review Focus 1)", () => {
 
   it("merchant name and welcome with markup stay text, and a non-CDN avatar is not loaded", async () => {
     await setup(mockApi(), config({ name: "<b>Shop</b>", welcome: "<script>x()</script>", avatarUrl: "https://evil.com/a.png" })).open();
-    expect(q(".name")!.textContent).toBe("<b>Shop</b>");
+    expect(q(".name")!.textContent).toBe("Your <b>Shop</b> expert");
     expect(q(".welcome")!.textContent).toBe("<script>x()</script>");
     expect(sh().querySelector("img, b, script")).toBeNull();
   });
@@ -505,8 +506,7 @@ describe("menu (C22)", () => {
     localStorage.setItem(TOKEN_KEY, "tok");
     const api = mockApi({ history: vi.fn(async () => [{ id: "u", role: "user", content: "x", status: "ok", cards: [], rating: null }] as HistoryItem[]) });
     await setup(api).open();
-    await openMenu();
-    item("New chat").click();
+    q<HTMLButtonElement>("button.newchat")!.click();
     await flush();
     expect(api.deleteConversation).not.toHaveBeenCalled();
     expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
@@ -520,7 +520,7 @@ describe("menu (C22)", () => {
     expect(btn.getAttribute("aria-label")).toBe("Chat options");
     await openMenu();
     expect(btn.getAttribute("aria-expanded")).toBe("true");
-    item("New chat").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+    item("Delete chat").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
     expect(btn.getAttribute("aria-expanded")).toBe("false");
     expect(q(".panel")!.hidden).toBe(false);
   });
@@ -528,18 +528,130 @@ describe("menu (C22)", () => {
   it("Escape from a menu item returns focus to the menu button", async () => {
     await setup(mockApi()).open();
     await openMenu();
-    item("New chat").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+    item("Delete chat").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
     expect(sh().activeElement).toBe(q("button.menu"));
   });
 });
 
 describe("header and empty state", () => {
-  it("shows the store's initial on the accent when there is no avatar, plus the subtitle and online dot", async () => {
+  it("shows the store's initial as a monogram when there is no avatar, 'Your {store} expert' and the AI line", async () => {
     await setup(mockApi(), config({ name: "maison bleue" })).open();
     expect(q(".avatar.initial")!.textContent).toBe("M");
     expect(q("img.avatar")).toBeNull();
+    expect(q(".hd .name")!.textContent).toBe("Your maison bleue expert");
     expect(q(".hd .sub")!.textContent).toBe("AI shopping assistant");
-    expect(q(".hd .dot")).not.toBeNull();
+  });
+
+  it("the header says it in every language and always keeps the AI line", async () => {
+    const expected: Record<string, string> = {
+      en: "Your Demo Store expert", fr: "Votre expert Demo Store", de: "Ihr Demo Store-Experte",
+      es: "Tu experto de Demo Store", it: "Il tuo esperto Demo Store", nl: "Jouw Demo Store-expert",
+    };
+    for (const [locale, name] of Object.entries(expected)) {
+      document.body.innerHTML = "";
+      await setup(mockApi(), config(), pageCtx({ locale })).open();
+      expect(q(".hd .name")!.textContent).toBe(name);
+      expect(q(".hd .sub")!.textContent).toBe(translator(locale)("subtitle"));
+      expect(q(".hd .sub")!.hidden).toBe(false);
+      panel.destroy();
+    }
+  });
+
+  it("shows 'You're viewing' with photo, title and price from page.viewing, hidden when absent", async () => {
+    const viewing = { title: "Linen <b>tee</b>", image: "https://cdn.shopify.com/s/files/tee.jpg", price: "$20.00" };
+    await setup(mockApi(), config(), pageCtx({ productId: "1", viewing })).open();
+    const card = q(".viewing")!;
+    expect(card.hidden).toBe(false);
+    expect(q(".vw-label")!.textContent).toBe("You're viewing");
+    expect(q(".vw-title")!.textContent).toBe("Linen <b>tee</b>");
+    expect(q(".vw-price")!.textContent).toBe("$20.00");
+    expect(card.querySelector("img")!.getAttribute("src")).toBe(viewing.image);
+    expect(card.querySelector("b")).toBeNull();
+    panel.destroy();
+    document.body.innerHTML = "";
+    await setup(mockApi()).open();
+    expect(q(".viewing")!.hidden).toBe(true);
+  });
+
+  it("an unsafe viewing image is not loaded, and a viewing without a title is hidden", async () => {
+    await setup(mockApi(), config(), pageCtx({ productId: "1", viewing: { title: "Tee", image: "https://evil.com/a.png", price: null } })).open();
+    expect(q(".viewing")!.hidden).toBe(false);
+    expect(q(".viewing img")).toBeNull();
+    expect(q(".vw-price")).toBeNull();
+    panel.destroy();
+    document.body.innerHTML = "";
+    await setup(mockApi(), config(), pageCtx({ productId: "1", viewing: { title: " ", image: null, price: null } })).open();
+    expect(q(".viewing")!.hidden).toBe(true);
+  });
+
+  it("the viewing card follows the page's product: opening the chat for another product hides it", async () => {
+    const p = setup(mockApi(), config(), pageCtx({ productId: "1", viewing: { title: "Tee", image: null, price: null } }));
+    await p.open({});
+    expect(q(".viewing")!.hidden).toBe(false);
+    await p.open({ productId: "2" });
+    expect(q(".viewing")!.hidden).toBe(true);
+  });
+
+  it("a card thumbnail opens the detail sheet inside the panel and Add to cart posts the picked variant", async () => {
+    const card = {
+      id: "gid://shopify/Product/1", title: "Mug", imageUrl: null, url: "https://demo.example/products/mug", currency: "USD", available: true,
+      action: "add", stock: { kind: "in_stock" }, price: "5.00", compareAtPrice: null, moreVariants: false,
+      variants: [{ id: "77", title: "Default Title", options: [{ name: "Title", value: "Default Title" }], available: true, stock: { kind: "in_stock" }, price: "5.00", compareAtPrice: null }],
+    };
+    const { renderCards: real } = await import("../../widget/src/cards");
+    renderCards = vi.fn<Renderers["renderCards"]>(real as never);
+    const fetchMock = vi.fn<typeof fetch>(async (url) =>
+      String(url).endsWith("/cart.js") ? jsonResponse(200, { items: [] }) : jsonResponse(200, { items: [] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const api = mockApi({ send: vi.fn(async () => sseResponse([ev("product", card), ev("done", { conversationToken: "t1", messageId: "m1" })])) });
+    await setup(api, config(), pageCtx({ cartAddUrl: "https://demo.example/cart/add.js" })).open();
+    await type("a mug");
+    q<HTMLButtonElement>(".ac-tile")!.click();
+    expect(q(".panel > .ac-sheet")).not.toBeNull();
+    expect(q(".log")!.hasAttribute("inert")).toBe(true);
+    qa(".ac-sheet button").find((b) => b.textContent === "Add to cart")!.click();
+    await flush();
+    const add = fetchMock.mock.calls.find(([u]) => String(u).includes("/cart/add"))!;
+    expect(JSON.parse(String(add[1]!.body))).toMatchObject({ items: [{ id: 77 }] });
+    q<HTMLButtonElement>(".ac-sheet__back")!.click();
+    expect(q(".log")!.hasAttribute("inert")).toBe(false);
+  });
+
+  it("header actions: cart link, New chat and close", async () => {
+    await setup(mockApi(), config(), pageCtx({ cartUrl: "https://demo.example/cart" })).open();
+    expect(q<HTMLAnchorElement>("a.cart")!.getAttribute("href")).toBe("https://demo.example/cart");
+    expect(q<HTMLAnchorElement>("a.cart")!.getAttribute("aria-label")).toBe("Cart");
+    expect(q("button.newchat")!.getAttribute("aria-label")).toBe("New chat");
+    expect(q<HTMLButtonElement>("button.close")!.hidden).toBe(false);
+  });
+
+  it("the cart link is hidden when there is no cart URL (the hosted page)", async () => {
+    await setup(mockApi(), config(), pageCtx({ cartUrl: "", hosted: true })).open();
+    expect(q<HTMLAnchorElement>("a.cart")!.hidden).toBe(true);
+  });
+
+  it("the placeholder is 'Ask a question…' until the first message, then 'Continue the conversation'", async () => {
+    const api = mockApi({ send: vi.fn(async () => sseResponse([ev("text", { delta: "Hi" }), ev("done", { conversationToken: "t1", messageId: "m1" })])) });
+    await setup(api).open();
+    expect(input().placeholder).toBe("Ask a question…");
+    await type("hello");
+    expect(input().placeholder).toBe("Continue the conversation");
+    q<HTMLButtonElement>("button.newchat")!.click();
+    expect(input().placeholder).toBe("Ask a question…");
+  });
+
+  it("a chat with history starts on 'Continue the conversation'", async () => {
+    localStorage.setItem(TOKEN_KEY, "tok");
+    const api = mockApi({ history: vi.fn(async () => [{ id: "u", role: "user", content: "x", status: "ok", cards: [], rating: null }] as HistoryItem[]) });
+    await setup(api).open();
+    expect(input().placeholder).toBe("Continue the conversation");
+  });
+
+  it("plain-text answers and outlined shopper pills are styled at class level", () => {
+    expect(CSS).toMatch(/\.msg\.user\{[^}]*border:1px solid[^}]*background:transparent/);
+    expect(CSS).toMatch(/\.msg\.user\{[^}]*align-self:flex-end/);
+    expect(CSS).not.toMatch(/\.msg\.bot \.txt\{[^}]*(background|border)/);
   });
 
   it("uses the avatar image when the config has one", async () => {
@@ -685,7 +797,7 @@ describe("i18n (UD18)", () => {
     expect(sendBtn().getAttribute("aria-label")).toBe("Senden");
     expect(q(".notice")!.textContent).toContain("Du chattest mit einem KI-Assistenten.");
     expect(q(".welcome")!.textContent).toBe("Hi! Ask me anything.");
-    expect(q(".name")!.textContent).toBe("Demo Store");
+    expect(q(".name")!.textContent).toBe("Ihr Demo Store-Experte");
   });
 });
 
@@ -836,22 +948,21 @@ describe("drawer mode and send-on-open (the Ask our AI agent block)", () => {
   const done = () => vi.fn(async () => sseResponse([ev("done", { conversationToken: "t", messageId: null })]));
   const panelEl = () => q(".panel")!;
 
-  it("a drawer shows the block's eyebrow and heading instead of the assistant, as text", async () => {
+  it("a drawer accepts the block's title but shows the same header as everywhere, with the AI line", async () => {
     await setup(mockApi()).open({ mode: "drawer", title: { eyebrow: "<b>More</b>", heading: "Ask <img src=x onerror=alert(1)>" } });
     expect(panelEl().classList.contains("drawer")).toBe(true);
-    expect(q(".hd .name")!.textContent).toBe("Ask <img src=x onerror=alert(1)>");
-    expect(q(".hd .sub")!.textContent).toBe("<b>More</b>");
-    expect(sh().querySelector(".hd img, .hd b")).toBeNull(); // no markup came from the strings
+    expect(q(".hd .name")!.textContent).toBe("Your Demo Store expert");
+    expect(q(".hd .sub")!.textContent).toBe("AI shopping assistant");
+    expect(sh().querySelector(".hd img, .hd b")).toBeNull();
   });
 
-  it("a drawer keeps the fixed AI line under the merchant's eyebrow and heading; the floating header shows it as the subtitle", async () => {
+  it("the AI line is in the header in the drawer and in the floating panel", async () => {
     const p = setup(mockApi());
     await p.open({ mode: "drawer", title });
-    expect(q(".hd .ai")!.textContent).toBe("AI shopping assistant");
-    expect(panelEl().classList.contains("titled")).toBe(true); // the CSS shows .ai only in the titled drawer header
-    await p.open({});
-    expect(panelEl().classList.contains("titled")).toBe(false);
     expect(q(".hd .sub")!.textContent).toBe("AI shopping assistant");
+    await p.open({});
+    expect(q(".hd .sub")!.textContent).toBe("AI shopping assistant");
+    expect(CSS).not.toMatch(/\.sub\{[^}]*display:none/);
   });
 
   it("the dialog is described by the AI notice, so a screen reader announces it on open, in both modes", async () => {
@@ -870,7 +981,7 @@ describe("drawer mode and send-on-open (the Ask our AI agent block)", () => {
     await p.open({ mode: "drawer", title });
     await p.open({});
     expect(panelEl().classList.contains("drawer")).toBe(false);
-    expect(q(".hd .name")!.textContent).toBe("Demo Store");
+    expect(q(".hd .name")!.textContent).toBe("Your Demo Store expert");
     expect(q(".hd .sub")!.textContent).toBe("AI shopping assistant");
   });
 
