@@ -7,11 +7,12 @@
 //   - 413: `too_long`; an `error` event: `unavailable` with the token it carries (`capped` for code daily_cap); anything else: `unavailable`.
 // The server's first event is `meta` { conversationToken } (D84): passed on at once, so a Delete chat during the very
 // first answer knows which conversation to delete.
-import type { Card, WidgetApi } from "../../../src/lib/widget-contract";
+import type { Card, StatusStep, WidgetApi } from "../../../src/lib/widget-contract";
 import { parseSse } from "./sse";
 
 export type TurnEvent =
   | { kind: "meta"; token: string }
+  | { kind: "status"; step: StatusStep }
   | { kind: "text"; delta: string }
   | { kind: "card"; card: Card }
   | { kind: "replace" }
@@ -25,6 +26,8 @@ export type TurnOutcome =
   | { kind: "capped"; token: string | null }
   | { kind: "offline" }
   | { kind: "aborted" };
+
+const STEPS: readonly string[] = ["understanding", "searching", "checking", "policies", "collection", "orders", "writing"] satisfies StatusStep[];
 
 export type SendArgs = Parameters<WidgetApi["send"]>[0];
 
@@ -87,6 +90,9 @@ export async function runSend(
         const d = (data ?? {}) as Record<string, unknown>;
         if (event === "meta") {
           if (typeof d.conversationToken === "string") on({ kind: "meta", token: d.conversationToken });
+        } else if (event === "status") {
+          // An unknown step (a newer server) is ignored.
+          if (typeof d.step === "string" && STEPS.includes(d.step)) on({ kind: "status", step: d.step as StatusStep });
         } else if (event === "text" && typeof d.delta === "string") {
           shown = true;
           on({ kind: "text", delta: d.delta });

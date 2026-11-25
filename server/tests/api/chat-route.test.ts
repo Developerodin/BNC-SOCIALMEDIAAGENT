@@ -14,6 +14,8 @@ vi.mock("openai", () => ({
 const search = vi.fn();
 vi.mock("@/lib/retrieval", () => ({ search: (...a: unknown[]) => search(...a) }));
 const rewriteQuery = vi.fn();
+const askPolicies = vi.fn();
+vi.mock("@/lib/shopify/storefront-mcp", async (orig) => ({ ...(await orig<object>()), askPolicies: (...a: unknown[]) => askPolicies(...a) }));
 vi.mock("@/lib/chat/rewrite", () => ({ rewriteQuery: (...a: unknown[]) => rewriteQuery(...a) }));
 const liveCheck = vi.fn();
 vi.mock("@/lib/shopify/live-products", async (orig) => ({
@@ -69,7 +71,9 @@ function parseSse(raw: string): Ev[] {
   }
   return out;
 }
-const readAll = async (res: Response) => parseSse(await res.text());
+/** The events without `status` (a live hint the other tests don't assert); readWithStatus keeps them. */
+const readWithStatus = async (res: Response) => parseSse(await res.text());
+const readAll = async (res: Response) => (await readWithStatus(res)).filter((e) => e.event !== "status");
 /** Task 22: the id of the conversation's latest assistant row, which `done` carries as messageId. */
 async function lastAssistantId(conversationId: string | null) {
   const [row] = await admin`select id from messages where conversation_id = ${conversationId} and role = 'assistant' order by created_at desc limit 1`;
@@ -105,6 +109,7 @@ beforeEach(() => {
   search.mockReset();
   rewriteQuery.mockReset();
   liveCheck.mockReset();
+  askPolicies.mockReset();
   rewriteQuery.mockImplementation(async (o: { message: string }) => ({ query: o.message, includeGiftCards: false, tokens: { input: 1, output: 1 } }));
   search.mockResolvedValue([]);
   liveCheck.mockResolvedValue({ ok: true, products: new Map() });
@@ -430,6 +435,35 @@ test("a repeated requestId after done replays the saved answer as SSE (meta, tex
   noCalls();
   const rows = await admin`select role from messages where request_id = ${requestId} or (role = 'assistant' and content = 'Here you go: ')`;
   expect(rows.map((r) => r.role).sort()).toEqual(["assistant", "user"]);
+});
+
+const steps = (events: Ev[]) => events.filter((e) => e.event === "status").map((e) => e.data.step);
+
+test("status steps come in order for a normal turn, right after meta and before the first text", async () => {
+  const events = await readWithStatus(await post({ shop: shopA, message: "any tees?" }));
+  expect(events.map((e) => e.event)).toEqual(["meta", "status", "status", "status", "status", "text", "text", "done"]);
+  expect(steps(events)).toEqual(["understanding", "searching", "checking", "writing"]);
+});
+
+test("a tool turn adds the tool's step, never the same step twice in a row", async () => {
+  askPolicies.mockResolvedValue("30 days");
+  const call = (name: string, args: object) => async () =>
+    (async function* () {
+      yield { type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 1 }, output: [{ type: "function_call", call_id: "c1", name, arguments: JSON.stringify(args) }] } };
+    })();
+  create.mockImplementationOnce(call("store_policies", { query: "returns?" })).mockImplementation(fakeStream(["Thirty days."]));
+  const events = await readWithStatus(await post({ shop: shopA, message: "returns?" }));
+  expect(steps(events)).toEqual(["understanding", "searching", "checking", "policies", "writing"]);
+  expect(events.at(-1)!.event).toBe("done");
+});
+
+test("a replayed answer carries no status events", async () => {
+  const tok = await newConversation();
+  const requestId = crypto.randomUUID();
+  const first = await readWithStatus(await post({ shop: shopA, message: "tee?", conversationToken: tok, requestId }));
+  expect(steps(first).length).toBeGreaterThan(0);
+  const again = await readWithStatus(await post({ shop: shopA, message: "tee?", conversationToken: tok, requestId }));
+  expect(steps(again)).toEqual([]);
 });
 
 test("a repeated requestId while its turn runs → 409 turn_in_progress", async () => {

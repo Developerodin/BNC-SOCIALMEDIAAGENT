@@ -58,10 +58,10 @@ export const CSS =
   ".note{align-self:flex-start;max-width:100%;font-size:13px;line-height:18px;color:#555;overflow-wrap:anywhere}" +
   ".note a{color:inherit;text-decoration:underline}" +
   ".cards{max-width:100%}" +
-  ".typing{display:flex;gap:4px;padding:8px 0;align-self:flex-start}" +
-  ".typing span{width:6px;height:6px;border-radius:3px;background:#777;animation:b 1s infinite}" +
-  ".typing span:nth-child(2){animation-delay:.15s}.typing span:nth-child(3){animation-delay:.3s}" +
-  "@keyframes b{50%{opacity:.25}}" +
+  ".status{display:flex;align-items:center;gap:8px;padding:8px 0;align-self:flex-start;font-size:14px;line-height:20px;color:#666}" +
+  ".status svg{flex:none;width:16px;height:16px}" +
+  ".stx{background:linear-gradient(90deg,#666 0,#666 40%,#bbb 50%,#666 60%,#666 100%) 0 0/200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:sh 2s linear infinite}" +
+  "@keyframes sh{from{background-position:200% 0}to{background-position:-200% 0}}" +
   ".err{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;border-radius:10px;background:#fdecec;color:#8a1c1c;font-size:14px}" +
   ".err .retry{padding:4px 10px;border:1px solid currentColor;border-radius:12px}" +
   ".askcart-feedback{display:flex;gap:4px}" +
@@ -81,4 +81,4 @@ export const CSS =
   ".notice{font-size:12px;line-height:16px;color:#666;padding-top:8px;text-align:center}" +
   ".notice a{color:inherit;text-decoration:underline}" +
   ".sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}" +
-  "@media (prefers-reduced-motion:reduce){.panel,.typing span{animation:none}.panel.drawer{animation:none}.panel{transition:none}.sugg button{transition:none}}";
+  "@media (prefers-reduced-motion:reduce){.panel{animation:none}.stx{animation:none;background:none;-webkit-text-fill-color:currentColor}.panel.drawer{animation:none}.panel{transition:none}.sugg button{transition:none}}";

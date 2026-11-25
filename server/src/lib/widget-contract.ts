@@ -58,6 +58,13 @@ export type Card = import("./chat/turn").Card;
  */
 export type MetaEvent = { conversationToken: string };
 
+/**
+ * The SSE `status` payload: what the assistant is doing right now, for a live status line while the shopper waits. Optional to
+ * show; clients ignore steps they don't know. Never sent on a replayed answer.
+ */
+export type StatusStep = "understanding" | "searching" | "checking" | "policies" | "collection" | "orders" | "writing";
+export type StatusEvent = { step: StatusStep };
+
 export type DoneEvent = { conversationToken: string; messageId: string | null }; // messageId added in Task 22
 
 export type HistoryItem = {

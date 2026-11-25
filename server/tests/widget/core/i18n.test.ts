@@ -28,6 +28,17 @@ describe("i18n", () => {
     expect(dict.expert).toContain("{store}");
   });
 
+  it.each(["en", "fr", "de", "es", "it", "nl"] as const)("%s has a status line for every step", (lang) => {
+    const dict: Record<string, string> = DICTS[lang];
+    for (const s of ["understanding", "searching", "checking", "policies", "collection", "orders", "writing"]) expect(dict[`status_${s}`]?.trim(), `${lang}.${s}`).toBeTruthy();
+  });
+
+  it("English status lines are exact", () => {
+    expect([DICTS.en.status_understanding, DICTS.en.status_searching, DICTS.en.status_checking, DICTS.en.status_policies, DICTS.en.status_collection, DICTS.en.status_orders, DICTS.en.status_writing]).toEqual([
+      "Understanding your question…", "Searching the catalogue…", "Checking prices and stock…", "Looking up store policies…", "Browsing the collection…", "Checking your orders…", "Writing the answer…",
+    ]);
+  });
+
   it("fills variables, falls back to English, and to the key", () => {
     expect(translator("en")("only_left", { n: 3 })).toBe("Only 3 left");
     expect(translator("fr-FR")("only_left", { n: 3 })).toBe(DICTS.fr.only_left.replace("{n}", "3"));

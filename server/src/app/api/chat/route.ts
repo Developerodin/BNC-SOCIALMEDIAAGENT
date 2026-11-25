@@ -4,6 +4,7 @@ import { MAX_INPUT_CHARS } from "@/lib/chat/limits";
 import { PING, PING_MS, SSE_HEADERS, sseEvent } from "@/lib/chat/sse";
 import { UUID } from "@/lib/chat/token";
 import { openTurn, runTurn } from "@/lib/chat/turn";
+import type { StatusEvent } from "@/lib/widget-contract";
 
 // POST /api/chat: one chat turn, streamed as SSE (§7.6, Task 19). No `runtime` export: cacheComponents
 // is on, and it doesn't support the segment option (route handlers run on Node.js by default).
@@ -91,6 +92,7 @@ export async function POST(req: Request) {
         owned: opened.owned,
         signal: ac.signal,
         send: (event, data) => write(sseEvent(event, data)),
+        onStatus: (step) => write(sseEvent("status", { step } satisfies StatusEvent)),
       })
         .catch((err) => console.error("chat stream failed", { storeId: store.id, error: err instanceof Error ? err.name : typeof err }))
         .finally(() => {

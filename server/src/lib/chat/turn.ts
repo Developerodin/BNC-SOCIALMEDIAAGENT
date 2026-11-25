@@ -15,6 +15,7 @@ import { buildInput, LARGE_SYSTEM_PROMPT, SYSTEM_PROMPT, sanitizeData, type Orde
 import { rewriteQuery, type ChatTurn } from "./rewrite";
 import { runTool, toolDefs, type ToolContext } from "./tools";
 import type { SseEvent } from "./sse";
+import type { StatusStep } from "@/lib/widget-contract";
 import { mintToken, tokenHash, verifyToken } from "./token";
 
 // One chat turn (Task 19): openTurn does the DB work before the stream (one forStore), runTurn does
@@ -430,6 +431,17 @@ async function checkProducts(
   return { ok: false, cards: await fallbackCards(store.id, ids, { includeGiftCards: opts.includeGiftCards }) };
 }
 
+// The status line's step for each tool the model can call (an unknown tool reads as searching).
+const TOOL_STEP: Record<string, StatusStep> = {
+  store_policies: "policies",
+  browse_collection: "collection",
+  order_status: "orders",
+  search_products: "searching",
+  store_overview: "searching",
+  product_details: "checking",
+  refresh_product: "checking",
+};
+
 /**
  * Runs the turn after openTurn and sends its events: `text`, `product`, then `done` ({ conversationToken, messageId }, the
  * saved assistant row's id), or `error` on failure. Never throws.
@@ -454,6 +466,8 @@ export async function runTurn(t: {
   owned?: boolean;
   signal: AbortSignal;
   send: (event: SseEvent, data: unknown) => void;
+  /** Optional live status (SSE `status`); never the same step twice in a row. */
+  onStatus?: (step: StatusStep) => void;
 }): Promise<void> {
   const { store, signal } = t;
   const storeId = store.id;
@@ -462,6 +476,12 @@ export async function runTurn(t: {
   const country = t.country && COUNTRY.test(t.country) ? t.country : undefined;
   const name = store.name ?? store.shopDomain;
   let released = false;
+  let lastStep: StatusStep | undefined;
+  const status = (step: StatusStep) => {
+    if (step === lastStep) return;
+    lastStep = step;
+    t.onStatus?.(step);
+  };
   // Per-turn payload map for an mcp store (catalog-turn.ts); undefined for installed stores, whose path is unchanged.
   const catalog = store.mode === "mcp" ? newTurnCatalog(store, country) : undefined;
 
@@ -474,6 +494,7 @@ export async function runTurn(t: {
       t.send("error", { message: DAILY_CAP_MESSAGE, code: "daily_cap", conversationToken: t.token });
       return;
     }
+    status("understanding");
     const rw = await rewriteQuery({
       message: t.message,
       history: t.history,
@@ -483,6 +504,7 @@ export async function runTurn(t: {
     });
     // D89: the store's search provider (ours by default, or Shopify's Catalog MCP).
     const wide = !!rw.budget || !!rw.sort;
+    status("searching");
     const found = await searchProducts(store, rw.query, wide ? PRICE_SEARCH_K : SEARCH_K, {
       productId: currentProductId,
       includeGiftCards: rw.includeGiftCards,
@@ -490,6 +512,7 @@ export async function runTurn(t: {
       catalog,
     });
     const ids = [...new Set([...found.map((h) => h.productId), ...(currentProductId ? [currentProductId] : [])])];
+    status("checking");
     const checked = await checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal, catalog });
     // D87: drop products outside the budget and order by price, by the live price (never the index's).
     const priced = applyBudget({ hits: found, live: checked, budget: rw.budget, sort: rw.sort, currency: store.currencyCode });
@@ -527,11 +550,11 @@ export async function runTurn(t: {
       input,
       // A budget or price-order question has already been filtered and sorted by applyBudget (D87); a second search would
       // bypass that (a $200 boot under "boots under $50"), so it only gets store_policies.
-      tools: { defs: wide ? defs.filter((d) => d.name !== "search_products") : defs, run: (toolName, args) => runTool(toolName, args, toolCtx) },
+      tools: { defs: wide ? defs.filter((d) => d.name !== "search_products") : defs, run: (toolName, args) => (status(TOOL_STEP[toolName] ?? "searching"), runTool(toolName, args, toolCtx)) },
       allowed,
       storeId,
       signal,
-      onText: (delta) => t.send("text", { delta }),
+      onText: (delta) => (status("writing"), t.send("text", { delta })),
       onProduct: (id) => {
         // `allowed` holds only products in `live`, so the lookup always succeeds.
         const card = live.ok ? liveCard(live.products.get(id)!, threshold) : fallbackCard(live.cards.get(id)!);

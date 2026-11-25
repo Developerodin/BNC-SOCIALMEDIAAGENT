@@ -11,7 +11,7 @@ export const SSE_HEADERS = {
 export const PING = ": ping\n\n";
 export const PING_MS = 15_000;
 
-export type SseEvent = "meta" | "text" | "product" | "error" | "done";
+export type SseEvent = "meta" | "status" | "text" | "product" | "error" | "done";
 
 export function sseEvent(event: SseEvent, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;

@@ -667,20 +667,53 @@ describe("header and empty state", () => {
     expect(qa(".sugg button").map((b) => b.textContent)).toEqual(["A?", "B?", "C?"]);
   });
 
-  it("the typing dots go away at the first token", async () => {
+  it("the status line goes away at the first token", async () => {
     const api = mockApi({ send: vi.fn(async () => sseResponse([ev("text", { delta: "Hi" }), ev("done", { conversationToken: "t1", messageId: "m1" })])) });
     await setup(api).open();
     await type("hello");
-    expect(q(".typing")).toBeNull();
+    expect(q(".status")).toBeNull();
     expect(assistantTexts()).toEqual(["Hi"]);
   });
+
+  it("the status row shows the default text at once, follows status events (skipping unknown steps) and is replaced by the first text", async () => {
+    let c!: ReadableStreamDefaultController<Uint8Array>;
+    const enc = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({ start: (k) => void (c = k) });
+    const api = mockApi({ send: vi.fn(async () => new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } })) });
+    await setup(api).open();
+    await type("hello");
+    const t = translator("en");
+    const row = () => q(".status")!;
+    expect(row().textContent).toBe("Understanding your question…");
+    expect(row().getAttribute("role")).toBe("status");
+    expect(row().getAttribute("aria-live")).toBe("polite");
+    expect(row().querySelector("svg")!.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    for (const [step, key] of [["searching", "status_searching"], ["checking", "status_checking"], ["policies", "status_policies"], ["collection", "status_collection"], ["orders", "status_orders"], ["writing", "status_writing"]] as const) {
+      c.enqueue(enc.encode(ev("status", { step })));
+      await flush();
+      expect(row().textContent).toBe(t(key));
+    }
+    expect(row().textContent).toBe("Writing the answer…");
+    c.enqueue(enc.encode(ev("status", { step: "teleporting" })));
+    await flush();
+    expect(row().textContent).toBe("Writing the answer…");
+    c.enqueue(enc.encode(ev("text", { delta: "Hi" })));
+    await flush();
+    expect(q(".status")).toBeNull();
+    expect(assistantTexts()).toEqual(["Hi"]);
+    c.enqueue(enc.encode(ev("done", { conversationToken: "t1", messageId: "m1" })));
+    c.close();
+    await flush();
+  });
+
 
   it("every animation in the panel CSS is switched off under prefers-reduced-motion", async () => {
     await setup(mockApi()).open();
     const css = q("style")!.textContent!;
     const reduced = css.slice(css.indexOf("prefers-reduced-motion"));
     expect(css).toContain("animation:in");
-    expect(reduced).toContain(".panel,.typing span{animation:none}");
+    expect(reduced).toContain(".panel{animation:none}");
+    expect(reduced).toContain(".stx{animation:none;background:none");
   });
 });
 

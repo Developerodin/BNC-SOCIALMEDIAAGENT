@@ -352,6 +352,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
       { message, token: tokens.get(), requestId, productId, country: page.country, currency: page.currency, pageUrl: location.href, signal: ac.signal },
       (e) => {
         if (e.kind === "meta") tokens.set(e.token);
+        else if (e.kind === "status") answer.status(e.step);
         else if (e.kind === "text") answer.append(e.delta);
         else if (e.kind === "card") answer.card(e.card);
         else if (e.kind === "replace") answer.reset();

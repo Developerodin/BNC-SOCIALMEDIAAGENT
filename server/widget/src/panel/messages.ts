@@ -1,8 +1,9 @@
 // The message list (Task 30): user and assistant bubbles, the typing indicator, errors with Retry, and notes.
 // Text only: every string from the model, the merchant or the server goes through textContent (§7.7, D36); answers get
 // bold and bullets from rich.ts, which builds nodes the same way.
-import type { Card, CardsRenderer, FeedbackRenderer, HistoryItem, WidgetCtx } from "../../../src/lib/widget-contract";
+import type { Card, CardsRenderer, FeedbackRenderer, HistoryItem, StatusStep, WidgetCtx } from "../../../src/lib/widget-contract";
 import { resolveHttpsUrl } from "../core/format";
+import { icon } from "./icons";
 import { renderRich } from "./rich";
 
 const el = (tag: string, cls: string, text?: string) => {
@@ -23,6 +24,8 @@ export type Renderers = {
 export type Answer = {
   el: HTMLElement;
   append(delta: string): void;
+  /** `status`: what the assistant is doing, shown until the first text. */
+  status(step: StatusStep): void;
   card(card: Card): void;
   /** The retried stream replaces whatever the dropped one showed (Review Focus 5). */
   reset(): void;
@@ -98,11 +101,14 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
 
   function answer(): Answer {
     const wrap = add(el("div", "msg bot pending"));
-    const typing = el("div", "typing");
-    typing.setAttribute("aria-label", ctx.t("typing"));
-    typing.setAttribute("role", "img");
-    typing.append(el("span", ""), el("span", ""), el("span", ""));
+    // The status line: shown at once ("Understanding your question…"), updated by `status` events, removed at the first token.
+    const typing = el("div", "status");
+    typing.setAttribute("role", "status");
+    typing.setAttribute("aria-live", "polite");
+    const stx = el("span", "stx", ctx.t("status_understanding"));
+    typing.append(icon("sparkle"), stx);
     wrap.append(typing);
+    let step: StatusStep = "understanding";
     let txt: HTMLElement | null = null;
     let text = "";
     let cards: Card[] = [];
@@ -112,11 +118,16 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
         if (!txt) {
           txt = el("div", "txt");
           wrap.prepend(txt);
-          typing.remove(); // the dots are for the wait before the first token (a retried stream starts without them)
+          typing.remove(); // the status line is for the wait before the first token (a retried stream starts without it)
         }
         text += delta;
         renderRich(txt, text);
         scroll();
+      },
+      status(s) {
+        if (s === step || !typing.isConnected) return; // a repeat isn't announced again
+        step = s;
+        stx.textContent = ctx.t(`status_${s}`);
       },
       card(c) {
         cards.push(c);

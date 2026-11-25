@@ -141,6 +141,7 @@ Lines starting with `:` are keep-alive pings every 15 seconds; ignore them.
 | Event | Data | What to do |
 |---|---|---|
 | `meta` | `{ "conversationToken": "…" }` | Always first. Save the token. |
+| `status` | `{ "step": "…" }`, one of `understanding`, `searching`, `checking`, `policies`, `collection`, `orders`, `writing` | Optional: what the assistant is doing now, for a live status line until the first `text`. Never repeated twice in a row, never sent on a replayed answer. Ignore steps you do not know. |
 | `text` | `{ "delta": "…" }` | Append to the answer bubble. |
 | `product` | a **Card** (below) | Show a product card. |
 | `error` | `{ "message": "…", "conversationToken": "…" }` | The answer failed; show `message` (it's written for shoppers). |
