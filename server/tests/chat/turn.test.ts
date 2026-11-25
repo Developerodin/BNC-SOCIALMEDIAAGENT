@@ -154,6 +154,17 @@ test("openTurn with a valid token continues that conversation and returns the ea
   expect(n[0].n).toBe(1);
 });
 
+test("openTurn's history gives an answer's card titles in order, so 'the second one' has a referent", async () => {
+  const st = await loadStore();
+  const first = await start("show me boards", st);
+  await admin`update conversations set busy_until = null where id = ${first.conversationId}`;
+  const cards = [{ id: "gid://shopify/Product/1", title: "Board A" }, { id: "gid://shopify/Product/2", title: "Board B" }];
+  await admin`insert into messages (store_id, conversation_id, role, content, cards) values (${st.id}, ${first.conversationId}, 'assistant', 'Here are two.', ${JSON.stringify(cards)}::jsonb)`;
+  const again = await turn.openTurn(st, { token: first.token, message: "the second one", pageUrl: null });
+  if (!again.ok || again.replay) throw new Error("expected a turn");
+  expect(again.history[1]).toEqual({ role: "assistant", content: "Here are two.\n(Product cards shown with this answer, in order: 1. Board A; 2. Board B)" });
+});
+
 test("openTurn refuses a tampered token, and a token of another store, with 401 and saves nothing", async () => {
   const st = await loadStore();
   const first = await start("first", st);

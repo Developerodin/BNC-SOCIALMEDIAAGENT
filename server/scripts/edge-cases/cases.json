@@ -476,5 +476,73 @@
    "how much is the Minimal Snowboard?"
   ],
   "expect": "The Minimal Snowboard is ACTIVE but unpublished (not on the storefront): bot should say it is not available/not sold, not invent a price."
+ },
+ {
+  "id": "X01",
+  "group": "Sales",
+  "messages": [
+   "I need a gift"
+  ],
+  "expect": "Broad ask: a few suggestions with cards (at most three) and ONE short question about what matters most (who it is for, budget or style); no more than one question."
+ },
+ {
+  "id": "X02",
+  "group": "Sales",
+  "messages": [
+   "just browsing"
+  ],
+  "expect": "Friendly, no pressure; no push, no invented offers or urgency; at most one light invitation to ask."
+ },
+ {
+  "id": "X03",
+  "group": "Sales",
+  "messages": [
+   "what snowboards do you have?",
+   "no thanks, I'm not interested in any of those"
+  ],
+  "expect": "Turn 2: accepts the no politely and stops suggesting products (no new cards, no further push); simply offers help."
+ },
+ {
+  "id": "X04",
+  "group": "Sales",
+  "viewingProductHandle": "the-complete-snowboard",
+  "messages": [
+   "anything that goes with this?"
+  ],
+  "expect": "Suggests one related item from the store (for example ski wax) with its card and a reason, mentions no invented discounts or popularity; at most one next-step question."
+ },
+ {
+  "id": "X05",
+  "group": "Sales",
+  "viewingProductHandle": "the-complete-snowboard",
+  "messages": [
+   "is it worth the extra money?"
+  ],
+  "expect": "Answers from the store data and live prices only: what it offers over cheaper boards, a clear view with a short reason, says what isn't known; no invented reviews or popularity."
+ },
+ {
+  "id": "X06",
+  "group": "Sales",
+  "messages": [
+   "I'm a beginner, my budget is 1000 and I want something for powder"
+  ],
+  "expect": "Only products at or under 1000 INR; leads with the best fit and explains why in the shopper's terms; at most three options; says what isn't known about powder if the data doesn't say; one next step."
+ },
+ {
+  "id": "X07",
+  "group": "Sales",
+  "messages": [
+   "which one is the best snowboard?"
+  ],
+  "expect": "Gives a clear pick with a short reason based on the store data, says what isn't known, no invented popularity or reviews ('best seller', 'customers love'); at most three options."
+ },
+ {
+  "id": "X08",
+  "group": "Sales",
+  "messages": [
+   "show me snowboards",
+   "that's too expensive"
+  ],
+  "expect": "Turn 2: offers a genuinely cheaper product with a card (live prices) or says honestly none is; no invented discounts; no pushing a pricier one."
  }
 ]

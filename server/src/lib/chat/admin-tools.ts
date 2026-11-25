@@ -8,7 +8,7 @@ import { refreshProduct } from "@/lib/sync";
 import { MAX_DESCRIPTION_CHARS, numberProducts, productNumber } from "./number-products";
 import { withTimeout } from "./openai";
 import { productBlock, sanitizeData } from "./prompt";
-import type { ToolContext } from "./tools";
+import { searchProductBlocks, type ToolContext } from "./tools";
 
 // Tools that read the store live through the Admin API, offered only for installed stores (mode 'app', so an Admin token
 // exists; turn.ts leaves them out for MCP-only stores, and tools.ts refuses them when the turn has a catalog):
@@ -277,6 +277,10 @@ async function browse(collectionArg: unknown, pageArg: unknown, ctx: ToolContext
   const o = await overviewOf(ctx);
   const c = bestCollection(said, o.collections);
   if (!c) {
+    // No such collection: the shopper's words are likely a category or product type, so search them (live-checked, numbered
+    // and budget-filtered like search_products). The collection names are only given when that finds nothing.
+    const s = await searchProductBlocks(said, ctx);
+    if (s.found || s.budgetEmpty) return `The store has no collection called "${sanitizeData(said).slice(0, 80)}", so these are search results for those words, not a collection:\n\n${s.text}`;
     const titles = o.collections.map((x) => x.title.slice(0, 80)).join("; ");
     return sanitizeData(`No collection matches that name. The store's collections: ${titles || "none"}${o.moreCollections ? "; and more not listed" : ""}. Ask the shopper which one they mean.`).slice(0, MAX_RESULT_CHARS);
   }

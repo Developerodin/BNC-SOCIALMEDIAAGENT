@@ -7,6 +7,9 @@ import { node, newStore } from "../helpers/seed";
 // Admin GraphQL is mocked; refresh_product writes to the real test database through the sync's own code.
 
 vi.mock("@/lib/shopify/admin", () => ({ adminGraphql: vi.fn() }));
+// browse_collection falls back to a product search when no collection matches.
+const searchProducts = vi.fn();
+vi.mock("@/lib/search-provider", () => ({ searchProducts: (...a: unknown[]) => searchProducts(...a) }));
 
 let admin: ReturnType<typeof postgres>;
 let tools: typeof import("@/lib/chat/tools");
@@ -68,6 +71,7 @@ afterAll(async () => {
 beforeEach(async () => {
   storeId = await newStore(admin); // a new store per test: the in-memory caches are keyed by store
   gql.mockReset();
+  searchProducts.mockReset();
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 afterEach(() => {
@@ -276,8 +280,37 @@ test("browse_collection skips products that are not active", async () => {
   expect(inner(out)).toContain("P101");
 });
 
+test("browse_collection with no matching collection searches the same words and says it is a search", async () => {
+  shopify([]);
+  searchProducts.mockResolvedValue([{ productId: gid(1), content: "wax text" }, { productId: gid(7), content: "snowboard text" }]);
+  const c = ctx();
+  const out = inner(await run("browse_collection", { collection: "snowboards", page: 1 }, c));
+  expect(searchProducts).toHaveBeenCalledWith(expect.anything(), "snowboards", 8, expect.anything());
+  expect(out).toMatch(/no collection called "snowboards".*search results for those words, not a collection/);
+  expect(out).toContain("#1 Wax");
+  expect(out).toContain("#2 P7");
+  expect(c.allowed.get("2")).toBe(gid(7));
+});
+
+test("the browse fallback applies the turn's budget and price order, with the note", async () => {
+  shopify([]);
+  const priced = (n: number, price: string) => ({ ...live(n, `P${n}`), variants: [{ ...live(n, "").variants[0], price }] }) as unknown as LiveProduct;
+  searchProducts.mockResolvedValue([7, 8, 9].map((n) => ({ productId: gid(n), content: `t${n}` })));
+  const prices: Record<string, string> = { [gid(7)]: "900.00", [gid(8)]: "300.00", [gid(9)]: "100.00" };
+  const check = vi.fn(async (ids: string[]) => ({ ok: true as const, products: new Map(ids.map((id) => [id, priced(Number(id.split("/").pop()), prices[id])])) }));
+  const c = ctx({ check, budget: { budget: { max: 500 }, sort: "cheapest", currency: "INR" } });
+  const out = inner(await run("browse_collection", { collection: "snowboards", page: 1 }, c));
+  expect(out).not.toContain("P7");
+  expect(out.indexOf("P9")).toBeLessThan(out.indexOf("P8"));
+  expect(out).toContain("cheapest to the most expensive");
+  // Nothing in budget: said so, and the collection names are not offered instead.
+  const none = inner(await run("browse_collection", { collection: "snowboards", page: 1 }, ctx({ check, budget: { budget: { max: 50 }, sort: null, currency: "INR" } })));
+  expect(none).toMatch(/within the shopper's budget/);
+});
+
 test("browse_collection with no match returns the collection titles; an Admin error returns unavailable", async () => {
   shopify([]);
+  searchProducts.mockResolvedValue([]);
   const out = await run("browse_collection", { collection: "Hats", page: 1 }, ctx());
   expect(inner(out)).toMatch(/No collection matches.*Summer Dresses; Boots/);
   gql.mockReset();
