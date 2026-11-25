@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 // UD18: the Liquid-side strings live in the extension's locale files. Shopify caps each at 15 KB.
-const dir = path.resolve(__dirname, "../../extensions/askcart/locales");
+const dir = path.resolve(__dirname, "../../../shopify/extensions/askcart/locales");
 const LANGS = ["en.default", "fr", "de", "es", "it", "nl"];
 
 function keys(obj: unknown, prefix = ""): string[] {

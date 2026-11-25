@@ -6,7 +6,7 @@ import path from "node:path";
 //   - `block.shopify_attributes` (Shopify's own editor attributes, must stay raw),
 //   - `'key' | t` (Shopify escapes translations unless the key ends in `_html`; none of ours does),
 //   - inside a `{% capture %}` that is itself output through `| escape`: values ending in `| json`, or another capture.
-const blocks = path.resolve(__dirname, "../../extensions/askcart/blocks");
+const blocks = path.resolve(__dirname, "../../../shopify/extensions/askcart/blocks");
 const files = readdirSync(blocks).filter((f) => f.endsWith(".liquid"));
 
 function outputs(src: string) {

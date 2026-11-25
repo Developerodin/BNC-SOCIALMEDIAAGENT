@@ -69,7 +69,7 @@ Options for later (owner's call, not started):
    the embed line and the merchant's consent to keep serving).
 
 ## Working notes
-- **Run locally:** Docker Desktop → `docker compose up -d` → `shopify app dev --config shopify.app.askcart.toml --store
+- **Run locally:** Docker Desktop → `docker compose up -d` (in `server/`) → from the repo root `shopify app dev --config shopify.app.askcart.toml --store
   ask-cart-hv7ufqqy.myshopify.com` (storefront password: Online Store → Preferences → Store access). Open AskCart once
   after each restart (it saves the tunnel URL for the widget). View the real storefront, not `127.0.0.1:9293`.
 - **Agents work in `.claude/worktrees/`**; while those exist `shopify app dev` refuses to start ("only one web

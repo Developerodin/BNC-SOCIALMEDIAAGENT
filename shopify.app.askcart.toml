@@ -3,6 +3,9 @@
 client_id = "c80e516d95dbbe7b654945e4800a4fa0"
 application_url = "https://example.com"
 embedded = true
+# The server (EC2) and the theme app extension (Shopify CDN) live in their own folders.
+web_directories = [ "server" ]
+extension_directories = [ "shopify/extensions/*" ]
 name = "AskCart"
 
 [access_scopes]

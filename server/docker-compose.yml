@@ -1,3 +1,5 @@
+# Keeps the project (and its pgdata volume) named as before the move into server/.
+name: shopifyextension
 services:
   db:
     image: pgvector/pgvector:pg17

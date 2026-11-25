@@ -17,15 +17,25 @@ Built with Next.js 16, TypeScript, Postgres 17 + pgvector, pg-boss jobs and Open
 | Prepare the Shopify App Store submission | [`docs/publish-checklist.md`](docs/publish-checklist.md) |
 | Serve stores without an app install (MCP-only) | [`docs/superpowers/plans/2026-11-24-mcp-only-plan.md`](docs/superpowers/plans/2026-11-24-mcp-only-plan.md) |
 
+## Layout
+
+| Folder | Runs on | What |
+|---|---|---|
+| `server/` | EC2 | Next.js app (chat API, admin, webhooks, jobs), Postgres migrations, widget source, scripts, tests |
+| `shopify/` | Shopify | Theme app extension (`shopify/extensions/askcart`): launcher, widget assets, app embed and blocks |
+| root | — | `shopify.app.askcart.toml` (Shopify CLI entry; points at both folders), `docs/` |
+
 ## Local development (Windows or macOS)
 
 Needs Node 22+, Docker Desktop and the Shopify CLI.
 
 ```bash
+cd server
 npm ci
 cp .env.example .env          # fill in the values (see the comments in the file)
 docker compose up -d          # Postgres + pgvector on localhost:5432
 npx drizzle-kit migrate       # create the tables
+cd ..                         # the Shopify CLI runs from the repo root
 shopify app dev --config shopify.app.askcart.toml --store <your-dev-store>.myshopify.com
 ```
 
@@ -33,7 +43,7 @@ Enter the storefront password when asked (Shopify admin → Online Store → Pre
 the app, then turn on **AskCart chat** in the theme's App embeds and open the storefront (not `127.0.0.1:9293`, which is
 the CLI's separate development theme).
 
-Tests: `npx vitest run` (the `tests/live` files call the real OpenAI API and only run when it is configured).
+In `server/`: tests `npx vitest run` (the `tests/live` files call the real OpenAI API and only run when it is configured).
 Type check: `npx tsc --noEmit -p .` · Lint: `npx eslint src tests widget`.
 
 If Docker stops (for example after a crash), start Docker Desktop and run `docker compose up -d` again.

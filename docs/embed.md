@@ -38,7 +38,7 @@ access). We create its row by hand, then the merchant pastes the tag above into 
 `layout/password.liquid` for a password-protected store):
 
 ```
-npx tsx --env-file=.env --tsconfig tsconfig.json scripts/provision-mcp-store.mts my-store.myshopify.com --name "My Store"
+cd server && npx tsx --env-file=.env --tsconfig tsconfig.json scripts/provision-mcp-store.mts my-store.myshopify.com --name "My Store"
 ```
 
 The script fetches the storefront and prints whether our tag is on the page (check it by hand), reads the currency from

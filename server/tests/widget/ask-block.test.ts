@@ -69,7 +69,7 @@ describe("Ask about this product block (UD5, C25)", () => {
 });
 
 describe("askcart-ask.liquid", () => {
-  const liquid = readFileSync(path.resolve(__dirname, "../../extensions/askcart/blocks/askcart-ask.liquid"), "utf8");
+  const liquid = readFileSync(path.resolve(__dirname, "../../../shopify/extensions/askcart/blocks/askcart-ask.liquid"), "utf8");
   const schema = JSON.parse(liquid.split("{% schema %}")[1].split("{% endschema %}")[0]);
 
   it("is a product-page block that loads askcart-ask.js", () => {

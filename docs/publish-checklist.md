@@ -27,7 +27,7 @@ Legend: ✅ done · 🔄 being built · ❌ to do · ⚠️ needs a decision · 
 - [ ] ✅ Installs from a Shopify surface; OAuth right after install and reinstall; managed install
       (`use_legacy_install_flow = false`) (2.3.x).
 - [ ] ✅ Session tokens through App Bridge for the embedded admin; no third-party cookies (1.1.1).
-- [ ] 🔍 Latest App Bridge, with `app-bridge.js` loaded first (2.2.3). Check `src/app/(embedded)/layout.tsx`.
+- [ ] 🔍 Latest App Bridge, with `app-bridge.js` loaded first (2.2.3). Check `server/src/app/(embedded)/layout.tsx`.
 - [ ] 🔍 GraphQL Admin API only, no REST (2.2.4). Grep for REST calls before submitting.
 - [ ] 🔍 **Expiring offline access tokens** (3.1.2). `store_tokens` has expiry and refresh columns; confirm the
       install requests expiring tokens.
@@ -90,7 +90,7 @@ Legend: ✅ done · 🔄 being built · ❌ to do · ⚠️ needs a decision · 
       The limits are in memory (one instance) and stop honest clients, not a determined abuser.
 - [ ] 🔄 **Chat retention job** (30/90/365 days, D41): being added. Verify old conversations are actually deleted.
 - [ ] 🔄 **`customers/data_request`**: the webhook is acknowledged but exports nothing. For now a manual export with
-      `scripts/export-customer-chats.mjs` (being added) answers a request within Shopify's deadline.
+      `server/scripts/export-customer-chats.mjs` (being added) answers a request within Shopify's deadline.
 - [ ] 🔍 The chat must never show wrong prices or promise stock. Prices and stock come only from live Shopify data
       (prompt rules D37 and D79); keep that true in every new tool.
 - [ ] 🔍 The AI notice is shown to shoppers (built). Keep it.

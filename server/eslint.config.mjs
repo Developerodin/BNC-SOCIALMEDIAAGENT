@@ -12,8 +12,7 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    // Built widget bundles (scripts/build-widget.mjs) and the Shopify CLI dev bundle.
-    "extensions/askcart/assets/askcart-*.js",
+    // Shopify CLI dev bundle. (The built widget bundles go to ../shopify/extensions, outside this folder.)
     ".shopify/**",
   ]),
 ]);

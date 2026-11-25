@@ -2,19 +2,22 @@
 
 ## What runs where
 
+The repo is split by where things run: **`server/`** goes to EC2, **`shopify/`** goes to Shopify. The
+`shopify.app.askcart.toml` at the root is the Shopify CLI's entry point and points at both folders.
+
 | Part | Where | How it gets there |
 |---|---|---|
-| Theme app extension: chat launcher and widget JS/CSS, the app embed, "Ask about this product" and FAQ blocks (`extensions/askcart/`) | **Shopify's CDN** | `shopify app deploy` from your machine or CI. Never on EC2. |
+| Theme app extension: chat launcher and widget JS/CSS, the app embed, "Ask about this product" and FAQ blocks (`shopify/extensions/askcart/`) | **Shopify's CDN** | `shopify app deploy` from your machine or CI. Never on EC2. |
 | App config: URLs, scopes, webhooks, App Proxy (`shopify.app.askcart.toml`) | **Shopify** | `shopify app deploy` |
 | AskCart server (Next.js): AI chat API, admin pages, webhooks, OAuth, partner API, mobile API, MCP tools, `/chat/<shop>`, `/embed.js` | **EC2** | Build and run with Node (below) |
-| Background jobs (pg-boss: product sync, webhooks, redaction) | **EC2**, inside the same Node process | Starts automatically with the server (`src/instrumentation.ts`). No separate worker. |
+| Background jobs (pg-boss: product sync, webhooks, redaction) | **EC2**, inside the same Node process | Starts automatically with the server (`server/src/instrumentation.ts`). No separate worker. |
 | Postgres 17 + pgvector | **EC2** | Installed below |
 | OpenAI | OpenAI | Uses `OPENAI_API_KEY` |
 | Shopify Storefront/Catalog MCP | Each store's own domain | Called from EC2; nothing to deploy |
 
-The widget is built once (`npm run build:widget`) into `extensions/askcart/assets/`. Shopify serves those files after
+The widget is built once (`npm run build:widget`) into `shopify/extensions/askcart/assets/`. Shopify serves those files after
 `shopify app deploy`, so run the widget build **before** `shopify app deploy`. The hosted chat page and `embed.js`
-are served by EC2 from `public/`; `npm run build` already runs the widget build first, so the EC2 build needs nothing extra.
+are served by EC2 from `server/public/`; `npm run build` already runs the widget build first, so the EC2 build needs nothing extra.
 
 ## 1. Instance
 
@@ -112,11 +115,11 @@ The repository is private, so the instance needs a **read-only deploy key**:
 ssh-keygen -t ed25519 -f ~/.ssh/askcart_deploy -N ""      # on the instance
 cat ~/.ssh/askcart_deploy.pub                              # paste into GitHub → the repo → Settings → Deploy keys (leave "Allow write access" off)
 printf 'Host github.com\n  IdentityFile ~/.ssh/askcart_deploy\n  IdentitiesOnly yes\n' >> ~/.ssh/config
-git clone git@github.com:Developerodin/BNC-SOCIALMEDIAAGENT.git askcart && cd askcart && git checkout m1-foundation
+git clone git@github.com:Developerodin/BNC-SOCIALMEDIAAGENT.git askcart && cd askcart/server   # branch main
 npm ci
 ```
 
-Create `.env` (never commit it). Every variable in `.env.example`, with production values:
+Create `server/.env` (never commit it). Every variable in `.env.example`, with production values:
 
 ```ini
 NODE_ENV=production
@@ -142,7 +145,7 @@ UCP_AGENT_PROFILE_URL=https://app.askcart.example/ucp-agent-profile.json   # tur
 To generate a secret: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.
 `TEST_DATABASE_*` aren't needed in production.
 
-Build, migrate, start:
+Build, migrate, start (all in `askcart/server`):
 
 ```bash
 npm run build                             # builds the widget files, then Next.js
@@ -153,7 +156,7 @@ pm2 save && pm2 startup                   # restart on reboot (run the command i
 ```
 
 **Run exactly one instance.** Rate limits are in memory per process, so two instances would double them (known
-limit, noted in `src/lib/rate-limit.ts`).
+limit, noted in `server/src/lib/rate-limit.ts`).
 
 ## 4. Nginx + TLS
 
@@ -231,11 +234,11 @@ Commit the toml change, so the next `shopify app deploy` doesn't revert it.
 ### 5.2 Release the app config and the storefront widget
 
 ```bash
-npm run build:widget                                 # bundles the chat widget into extensions/askcart/assets
+npm --prefix server run build:widget                 # bundles the chat widget into shopify/extensions/askcart/assets
 shopify app deploy --config shopify.app.askcart.toml # releases URLs, scopes, app proxy, webhooks + the theme extension
 ```
 
-Confirm the release when asked. Re-run both commands whenever the widget (`widget/src`) or the toml changes.
+Confirm the release when asked. Re-run both commands whenever the widget (`server/widget/src`) or the toml changes.
 `shopify app dev` (local development) temporarily points the app at your tunnel; after using it, run
 `shopify app deploy` again so the store uses the EC2 URLs.
 
@@ -293,7 +296,7 @@ The chat button now shows bottom-right on their storefront.
 ### 5.6 Agent profile (Shopify MCP features)
 
 `UCP_AGENT_PROFILE_URL` in the EC2 `.env` must be `https://app.askcart.example/ucp-agent-profile.json` (served from
-`public/`). It turns on: policy answers through Shopify's `ask_business` (the old policies tool is the fallback until
+`server/public/`). It turns on: policy answers through Shopify's `ask_business` (the old policies tool is the fallback until
 2027-01-15), the `product_details` tool, and MCP-only stores. Check it loads in a browser after deploying.
 
 ### 5.7 Optional: an MCP-only store (no app install)
@@ -303,7 +306,7 @@ For a Shopify store that has **not** installed AskCart (see `docs/superpowers/pl
 1. Send the merchant the embed line to paste into their theme (`Online Store → Themes → Edit code → layout/theme.liquid`,
    before `</body>`; for a password-protected store also `layout/password.liquid`):
    `<script src="https://app.askcart.example/embed.js" data-shop="their-store.myshopify.com" defer></script>`
-2. On EC2 (in the app folder), create the store record:
+2. On EC2 (in `askcart/server`), create the store record:
    ```bash
    npx tsx --env-file=.env --tsconfig tsconfig.json scripts/provision-mcp-store.mts their-store.myshopify.com --name "Their Store"
    ```
@@ -326,10 +329,10 @@ For a Shopify store that has **not** installed AskCart (see `docs/superpowers/pl
 ## Updating
 
 ```bash
-cd askcart && git pull && npm ci && npm run build && npx drizzle-kit migrate && pm2 restart askcart
+cd askcart/server && git pull && npm ci && npm run build && npx drizzle-kit migrate && pm2 restart askcart
 ```
 
-If the widget changed, also run `npm run build:widget` and `shopify app deploy` from your machine.
+If the widget changed, also run `npm --prefix server run build:widget` and `shopify app deploy` from your machine.
 
 **Deploy off-peak.** A restart in the middle of an answer cuts it off and locks that conversation for about 90 seconds
 (the shopper sees "busy" until the lock expires). `--kill-timeout 10000` lets short answers finish first, not long ones.

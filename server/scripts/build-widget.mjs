@@ -8,7 +8,7 @@ import { gzipSync } from "node:zlib";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
-const assets = path.join(root, "extensions/askcart/assets");
+const assets = path.join(root, "../shopify/extensions/askcart/assets");
 const publicDir = path.join(root, "public"); // served by our own app: the embed and the hosted chat page (docs/embed.md)
 const watch = process.argv.includes("--watch");
 

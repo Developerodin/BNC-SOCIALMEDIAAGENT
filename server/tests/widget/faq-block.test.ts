@@ -115,7 +115,7 @@ describe("FAQ block (Task 28, D32, D7)", () => {
 });
 
 describe("askcart-faq.liquid", () => {
-  const liquid = readFileSync(path.resolve(__dirname, "../../extensions/askcart/blocks/askcart-faq.liquid"), "utf8");
+  const liquid = readFileSync(path.resolve(__dirname, "../../../shopify/extensions/askcart/blocks/askcart-faq.liquid"), "utf8");
 
   it("is a product-template block that loads askcart-faq.js, starts hidden and escapes its data attributes", () => {
     expect(liquid).toContain('"javascript": "askcart-faq.js"');

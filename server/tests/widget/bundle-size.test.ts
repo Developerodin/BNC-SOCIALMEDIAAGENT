@@ -7,7 +7,7 @@ import path from "node:path";
 // Task 33: the size budgets (Global Constraints). Runs the real build, which itself exits 1 when a file is over its
 // budget, then re-measures here so a change to the script's own budgets can't loosen the plan's numbers unnoticed.
 const root = path.resolve(__dirname, "../..");
-const assets = path.join(root, "extensions/askcart/assets");
+const assets = path.join(root, "../shopify/extensions/askcart/assets");
 const BUDGETS: Record<string, number> = {
   "askcart-launcher.js": 4 * 1024, // the launcher loads on every storefront page
   "askcart-widget.js": 30 * 1024,

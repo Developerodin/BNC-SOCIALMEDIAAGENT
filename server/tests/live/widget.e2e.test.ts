@@ -21,7 +21,7 @@ const BASE = process.env.WIDGET_E2E_BASE?.replace(/\/$/, "");
 const SHOP = process.env.WIDGET_E2E_SHOP ?? "ask-cart-hv7ufqqy.myshopify.com";
 const ORIGIN = `https://${SHOP}`;
 const CDN = "https://cdn.shopify.com/extensions/askcart-e2e/assets/";
-const ASSETS = path.resolve(__dirname, "../../extensions/askcart/assets");
+const ASSETS = path.resolve(__dirname, "../../../shopify/extensions/askcart/assets");
 const QUESTION = "What's your cheapest snowboard?";
 const T = 180_000;
 

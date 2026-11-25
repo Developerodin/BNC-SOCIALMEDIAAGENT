@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+/server/node_modules
 /.pnp
 .pnp.*
 .yarn/*
@@ -11,14 +11,14 @@
 !.yarn/versions
 
 # testing
-/coverage
+/server/coverage
 
 # next.js
-/.next/
-/out/
+/server/.next/
+/server/out/
 
 # production
-/build
+/server/build
 
 # misc
 .DS_Store
@@ -44,8 +44,9 @@ next-env.d.ts
 .shopify/
 !.env.example
 .superpowers/
+.claude/
 
 # widget build output (npm run build:widget), served from the extension assets (C20)
-/extensions/askcart/assets/askcart-*.js
-/public/embed.js
-/public/askcart-hosted.js
+/shopify/extensions/askcart/assets/askcart-*.js
+/server/public/embed.js
+/server/public/askcart-hosted.js
