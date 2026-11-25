@@ -45,12 +45,16 @@ later request in the conversation. Never put it in a URL.
 | `POST /api/chat/cart-event?shop=…` | Tell AskCart a product from the chat was added to the cart (for the merchant's stats) |
 | `DELETE /api/chat/conversation?shop=…` | Clear chat (deletes the conversation) |
 | `GET /api/faq?shop=…&product=<id>` | A product's FAQ |
+| `GET /api/chat/product-questions?shop=…&product=<id>&locale=<xx>` | Up to 3 suggested questions about a product (`{ "questions": [] }` when there are none), for a product screen |
 
 ### Signed-in customers
 
 By default every chat is anonymous: it lives behind its conversation token on that device. A customer who is signed in
 to the store's **legacy Shopify customer accounts** can keep one history across the website and the app. This needs
 the merchant to have approved the `unauthenticated_read_customers` scope (they re-approve when the app update asks).
+
+A signed-in customer can also ask about **their own recent orders** (status, items, tracking) in a conversation that
+belongs to them; the answer arrives as normal `text`. A guest who asks is told to sign in first.
 
 **`POST /api/chat/session`**: body `{ "shop": "my-store.myshopify.com", "customerAccessToken": "…" }` (the token from the
 Storefront API `customerAccessTokenCreate`). AskCart checks it with Shopify and answers

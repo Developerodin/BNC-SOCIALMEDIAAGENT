@@ -6,7 +6,7 @@
   widget size budgets clean.
 - Dev store `ask-cart-hv7ufqqy.myshopify.com` (org **CellaVei**, app **AskCart**, client_id `c80e516d95dbbe7b654945e4800a4fa0`).
   The app runs only locally so far (`shopify app dev`); **nothing is hosted yet**.
-- Migrations go up to **0020** (applied locally). Dev DB: `shopassist`; tests: `shopassist_test`.
+- Migrations go up to **0022** after the 2026-11-25 work (0021 `product_questions`, 0022 its RLS). Dev DB: `shopassist`; tests: `shopassist_test`.
 
 ## Built today (all reviewed by Opus, 4-lens reviewed, merged)
 - **Mobile API:** per-store mobile app key (admin card), rate limits; `docs/mobile-api.md`.

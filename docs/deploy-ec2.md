@@ -7,7 +7,7 @@ The repo is split by where things run: **`server/`** goes to EC2, **`shopify/`**
 
 | Part | Where | How it gets there |
 |---|---|---|
-| Theme app extension: chat launcher and widget JS/CSS, the app embed, "Ask about this product" and FAQ blocks (`shopify/extensions/askcart/`) | **Shopify's CDN** | `shopify app deploy` from your machine or CI. Never on EC2. |
+| Theme app extension: chat launcher and widget JS/CSS, the app embed, "Ask our AI agent", "Ask about this product" and FAQ blocks (`shopify/extensions/askcart/`) | **Shopify's CDN** | `shopify app deploy` from your machine or CI. Never on EC2. |
 | App config: URLs, scopes, webhooks, App Proxy (`shopify.app.askcart.toml`) | **Shopify** | `shopify app deploy` |
 | AskCart server (Next.js): AI chat API, admin pages, webhooks, OAuth, partner API, mobile API, MCP tools, `/chat/<shop>`, `/embed.js` | **EC2** | Build and run with Node (below) |
 | Background jobs (pg-boss: product sync, webhooks, redaction) | **EC2**, inside the same Node process | Starts automatically with the server (`server/src/instrumentation.ts`). No separate worker. |
@@ -225,7 +225,7 @@ and the App Store review asks about them):
 | Scope | Why AskCart needs it |
 |---|---|
 | `read_products`, `read_inventory`, `read_publications` | Product sync, search and live price/stock on chat cards |
-| `read_orders`, `read_all_orders` | The partner / Social Media Agent read API (`read_all_orders` needs Shopify approval for orders older than 60 days) |
+| `read_orders`, `read_all_orders` | The partner / Social Media Agent read API, and the chat's `order_status` tool (a signed-in shopper's own 5 most recent orders). `read_all_orders` needs Shopify approval for orders older than 60 days. Order and customer fields also need **protected customer data** access (Partner Dashboard → the app → API access → Protected customer data, level 1); without it order questions answer "temporarily unavailable". |
 | `unauthenticated_read_customers` | Verifying a mobile-app shopper's login so their chat history follows them |
 | `write_app_proxy` | Required by Shopify for any app with an App Proxy (website customer sign-in) |
 
@@ -281,9 +281,14 @@ Sources: [IP allowlists for custom apps installed outside your organization](htt
    **I've turned it on**. (Manual path: Online Store → Themes → Customize → the **App embeds** icon in the left toolbar →
    AskCart chat on → Save. App embeds are per theme: use the published one.)
 4. Optional: **Chat widget** card: name, accent colour, avatar (a `cdn.shopify.com` Files URL), launcher text and side,
-   welcome message, up to 4 suggested questions, teaser. **Save** updates the storefront.
+   welcome message, up to 4 suggested questions, teaser, and **Chat button**: on every page (default), on product
+   pages only, or hidden (the product block then opens the chat). **Save** updates the storefront.
+5. **Ask our AI agent** on product pages: **Add to product pages** (Setup guide or the Chat widget card) → the theme
+   editor opens on the product template with the block added → drag it **below the Buy buttons** → **Save**. It then
+   shows on every product using that template. The block's questions can be typed in its settings; left empty, AskCart
+   writes up to 3 per product with AI (cached until the product changes).
 
-The chat button now shows bottom-right on their storefront.
+The chat button now shows bottom-right on their storefront, and product pages show the Ask our AI agent block.
 
 ### 5.5 Optional: other websites, the hosted chat link, the mobile app
 
