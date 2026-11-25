@@ -1,80 +1,86 @@
-# Handover: end of 2026-11-24 (session 3) → go-live work on 2026-11-25
+# Handover: end of 2026-11-25 → 2026-11-26
 
 ## Where we are
-- **One branch: `main`** (GitHub `Developerodin/BNC-SOCIALMEDIAAGENT`, last commit `becb53d`). `m1-foundation` was merged
-  into it and deleted. Working tree clean. Full suite on the final code: 1,165 passed, 1 skipped; tsc, eslint and all
-  widget size budgets clean.
-- Dev store `ask-cart-hv7ufqqy.myshopify.com` (org **CellaVei**, app **AskCart**, client_id `c80e516d95dbbe7b654945e4800a4fa0`).
-  The app runs only locally so far (`shopify app dev`); **nothing is hosted yet**.
-- Migrations go up to **0022** after the 2026-11-25 work (0021 `product_questions`, 0022 its RLS). Dev DB: `shopassist`; tests: `shopassist_test`.
+- **`main` is 10 commits ahead of `origin/main`, NOT pushed** (local head `384021d` + this handover). Last pushed: `8672df3`.
+  The user's rule: run the **4-lens review before push**, and show any bot/prompt wording word-for-word for approval first.
+- EC2: https://askcart.13.232.66.119.sslip.io (pm2 `askcart`), runs app **Shop Assistant** (BnC org,
+  client_id `b8c22f4b59fbb4181923cc9c1ff099d0`, `shopify.app.bnc.toml`). AskCart (CellaVei, `shopify.app.askcart.toml`) is the dev app.
+- EC2 is behind even `origin/main`: the user still has to pull + restart (see "Deploy" below).
+- Migrations now go to **0025** (0023 sales + ratings, 0024 its RLS, 0025 `messages.feedback_reason`).
 
-## Built today (all reviewed by Opus, 4-lens reviewed, merged)
-- **Mobile API:** per-store mobile app key (admin card), rate limits; `docs/mobile-api.md`.
-- **Agent tools over Shopify MCP:** `store_policies` (now `ask_business`, fallback to the old policies tool until
-  2027-01-15), `search_products` (second search), `product_details` (`get_product`, needs `UCP_AGENT_PROFILE_URL`).
-- **Chat outside Shopify:** hosted page `/chat/<shop>` + one-line `embed.js`; per-store **allow-list** (off by default);
-  postMessage **cart bridge** (Add to cart into the shopper's real Shopify cart from the embed); `docs/embed.md`.
-- **Customer identity:** mobile sign-in with the legacy `customerAccessToken`, website sign-in via **App Proxy**
-  (`/apps/askcart/session`), owned conversations, history across web + app, `customers/redact` deletes, data-request
-  export script `scripts/export-customer-chats.mjs`.
-- **Admin home** (Polaris layout): setup guide checklist (Turn on chat deep link), **Chat widget settings** card (name,
-  accent, logo (uploaded to Shopify Files; needs the `write_files,read_files` scopes, so installed stores re-approve), launcher, welcome, 4 suggested questions, teaser; localized defaults), Connect your website (SSRF-safe
-  check + Allow button), Mobile app key, Product sync.
-- **Widget refresh:** theme-matching header (avatar, "AI shopping assistant", online dot), greeting + chips, clearer
-  bubbles/cards, **⤢ expand mode** (3 cards per row), "Choose Color" pickers with hints, daily-cap message.
-- **MCP-only pilot** (stores without an install): `stores.mode='mcp'`, catalog from Shopify UCP payloads, breakers and a
-  5 s budget, 100 messages/day, jobs skip these stores, `scripts/provision-mcp-store.mts`. Plan:
-  `docs/superpowers/plans/2026-11-24-mcp-only-plan.md` (v3 at top; self-serve signup is the later phase).
-- Hardening from reviews: rate limits on every chat path, embedding timeout 3 s, rewrite timeout **8 s**, retention job,
-  no shopper text in logs, storefront-token minting at most hourly, `write_app_proxy` scope, UTF-8 fix.
+## Merged locally today (not pushed)
+1. **Widget** (`17f3780`): prices always with a dot (`formatPrice` en-US, e.g. €1,452.43); "You're viewing: <title>" divider
+   when the shopper moved to another product page (localStorage `lastProduct`); jump-to-latest round button; thumbs tooltips already existed.
+2. **Ranking tools** (`c81cc86`): daily `sales-scan` 03:00 UTC + per-store `sales-snapshot` (table `product_sales`, units/orders only,
+   last 30 days); `products.rating/rating_count` from review-app metafields at sync (D95); chat tools `trending_products`,
+   `top_rated_products` (≥3 reviews), `featured_collection` (best_sellers | sale, matched by name in 6 languages). Trending shows ranking only, no numbers.
+3. **Chat code fixes** (`f321d6f`, edge-case report #1,2,4,8–11,14,15 + tester #10): price sort only within 0.08 of the best hit
+   (`HEAD_MARGIN`, budget.ts); search tool kept on budget turns; missing product names filled from the title (markers.ts);
+   card price follows the variant discussed; max 3 cards unless more asked; empty rewrite = no search; merchant HTML/MD stripped
+   (`plainText`); shopper-typed `[[product:n]]` stripped; tools time out at 15 s, failed tool-result request retried once without tools.
+4. **Card icons** (`d5ac501`): similar-products (bottom-left) + add-to-cart (bottom-right) over the card image. Similar sends a
+   message + `similarTo` gid; server validates store ownership, searches by the product's own embedding, same type first,
+   excludes self / sold-out / cart, ≤3 cards.
+5. **Thumbs-down reasons** (`a9d245c`): menu after thumbs-down with 5 reasons (no free text), column `messages.feedback_reason`
+   (0025); internal page **`/ops/feedback`** (Basic auth, password = `OPS_SECRET`; 404 when unset) with per-store up/down,
+   % down, reasons, latest 50 bad answers. Merchants can't see it.
+- Merge conflicts resolved by hand in `turn.ts` (similar turn + empty-query + stripProductRefs), `admin-tools.ts`, `icons.ts`;
+  typed the send mocks in `tests/widget/panel.test.ts`. tsc clean; chat/widget/api/retrieval tests 1266/1267 in one run
+  (one similar-icon panel test flaked; passed alone and in the full widget run 556/556). **Full suite not yet run on merged main.**
+- Widget gzip 27,755 B / 30,720 B budget (≈3 KB headroom left).
 
-## Tomorrow: go live on Bois and Chiffon (store in a *different* organization)
-Follow `docs/deploy-ec2.md` top to bottom. In order:
-1. **EC2** (§1–4): Ubuntu 24.04, ≥ t3.small, **Elastic IP**, a domain pointing at it, Postgres 17 + pgvector,
-   **nightly backup + one restore test (required)**, Node 22, `.env` (save `TOKEN_KEY` and `CHAT_TOKEN_SECRET` in a
-   password manager; set `UCP_AGENT_PROFILE_URL=https://<domain>/ucp-agent-profile.json`), `npm run build`,
-   `npx drizzle-kit migrate`, pm2 (`--kill-timeout 10000`, pm2-logrotate), Nginx + TLS. **One instance only.**
-2. **Shopify** (§5, from the dev machine): set the 3 URLs in `shopify.app.askcart.toml` (app, auth redirect,
-   `[app_proxy] url`), commit, `npm run build:widget`, `shopify app deploy`.
-3. **Outside-org install (§5.3):** Dev Dashboard → AskCart → **IP allowlist** = the Elastic IP (and on every app in
-   CellaVei); declare **network access** if asked; **Distribution → Custom** → Bois and Chiffon's `.myshopify.com`
-   domain → install link. Custom distribution is permanent and serves one merchant.
-4. **Merchant (§5.4):** install while logged in to *their* admin → products sync → Setup guide → Turn on chat → Save.
-5. **Smoke test (§6)** on their storefront: product question with cards, add to cart, "return policy" (ask_business),
-   logged-in history, `pm2 logs askcart` clean.
-6. **Phase 0 of MCP-only** (only once hosted): record real `search_catalog`/`lookup_catalog`/`ask_business` payloads,
-   confirm currency context, media hosts, Retry-After, password-store behaviour; replace the schema-derived fixtures.
+## NOT merged: prompt wording (waiting for user approval)
+- Branch `worktree-agent-a19f7d543196c6175`, commits `866643c`, `0f60215`, `151b951` (prompt.ts, rewrite.ts, tools.ts).
+  Rebased on main before the code-fix merge → **expect conflicts in rewrite.ts / tools.ts / prompt.ts** when merging.
+- The 18 rules were shown to the user word-for-word in chat on 2026-11-25. Topics: off-topic decline + steer back to the
+  earlier need, "yes" loop, lead from the stated limit, too-expensive → cheapest same type, buying moment → "tap Add to cart" + one
+  complement, concrete complements, best-seller/sale tools, think-it-over / found elsewhere, "never say the store doesn't sell
+  something you haven't looked for", no internal words, no invented options, size unit conversion, currency note, no % off,
+  name before marker, 3–6 word queries ("lit chambre sommier"), store_policies only for store rules, search each missing type.
+- Also pending approval, already merged inside the code-fix / icons commits:
+  - A. rewrite.ts: "If the message needs no product search at all (thanks, a greeting, a question about the store's shipping, returns or contact), set query to an empty string."
+  - B. rewrite.ts: too-expensive → sort cheapest, query = product type, not the product's name.
+  - C. turn.ts note for a similar turn: "The shopper asked for products similar to "{title}"…"
+  - The 3 new tool descriptions (trending / top-rated / featured collection).
+- Eval evidence: worktree `server/.edge/` (before*.json, final*.json, real2.json); code-fix evidence `scratchpad\cfix\after2.md, after3.md`.
 
-## Decisions still open (owner)
-- MCP-only self-serve: billing outside Shopify vs App Store rules; who answers shoppers' data requests; legal read of
-  Shopify API Terms §2.3.14/§2.3.24 for app-less use.
-- Public App Store app (new app, likely new org): when to start; `docs/publish-checklist.md` is the list.
-- Whether to drop ~40 old `shopassist_t*/w*/p*` databases in local Docker (from earlier sessions; unused).
-- Partner connect wave 3 (P10) from the previous handover is still pending: E2E test with a stand-in portal, log-leak
-  test, "Connected apps" list with Disconnect, `docs/partner-api.md` alignment.
+## Open questions for the user (ask first thing)
+1. Approve the 18 rules + A, B, C + 3 tool descriptions (or name changes).
+2. Furniture examples in the shared prompt ("bedding in the bed's size", "other sofas for a sofa", "lit chambre sommier"): keep or make generic? (Every store shares the prompt.)
+3. Short/ambiguous messages ("yes", "bed?") sometimes answered in French after the wording change (Y2 4/4, L8 3/6). Add a rule "short messages keep the conversation's language"?
+4. Approve UI strings in 6 languages (all in `server/widget/src/core/i18n.ts`, marked PENDING):
+   - `jump_latest`: Jump to latest / Aller au dernier message / Zur neuesten Nachricht / Ir al último mensaje / Vai all'ultimo messaggio / Naar het laatste bericht
+   - `similar_label` / `similar_message`: "Show products similar to {title}" / "Show me products similar to {title}" (+ fr de es it nl)
+   - `reason_menu` + 5 reasons: Why wasn't this helpful? · Wrong products shown · Wrong price or stock · Didn't understand me · Answer too long or unclear · Other (+ fr de es it nl)
+5. Ops page: "% down" = down ÷ (up+down); dates in UTC; OK?
+6. Trending: show numbers (units sold) or ranking only (current)?
 
-## Failure behaviour and two optional improvements
-MCP is a data source our server calls, not a fallback for the server: if EC2 or OpenAI is down, the chat is down for
-every store (the launcher still loads from Shopify's CDN). Today:
-- Admin API fails (installed store): search still works; cards show without price/stock (C11 fallback).
-- Shopify MCP fails: installed stores lose only policy answers; MCP-only stores show "catalog temporarily unavailable".
-- Merchant uninstalls: the chat switches off for that store.
+## Next steps (in order)
+1. Get the answers above; apply wording changes; merge the wording branch (resolve conflicts), rerun the chat eval briefly if wording changed.
+2. Full suite: `cd server; npx vitest run --exclude "tests/live/**"` (Docker Desktop + `docker compose up -d` first) and `npx tsc --noEmit`, `node scripts/build-widget.mjs`.
+3. **4-lens review** (correctness, security/privacy — incl. `/ops/feedback` auth, `product_sales` + sales job, `similarTo` validation;
+   UX/accessibility — icons on card image, reasons menu, jump button, divider; performance — daily sales job + Shopify API budget,
+   ops page one transaction per store, similar search). Fix findings.
+4. Live check on the French fixture, then push (commit messages: no co-author, no URLs, no test mentions).
+5. Give the user the EC2 update (they run it):
+   ```
+   cd ~/askcart && git pull && cd server && npm ci && npm run build && npx drizzle-kit migrate && pm2 restart askcart --update-env
+   ```
+   plus set `OPS_SECRET` (see `docs/deploy-ec2.md`).
 
-Options for later (owner's call, not started):
-1. **Price/stock fallback via MCP (~0.5 day):** when the Admin API live check fails for an installed store, read price
-   and availability from the public UCP catalog (same mapping as the MCP-only path, `toLiveProduct`) instead of
-   showing cards without prices.
-2. **Uninstall → MCP-only fallback:** if the app is uninstalled but our embed line is still on the theme, keep the chat
-   running in MCP-only mode instead of switching it off (open decision #3 in the MCP-only plan; needs a verification of
-   the embed line and the merchant's consent to keep serving).
+## Waiting on the user
+- EC2 logs for tester #10 "Assistant unavailable" on return policy:
+  `pm2 logs askcart --lines 400 --nostream | grep -iE "polic|error|unavailable|timeout" | tail -40`
+- BnC's real `*.myshopify.com` domain (`boisandchiffons.myshopify.com` gave unknown_shop).
+- `PARTNER_API_SECRET` + `PARTNER_STORE_DOMAIN` on EC2 (for the Social Media Agent; the user sets these manually).
+- Pull + restart EC2 (BnC sync recovery, partner API, room fix are pushed but not live).
 
-## Working notes
-- **Run locally:** Docker Desktop → `docker compose up -d` (in `server/`) → from the repo root `shopify app dev --config shopify.app.askcart.toml --store
-  ask-cart-hv7ufqqy.myshopify.com` (storefront password: Online Store → Preferences → Store access). Open AskCart once
-  after each restart (it saves the tunnel URL for the widget). View the real storefront, not `127.0.0.1:9293`.
-- **Agents work in `.claude/worktrees/`**; while those exist `shopify app dev` refuses to start ("only one web
-  configuration"). Remove finished worktrees (unlink their `node_modules` junction first) or run from a copy outside the
-  repo.
-- **Save files as UTF-8** (a Windows-1252 byte once crashed Turbopack while tests still passed).
-- **Docker stops when the machine crashes**; restart it before tests or `shopify app dev`.
-- Commit rules: no co-author / session trailers, never mention tests in messages.
+## Offered, not decided
+- Partner API RESERVE 1000 → 500; Elastic IP / IP allowlist + real domain; a separate AskCart Dev app; protected customer data level 1; DB backups.
+- Quotes (draft orders) was raised and **dropped** by the user — don't build.
+
+## Notes
+- User is on **Windows** (PowerShell 5.1) — give PC commands for Windows; EC2 commands are Linux.
+- User asked to keep usage low near session limits; avoid spawning many agents at once.
+- Worktrees under `.claude/worktrees/agent-*` can be removed after the wording branch is merged
+  (`git worktree remove …`); scratch DBs `shopassist_test_wfix/_cfix/_fb/_words`, `shopassist_words_edge`, `shopassist_edge2` can be dropped.
