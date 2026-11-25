@@ -183,13 +183,17 @@ export async function pollSync({ storeId }: { storeId: string }): Promise<void> 
 
 const PRODUCT = `query($id: ID!) { product(id: $id) { ${PRODUCT_FIELDS} ${NESTED} } }`;
 
-/** The `product-sync` handler: re-reads one product and upserts it, or deletes it when Shopify no longer has it. */
-export async function syncProduct({ storeId, productId }: { storeId: string; productId: string }): Promise<void> {
+/**
+ * Re-reads one product and upserts it (or deletes it when Shopify no longer has it), then queues the embed job.
+ * Returns the fresh product, null when Shopify has none, or undefined when the store is inactive or needs a reconnect.
+ * Shared by the `product-sync` handler and the chat's refresh_product tool.
+ */
+export async function refreshProduct(storeId: string, productId: string): Promise<ShopifyProduct | null | undefined> {
   const [s] = await db
     .select({ shop: stores.shopDomain, active: stores.active, syncError: stores.syncError })
     .from(stores)
     .where(eq(stores.id, storeId));
-  if (!s?.active || s.syncError === RECONNECT_NEEDED) return;
+  if (!s?.active || s.syncError === RECONNECT_NEEDED) return undefined;
   const { product } = await adminGraphql<{
     product:
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -199,12 +203,20 @@ export async function syncProduct({ storeId, productId }: { storeId: string; pro
         })
       | null;
   }>(storeId, s.shop, PRODUCT, { id: productId });
+  let fresh: ShopifyProduct | null = null;
   if (!product) await deleteProduct(storeId, productId);
   else {
     const collections = product.collections?.edges.map((e) => e.node.title) ?? [];
-    await upsertProducts(storeId, [toShopifyProduct(product, product.metafields.edges.map((e) => e.node), collections)]);
+    fresh = toShopifyProduct(product, product.metafields.edges.map((e) => e.node), collections);
+    await upsertProducts(storeId, [fresh]);
   }
   await enqueueEmbed(storeId);
+  return fresh;
+}
+
+/** The `product-sync` handler: re-reads one product and upserts it, or deletes it when Shopify no longer has it. */
+export async function syncProduct({ storeId, productId }: { storeId: string; productId: string }): Promise<void> {
+  await refreshProduct(storeId, productId);
 }
 
 /**

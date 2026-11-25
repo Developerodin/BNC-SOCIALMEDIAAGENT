@@ -201,3 +201,13 @@ test("the lock covers the real timeouts: rewrite 8 s + catalog budget + 60 s ans
   expect(Number(r.s)).toBeGreaterThan(8 + guard.MCP_BUDGET_MS / 1000 + 60);
   expect(Number(r.s)).toBeLessThanOrEqual(90);
 });
+
+test("an mcp store is not offered the Admin tools (it has no Admin token)", async () => {
+  const id = await mcpStore();
+  shopify(() => ucpReply(ucpProduct(7)));
+  create.mockImplementationOnce(fakeStream(["ok"]));
+  await run(id);
+  const names = (create.mock.calls[0][0].tools as { name: string }[]).map((t) => t.name);
+  expect(names).toContain("search_products");
+  for (const n of ["store_overview", "refresh_product", "browse_collection"]) expect(names).not.toContain(n);
+});

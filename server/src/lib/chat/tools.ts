@@ -5,6 +5,8 @@ import { getProduct } from "@/lib/shopify/catalog-mcp";
 import { CATALOG_DEGRADED, catalogProduct, type TurnCatalog } from "@/lib/shopify/catalog-turn";
 import { askPolicies, POLICY_TYPES, type PolicyType } from "@/lib/shopify/storefront-mcp";
 import { orderStatus } from "./orders";
+import { ADMIN_TOOL_DEFS, ADMIN_TOOL_NAMES, runAdminTool } from "./admin-tools";
+import { numberProducts } from "./number-products";
 import { productBlock, sanitizeData, type PromptProducts } from "./prompt";
 
 // The chat agent's tools (Responses API function tools), run by answer()'s tool loop:
@@ -71,8 +73,14 @@ const PRODUCT_DETAILS_DEF: FunctionTool = {
   },
 };
 
-/** The tools to offer: TOOL_DEFS, plus product_details when the UCP agent profile is configured. */
-export const toolDefs = (): FunctionTool[] => (process.env.UCP_AGENT_PROFILE_URL ? [...TOOL_DEFS, PRODUCT_DETAILS_DEF] : TOOL_DEFS);
+/**
+ * The tools to offer: TOOL_DEFS, plus product_details when the UCP agent profile is configured, plus the Admin API tools
+ * (admin-tools.ts) when `admin` is true: only for installed stores, since an MCP-only store has no Admin token.
+ */
+export const toolDefs = (opts: { admin?: boolean } = {}): FunctionTool[] => {
+  const base = process.env.UCP_AGENT_PROFILE_URL ? [...TOOL_DEFS, PRODUCT_DETAILS_DEF] : TOOL_DEFS;
+  return opts.admin ? [...base, ...ADMIN_TOOL_DEFS] : base;
+};
 
 export type ToolContext = {
   store: { id: string; shopDomain: string; settings: unknown; mode?: "app" | "mcp" };
@@ -103,6 +111,7 @@ export async function runTool(name: string, rawArgs: string, ctx: ToolContext): 
   }
   if (name === "product_details") return data(await productDetails(args.product, ctx));
   if (name === "order_status") return data(await orderStatus(args, ctx));
+  if (ADMIN_TOOL_NAMES.has(name)) return ctx.catalog ? `Unknown tool: ${name}.` : data(await runAdminTool(name, args, ctx));
   const query = typeof args.query === "string" ? args.query.slice(0, 500) : "";
   if (!query.trim()) return "Invalid arguments: query is empty.";
 
@@ -177,28 +186,16 @@ async function productDetails(arg: unknown, ctx: ToolContext): Promise<string> {
 async function searchMore(query: string, ctx: ToolContext): Promise<string> {
   const hits = await searchProducts(ctx.store, query, TOOL_SEARCH_K, { includeGiftCards: ctx.includeGiftCards, signal: ctx.signal, catalog: ctx.catalog });
   if (ctx.catalog?.degraded) return CATALOG_DEGRADED; // an outage is not "no products match"
-  const numberOf = new Map([...ctx.allowed].map(([n, id]) => [id, n]));
+  const known = new Set(ctx.allowed.values());
   const texts = new Map<string, string[]>();
   for (const h of hits as SearchHit[]) {
-    if (!numberOf.has(h.productId) && !texts.has(h.productId) && texts.size >= TOOL_PRODUCTS) continue;
+    if (!known.has(h.productId) && !texts.has(h.productId) && texts.size >= TOOL_PRODUCTS) continue;
     texts.set(h.productId, [...(texts.get(h.productId) ?? []), h.content]);
   }
   if (texts.size === 0) return "No products match this search.";
 
-  const fresh = [...texts.keys()].filter((id) => !numberOf.has(id));
-  if (fresh.length) {
-    const r = await ctx.check(fresh);
-    if (r.ok !== ctx.live.ok) return "Product search is unavailable right now.";
-    for (const id of fresh) {
-      const got = r.ok ? r.products.get(id) : r.cards.get(id);
-      if (!got) continue; // dropped by the live check (unpublished, gift card, gone)
-      if (ctx.live.ok && r.ok) ctx.live.products.set(id, r.products.get(id)!);
-      else if (!ctx.live.ok && !r.ok) ctx.live.cards.set(id, r.cards.get(id)!);
-      const n = String(ctx.allowed.size + 1);
-      ctx.allowed.set(n, id);
-      numberOf.set(id, n);
-    }
-  }
+  const numberOf = await numberProducts([...texts.keys()], ctx);
+  if (!numberOf) return "Product search is unavailable right now.";
 
   const blocks = [...texts]
     .filter(([id]) => numberOf.has(id))

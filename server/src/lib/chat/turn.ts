@@ -467,7 +467,9 @@ export async function runTurn(t: {
     };
     // Order lookups need the Admin API (installed stores only): offered to a verified customer, a guest is told to sign in.
     const installed = store.mode !== "mcp";
-    const baseDefs = wide ? toolDefs().filter((d) => d.name !== "search_products") : toolDefs();
+    // The Admin tools (admin-tools.ts) need an installed store's token, so an mcp store doesn't get them.
+    const admin = !catalog;
+    const baseDefs = wide ? toolDefs({ admin }).filter((d) => d.name !== "search_products") : toolDefs({ admin });
     const result = await answer({
       system: SYSTEM_PROMPT(name, installed && !t.customer),
       largeSystem: LARGE_SYSTEM_PROMPT(name, installed && !t.customer),

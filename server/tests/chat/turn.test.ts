@@ -724,3 +724,12 @@ test("the same requestId in another conversation is a separate message", async (
   expect(b.replay).toBeUndefined();
   expect(b.conversationId).not.toBe(a.conversationId);
 });
+
+test("an installed store is offered the Admin tools (store_overview, refresh_product, browse_collection)", async () => {
+  search.mockResolvedValue([hit("1")]);
+  liveCheck.mockResolvedValue(liveMap(live("1")));
+  create.mockImplementationOnce(fakeStream(["ok"]));
+  await run();
+  const names = (create.mock.calls[0][0].tools as { name: string }[]).map((t) => t.name);
+  expect(names).toEqual(expect.arrayContaining(["store_overview", "refresh_product", "browse_collection"]));
+});
