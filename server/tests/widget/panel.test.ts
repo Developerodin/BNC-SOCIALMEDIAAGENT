@@ -3,6 +3,7 @@
 // through the CardsRenderer / FeedbackRenderer seams, injected here as spies.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "../../widget/src/widget";
+import { addToCart, resetCartCache } from "../../widget/src/cart";
 import type { Panel } from "../../widget/src/panel/panel";
 import { CSS } from "../../widget/src/panel/styles";
 import type { Renderers } from "../../widget/src/panel/messages";
@@ -80,6 +81,7 @@ async function type(text: string) {
 beforeEach(() => {
   document.body.innerHTML = "";
   document.documentElement.style.overflow = "";
+  resetCartCache();
   localStorage.clear();
   sessionStorage.clear();
   renderCards = vi.fn<Renderers["renderCards"]>((into, cards) => {
@@ -612,7 +614,7 @@ describe("header and empty state", () => {
     expect(q(".log")!.hasAttribute("inert")).toBe(true);
     qa(".ac-sheet button").find((b) => b.textContent === "Add to cart")!.click();
     await flush();
-    const add = fetchMock.mock.calls.find(([u]) => String(u).includes("/cart/add"))!;
+    const add = fetchMock.mock.calls.find(([u, init]) => String(u).includes("/cart/add") && init?.method === "POST")!;
     expect(JSON.parse(String(add[1]!.body))).toMatchObject({ items: [{ id: 77 }] });
     q<HTMLButtonElement>(".ac-sheet__back")!.click();
     expect(q(".log")!.hasAttribute("inert")).toBe(false);
@@ -629,6 +631,82 @@ describe("header and empty state", () => {
   it("the cart link is hidden when there is no cart URL (the hosted page)", async () => {
     await setup(mockApi(), config(), pageCtx({ cartUrl: "", hosted: true })).open();
     expect(q<HTMLAnchorElement>("a.cart")!.hidden).toBe(true);
+  });
+
+  describe("cart count on the cart icon", () => {
+    const badge = () => q("a.cart .cbadge")!;
+    const stubCart = (item_count: number) => {
+      vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, { items: [{ variant_id: 1, quantity: item_count }], item_count })));
+    };
+    const openCart = async (over: Partial<PageContext> = {}) => {
+      await setup(mockApi(), config(), pageCtx({ cartUrl: "https://demo.example/cart", ...over })).open();
+      await flush();
+    };
+
+    it("shows the cart's item_count when the panel opens, and names it on the link", async () => {
+      stubCart(3);
+      await openCart();
+      expect(badge().hidden).toBe(false);
+      expect(badge().textContent).toBe("3");
+      expect(q("a.cart")!.getAttribute("aria-label")).toBe("Cart, 3 items");
+    });
+
+    it("says '1 item' for one", async () => {
+      stubCart(1);
+      await openCart();
+      expect(q("a.cart")!.getAttribute("aria-label")).toBe("Cart, 1 item");
+    });
+
+    it("is hidden at 0 and the link keeps its plain name", async () => {
+      stubCart(0);
+      await openCart();
+      expect(badge().hidden).toBe(true);
+      expect(q("a.cart")!.getAttribute("aria-label")).toBe("Cart");
+    });
+
+    it("reads 9+ above 9", async () => {
+      stubCart(12);
+      await openCart();
+      expect(badge().textContent).toBe("9+");
+      expect(q("a.cart")!.getAttribute("aria-label")).toBe("Cart, 12 items");
+    });
+
+    it("goes up by the quantity after a successful add from the chat, not after a failed one", async () => {
+      const add = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => jsonResponse(200, { items: [] }));
+      vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) =>
+        String(url).endsWith("/cart.js") ? jsonResponse(200, { items: [], item_count: 2 }) : add(url, init)));
+      await openCart();
+      expect(badge().textContent).toBe("2");
+      add.mockResolvedValueOnce(jsonResponse(422, { description: "No." }));
+      await addToCart({ cartAddUrl: "/cart/add" }, "5", 3);
+      await flush();
+      expect(badge().textContent).toBe("2");
+      await addToCart({ cartAddUrl: "/cart/add" }, "5", 3);
+      await flush();
+      expect(badge().textContent).toBe("5");
+      expect(q("a.cart")!.getAttribute("aria-label")).toBe("Cart, 5 items");
+    });
+
+    it("is re-read each time the panel opens", async () => {
+      stubCart(1);
+      const p = setup(mockApi(), config(), pageCtx({ cartUrl: "https://demo.example/cart" }));
+      await p.open(); await flush();
+      expect(badge().textContent).toBe("1");
+      stubCart(4);
+      p.close();
+      await p.open();
+      await flush();
+      expect(badge().textContent).toBe("4");
+    });
+
+    it("is not read or shown on the hosted page", async () => {
+      const f = vi.fn<typeof fetch>(async () => jsonResponse(200, { items: [], item_count: 3 }));
+      vi.stubGlobal("fetch", f);
+      await openCart({ hosted: true });
+      await flush();
+      expect(badge().hidden).toBe(true);
+      expect(f.mock.calls.some(([u]) => String(u).endsWith("/cart.js"))).toBe(false);
+    });
   });
 
   it("the placeholder is 'Ask a question…' until the first message, then 'Continue the conversation'", async () => {

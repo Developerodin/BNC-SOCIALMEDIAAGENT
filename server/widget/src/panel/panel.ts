@@ -22,6 +22,7 @@ import { createMenu } from "./menu";
 import { createMessages, type Renderers } from "./messages";
 import { CSS, FULL_BELOW } from "./styles";
 import { CARDS_CSS } from "../cards";
+import { CART_CHANGED, cartState, refreshCart } from "../cart";
 
 export type PanelOptions = Renderers & {
   api: WidgetApi;
@@ -110,6 +111,20 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     cartLink.rel = "noopener noreferrer";
     if (page.hosted) cartLink.target = "_top"; // leave the iframe: the cart is the store's page
   } else cartLink.hidden = true;
+  // The cart's item count, from the same cached cart read the cards use. Not on the hosted page: it has no cart access.
+  const cartCount = document.createElement("span");
+  cartCount.className = "cbadge";
+  cartCount.hidden = true;
+  cartCount.setAttribute("aria-hidden", "true"); // the link's accessible name carries the count
+  cartLink.append(cartCount);
+  const showCartCount = () => {
+    void cartState(page).then(({ itemCount: n }) => {
+      cartCount.hidden = n <= 0;
+      cartCount.textContent = n > 9 ? "9+" : String(n);
+      cartLink.setAttribute("aria-label", n > 0 ? t(n === 1 ? "cart_item" : "cart_items", { count: n }) : t("cart"));
+    });
+  };
+  if (!page.hosted) window.addEventListener(CART_CHANGED, showCartCount);
   const newBtn = button("ib newchat", t("new_chat"), "newchat");
   // Logo: the avatar, or a round monogram (the store name's first letter in the accent colour).
   const av = document.createElement("span");
@@ -543,6 +558,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     ui.open.set(true);
     ui.teaserSeen.set(true);
     setExpanded(true);
+    if (!page.hosted && cartHref) refreshCart(page); // the shopper may have changed the cart on the page; redraws the badges
     if (args.focus !== false) input.focus();
     const first = !loaded;
     if (first) {
@@ -588,6 +604,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     window.removeEventListener("online", onNet);
     window.removeEventListener("offline", onOffline);
     window.removeEventListener("resize", layout);
+    window.removeEventListener(CART_CHANGED, showCartCount);
     style.remove();
     panel.remove();
   }

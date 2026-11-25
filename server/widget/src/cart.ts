@@ -29,20 +29,50 @@ function onCartPage(page: CartTarget): boolean {
   return location.pathname.replace(/\/$/, "") === cartPath(page);
 }
 
-let inCart: Promise<Set<string>> | null = null;
+let inCart: Promise<CartState> | null = null;
 
-/**
- * The variant ids in the shopper's cart, read from the theme's cart.js once per page and kept up to date by our own adds.
- * Empty when the cart can't be read. A change made outside the chat (the theme's own buttons) shows after the next page
- * load, which every add from the cart page already causes.
- */
-export function cartVariantIds(page: CartTarget): Promise<Set<string>> {
-  inCart ??= Promise.resolve() // a fetch that throws synchronously is caught too
+/** What the theme's cart.js says: quantity per variant id, and the total item count (the header badge). */
+export type CartState = { quantities: Map<string, number>; itemCount: number };
+
+/** Fired on window after our own add and after a re-read, so cards and the header badge redraw. */
+export const CART_CHANGED = "askcart:cart";
+
+function readCart(page: CartTarget): Promise<CartState> {
+  return Promise.resolve() // a fetch that throws synchronously is caught too
     .then(() => fetch(cartPath(page) + ".js", { headers: { Accept: "application/json" }, credentials: "same-origin" }))
     .then((r) => (r.ok ? r.json() : null))
-    .then((c: { items?: { variant_id?: unknown }[] } | null) => new Set((c?.items ?? []).map((i) => String(i.variant_id))))
-    .catch(() => new Set<string>());
+    .then((c: { items?: { variant_id?: unknown; quantity?: unknown }[]; item_count?: unknown } | null) => {
+      const quantities = new Map<string, number>();
+      for (const i of c?.items ?? []) {
+        const id = String(i.variant_id);
+        quantities.set(id, (quantities.get(id) ?? 0) + (Number(i.quantity) || 0));
+      }
+      const itemCount = typeof c?.item_count === "number" ? c.item_count : [...quantities.values()].reduce((a, n) => a + n, 0);
+      return { quantities, itemCount };
+    })
+    .catch(() => ({ quantities: new Map<string, number>(), itemCount: 0 }));
+}
+
+/**
+ * The shopper's cart, read from the theme's cart.js once per page and kept up to date by our own adds. Empty when the cart
+ * can't be read. A change made outside the chat (the theme's own buttons) shows after the next page load, which every add
+ * from the cart page already causes, or when the panel next opens (refreshCart).
+ * Ceiling: an add that lands while the first read is still in flight can be counted twice until the next refresh.
+ */
+export function cartState(page: CartTarget): Promise<CartState> {
+  inCart ??= readCart(page);
   return inCart;
+}
+
+/** The variant ids in the shopper's cart. */
+export function cartVariantIds(page: CartTarget): Promise<Set<string>> {
+  return cartState(page).then((s) => new Set(s.quantities.keys()));
+}
+
+/** Reads the cart again (the panel opened: the shopper may have changed it on the page) and tells the listeners. */
+export function refreshCart(page: CartTarget): void {
+  inCart = readCart(page);
+  void inCart.then(() => window.dispatchEvent(new Event(CART_CHANGED)));
 }
 
 /** Tests only: forget the cached cart. */
@@ -98,7 +128,12 @@ export async function addToCart(page: CartTarget, variantId: string, quantity: n
   result ??= await viaAjax(page, variantId, quantity);
   if (result.ok) {
     window.dispatchEvent(new CustomEvent("cart:updated", { detail: { variantId, quantity, source: "askcart" } }));
-    if (inCart) void inCart.then((ids) => ids.add(variantId));
+    if (inCart) {
+      const state = await inCart;
+      state.quantities.set(variantId, (state.quantities.get(variantId) ?? 0) + quantity);
+      state.itemCount += quantity;
+    }
+    window.dispatchEvent(new Event(CART_CHANGED));
     // Themes don't redraw their cart page after a plain add.js, so the shopper on /cart would see a stale list. Reload it
     // (the panel reopens on the next page, UD13). A theme's own updateCart refreshes itself, so no reload then.
     // setTimeout: the caller's follow-ups (the keepalive cart-event log, the embed's reply) run first.

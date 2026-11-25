@@ -30,6 +30,9 @@ export const CSS =
   ":where(.panel) button{cursor:pointer;border:0;background:none;padding:0;text-transform:none;letter-spacing:normal;min-height:0;width:auto}" +
   ".ib{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:18px;color:inherit;flex:none;text-decoration:none;cursor:pointer}" +
   ".ib[hidden]{display:none}" +
+  ".ib.cart{position:relative}" +
+  ".cbadge{position:absolute;top:1px;right:0;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--ac);color:var(--ac-fg);font-size:11px;line-height:16px;font-weight:600;text-align:center}" +
+  ".cbadge[hidden]{display:none}" +
   ".hd .ib:hover{background:#f2f2f2}" +
   ".panel :focus-visible{outline:2px solid #2563eb;outline-offset:2px}" +
   ".mwrap{position:relative}" +

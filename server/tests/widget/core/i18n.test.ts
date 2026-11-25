@@ -39,6 +39,14 @@ describe("i18n", () => {
     ]);
   });
 
+  it.each(["en", "fr", "de", "es", "it", "nl"] as const)("%s has the in-cart strings with a {count} placeholder", (lang) => {
+    const dict: Record<string, string> = DICTS[lang];
+    expect(dict.in_cart_n).toContain("{count}");
+    expect(dict.cart_items).toContain("{count}");
+    expect(dict.cart_item?.trim()).toBeTruthy();
+    expect(dict.cart_item).not.toContain("{count}");
+  });
+
   it("fills variables, falls back to English, and to the key", () => {
     expect(translator("en")("only_left", { n: 3 })).toBe("Only 3 left");
     expect(translator("fr-FR")("only_left", { n: 3 })).toBe(DICTS.fr.only_left.replace("{n}", "3"));

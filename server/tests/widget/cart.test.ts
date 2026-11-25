@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // @vitest-environment-options {"url":"https://demo.myshopify.com/products/tee"}
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { addToCart, cartVariantIds, resetCartCache } from "../../widget/src/cart";
+import { addToCart, CART_CHANGED, cartState, cartVariantIds, refreshCart, resetCartCache } from "../../widget/src/cart";
 import type { PageContext } from "@/lib/widget-contract";
 import { jsonResponse } from "./core/helpers";
 
@@ -156,6 +156,33 @@ describe("cartVariantIds", () => {
     await addToCart(page, "7", 1);
     expect([...(await cartVariantIds(page))]).toEqual(["1", "2", "7"]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("cartState exposes quantities per variant and the cart's item_count; adds update both and announce the change", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [{ variant_id: 1, quantity: 2 }, { variant_id: 2, quantity: 1 }], item_count: 3 }));
+    const s = await cartState(page);
+    expect([...s.quantities]).toEqual([["1", 2], ["2", 1]]);
+    expect(s.itemCount).toBe(3);
+    const changed = vi.fn();
+    window.addEventListener(CART_CHANGED, changed);
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [] })); // an add
+    await addToCart(page, "1", 2);
+    fetchMock.mockResolvedValueOnce(jsonResponse(422, {})); // a refused add
+    await addToCart(page, "1", 5);
+    window.removeEventListener(CART_CHANGED, changed);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(s.quantities.get("1")).toBe(4);
+    expect(s.itemCount).toBe(5);
+  });
+
+  it("refreshCart re-reads cart.js and announces it", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [], item_count: 0 }));
+    expect((await cartState(page)).itemCount).toBe(0);
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [{ variant_id: 9, quantity: 4 }], item_count: 4 }));
+    const changed = new Promise((r) => window.addEventListener(CART_CHANGED, r, { once: true }));
+    refreshCart(page);
+    await changed;
+    expect((await cartState(page)).itemCount).toBe(4);
   });
 
   it("an unreadable cart is an empty set, never an error", async () => {

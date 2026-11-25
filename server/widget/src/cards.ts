@@ -3,7 +3,7 @@
 // images through safeImageUrl (cdn.shopify.com only), otherwise there is no link and a placeholder.
 import type { Card, CardsRenderer, WidgetCtx } from "../../src/lib/widget-contract";
 import { requestAdd } from "./bridge";
-import { addToCart, cartVariantIds } from "./cart";
+import { addToCart, CART_CHANGED, cartState, type CartState } from "./cart";
 import { formatPrice, resolveHttpsUrl, safeHttpsUrl, safeImageUrl, stockLabel } from "./core/format";
 import { tokenStore, uiState } from "./core/storage";
 import { trapTab } from "./panel/a11y";
@@ -27,6 +27,31 @@ function link(href: string, cls: string, text: string): HTMLAnchorElement {
 }
 
 const optionValue = (v: Variant, name: string) => v.options.find((o) => o.name === name)?.value;
+
+/** How many units of this product (any of its variants) are in the cart. */
+const cartQty = (card: Card, s: CartState) => card.variants.reduce((n, v) => n + (s.quantities.get(v.id) ?? 0), 0);
+
+/** "In your cart", or "2 in your cart" for more than one. */
+const inCartText = (t: WidgetCtx["t"], qty: number) => (qty > 1 ? t("in_cart_n", { count: qty }) : t("in_cart"));
+
+/** Calls `fn` with this product's cart quantity now, and again after every add from the chat or a re-read of the cart.
+ * Store pages only: the hosted page can't read the store's cart. The listener lives as long as the page (ceiling: one
+ * small closure per rendered card row; a long chat history keeps them all). */
+function watchInCart(card: Card, page: WidgetCtx["page"], fn: (qty: number) => void): void {
+  if (page.hosted) return;
+  const run = () => void cartState(page).then((s) => fn(cartQty(card, s)));
+  run();
+  window.addEventListener(CART_CHANGED, run);
+}
+
+/** The check + "In your cart" badge. */
+function cartBadge(cls: string): { badge: HTMLElement; set: (text: string) => void } {
+  const badge = el("span", cls);
+  badge.hidden = true;
+  const label = el("span");
+  badge.append(icon("check", 12), label);
+  return { badge, set: (text) => { label.textContent = text; badge.hidden = !text; } };
+}
 
 /** Called once per confirmed add from a card, with the store's cart URL (null when there is none). */
 export type OnAdded = (title: string, cartHref: string | null) => void;
@@ -169,18 +194,10 @@ function addControls(
   status.setAttribute("aria-live", "polite");
   const hint = el("p", "ac-card__hint");
   hint.id = `ac-hint-${Math.random().toString(36).slice(2, 8)}`;
-  box.append(button, status, hint);
-  // Already in the cart (any variant): say so, so it survives a reload or a redrawn history. Store pages only: the hosted
-  // page can't read the store's cart. An add's own "Added" line wins if it came first.
-  if (!hosted) {
-    void cartVariantIds(page).then((ids) => {
-      const href = resolveHttpsUrl(page.cartUrl);
-      if (status.childNodes.length || !variants.some((v) => ids.has(v.id))) return;
-      status.className = "ac-card__status ac-card__added";
-      status.append(t("in_cart"));
-      if (href) status.append(" · ", link(href, "ac-card__cart", t("view_cart")));
-    });
-  }
+  // Already in the cart (any variant): says so above Add, so it survives a reload or a redrawn history, and follows adds.
+  const incart = cartBadge("ac-card__incart");
+  box.append(incart.badge, button, status, hint);
+  watchInCart(card, page, (qty) => incart.set(qty > 0 ? inCartText(t, qty) : ""));
 
   let busy = false;
   let chosen: Variant | null = null;
@@ -292,12 +309,16 @@ function addControls(
   return box;
 }
 
-/** The price line under a thumbnail: nothing for a fallback card or another currency (C26), "Sold out" when it is (D72). */
-function tilePrice(card: Card, ctx: WidgetCtx): string | null {
-  if (card.available === false) return ctx.t("sold_out");
+/** The price line under a thumbnail: nothing for a fallback card or another currency (C26), "Sold out" when it is (D72),
+ * and the struck-through compare-at price next to it on sale. */
+function tilePrice(card: Card, ctx: WidgetCtx): { price: string; compareAt: string | null } | null {
+  if (card.available === false) return { price: ctx.t("sold_out"), compareAt: null };
   const { page } = ctx;
   if (card.price === null || !card.currency || (!!page.currency && card.currency !== page.currency)) return null;
-  return formatPrice(card.price, card.currency, page.locale);
+  const price = formatPrice(card.price, card.currency, page.locale);
+  if (!price) return null;
+  const onSale = card.compareAtPrice && Number(card.compareAtPrice) > Number(card.price);
+  return { price, compareAt: onSale ? formatPrice(card.compareAtPrice!, card.currency, page.locale) : null };
 }
 
 /** The inline detail sheet: covers the panel (or `into` when there is no panel), shows the full card and gives focus back
@@ -350,21 +371,30 @@ export function renderCards(into: HTMLElement, cards: Card[], ctx: WidgetCtx, me
     const tile = el("button", "ac-tile");
     tile.type = "button";
     tile.setAttribute("aria-haspopup", "dialog");
+    const media = el("span", "ac-tile__media"); // grey square behind the image, clips the hover zoom
     const img = safeImageUrl(c.imageUrl);
     if (img) {
       const i = el("img", "ac-tile__img");
       i.src = img;
       i.alt = ""; // the name right below names the product
       i.loading = "lazy";
-      tile.append(i);
+      media.append(i);
     } else {
       const ph = el("span", "ac-tile__img ac-tile__img--placeholder");
       ph.setAttribute("aria-hidden", "true");
-      tile.append(ph);
+      media.append(ph);
     }
-    tile.append(el("span", "ac-tile__title", c.title));
+    const incart = cartBadge("ac-tile__badge");
+    media.append(incart.badge);
+    watchInCart(c, ctx.page, (qty) => incart.set(qty > 0 ? inCartText(ctx.t, qty) : ""));
+    tile.append(media, el("span", "ac-tile__title", c.title));
     const price = tilePrice(c, ctx);
-    if (price) tile.append(el("span", "ac-tile__price", price));
+    if (price) {
+      const row = el("span", "ac-tile__prices");
+      row.append(el("span", "ac-tile__price", price.price));
+      if (price.compareAt) row.append(el("s", "ac-tile__compare", price.compareAt));
+      tile.append(row);
+    }
     let full: HTMLElement | null = null; // built on the first open, then kept so a chosen option and "Added" survive closing
     tile.addEventListener("click", () => openSheet(into, tile, c, (full ??= cardEl(c, ctx, messageId, onAdded)), ctx));
     li.append(tile);
@@ -375,16 +405,17 @@ export function renderCards(into: HTMLElement, cards: Card[], ctx: WidgetCtx, me
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     track.scrollBy?.({ left: dir * w, behavior: reduced ? "auto" : "smooth" });
   };
-  const nav = (dir: 1 | -1, label: string, glyph: string) => {
-    const b = el("button", `ac-cards__nav ac-cards__nav--${dir === 1 ? "next" : "prev"}`, glyph);
+  const nav = (dir: 1 | -1, label: string) => {
+    const b = el("button", `ac-cards__nav ac-cards__nav--${dir === 1 ? "next" : "prev"}`);
+    b.append(icon(dir === 1 ? "next" : "prev"));
     b.type = "button";
     b.hidden = true;
     b.setAttribute("aria-label", label);
     b.addEventListener("click", () => step(dir));
     return b;
   };
-  const prev = nav(-1, ctx.t("previous"), "‹");
-  const next = nav(1, ctx.t("next"), "›");
+  const prev = nav(-1, ctx.t("previous"));
+  const next = nav(1, ctx.t("next"));
   const sync = () => {
     const over = track.scrollWidth > track.clientWidth + 1;
     prev.hidden = !over || track.scrollLeft <= 1;
@@ -402,16 +433,25 @@ void _contract;
 /** Card styles for the panel's shadow root (Task 30 owns styles.ts and includes this). px only (Global Constraints). */
 export const CARDS_CSS = `
 .ac-cards{position:relative;margin:4px 0}
-.ac-cards__track{display:flex;gap:12px;overflow-x:auto;list-style:none;margin:0;padding:0 0 6px;scrollbar-width:thin}
-.ac-cards__slide{flex:0 0 96px;width:96px}
-.ac-tile{display:flex;flex-direction:column;gap:6px;width:96px;text-align:left;font-size:13px;line-height:17px;color:inherit}
-.ac-tile__img{display:block;width:96px;height:96px;border-radius:12px;object-fit:cover;background:#f2f2f2}
-.ac-tile:hover .ac-tile__img{filter:brightness(.94)}
-.ac-tile__title{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;overflow-wrap:anywhere;font-weight:500}
-.ac-tile__price{color:#6b6b6b}
-.ac-cards__nav{position:absolute;top:33px;width:30px;height:30px;border-radius:15px;border:1px solid #d0d0d0;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.14);cursor:pointer;z-index:1}
+.ac-cards__track{display:flex;gap:12px;overflow-x:auto;list-style:none;margin:-4px;padding:4px 4px 10px;scrollbar-width:none;scroll-snap-type:x mandatory;scroll-padding:0 4px}
+.ac-cards__track::-webkit-scrollbar{display:none}
+.ac-cards__slide{flex:0 0 168px;width:168px;scroll-snap-align:start}
+.ac-tile{display:flex;flex-direction:column;gap:6px;width:100%;text-align:left;font-size:13px;line-height:18px;color:inherit;border-radius:14px}
+.ac-tile:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.ac-tile__media{position:relative;display:block;width:100%;aspect-ratio:1;border-radius:14px;overflow:hidden;background:#f2f2f2}
+.ac-tile__img{display:block;width:100%;height:100%;object-fit:cover;background:#f2f2f2}
+.ac-tile__badge,.ac-card__incart{display:inline-flex;align-items:center;gap:4px;font-size:12px;line-height:16px;font-weight:500}
+.ac-tile__badge[hidden],.ac-card__incart[hidden]{display:none}
+.ac-tile__badge{position:absolute;top:8px;left:8px;max-width:calc(100% - 16px);padding:3px 8px 3px 6px;border-radius:12px;background:#fff;color:#111;box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.ac-tile__badge svg,.ac-card__incart svg{flex:none}
+.ac-card__incart{align-self:flex-start;color:#1a6b3a}
+.ac-tile__title{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;overflow-wrap:anywhere;font-size:14px;line-height:19px;font-weight:500;color:#111}
+.ac-tile__prices{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:baseline;font-size:13px;line-height:18px;color:#6b6b6b}
+.ac-cards__nav{position:absolute;top:66px;display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:18px;border:0;background:#fff;color:#111;box-shadow:0 1px 6px rgba(0,0,0,.22);cursor:pointer;z-index:1}
 .ac-cards__nav[hidden]{display:none}
-.ac-cards__nav--prev{left:-8px}.ac-cards__nav--next{right:-8px}
+.ac-cards__nav--prev{left:4px}.ac-cards__nav--next{right:4px}
+@media (max-width:639px){.ac-cards__slide{flex-basis:148px;width:148px}.ac-cards__nav{top:56px}}
+@media (hover:hover) and (prefers-reduced-motion:no-preference){.ac-tile__img{transition:transform .2s ease}.ac-tile:hover .ac-tile__img{transform:scale(1.03)}}
 .ac-sheet{position:absolute;top:0;right:0;bottom:0;left:0;z-index:5;display:flex;flex-direction:column;background:#fff;color:#111}
 .ac-sheet__bar{display:flex;align-items:center;gap:8px;padding:10px 12px;flex:none;border-bottom:1px solid #eee}
 .ac-sheet__back{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:18px;cursor:pointer;border:0;background:none;color:inherit}

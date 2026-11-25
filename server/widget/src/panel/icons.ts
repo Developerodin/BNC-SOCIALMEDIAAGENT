@@ -10,14 +10,17 @@ const PATHS = {
   cart: "M7 18a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42a.25.25 0 0 1-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 20 4H5.21l-.94-2H1zm16 16a2 2 0 1 0 0 4 2 2 0 0 0 0-4z",
   newchat: "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z",
   sparkle: "M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z",
+  check: "M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z",
+  prev: "M15.41 16.59 10.83 12l4.58-4.59L14 6l-6 6 6 6z",
+  next: "M8.59 16.59 13.17 12 8.59 7.41 10 6l6 6-6 6z",
   send:"M2.01 21 23 12 2.01 3 2 10l15 2-15 2z",
 };
 
-export function icon(name: keyof typeof PATHS): SVGSVGElement {
+export function icon(name: keyof typeof PATHS, size = 20): SVGSVGElement {
   const svg = document.createElementNS(NS, "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("width", "20");
-  svg.setAttribute("height", "20");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
   svg.setAttribute("aria-hidden", "true");
   const path = document.createElementNS(NS, "path");
   path.setAttribute("fill", "currentColor");

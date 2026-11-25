@@ -2,7 +2,7 @@
 // @vitest-environment-options {"url":"https://demo.myshopify.com/products/tee"}
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CARDS_CSS, renderCards } from "../../widget/src/cards";
-import { resetCartCache } from "../../widget/src/cart";
+import { refreshCart, resetCartCache } from "../../widget/src/cart";
 import { translator } from "../../widget/src/core/i18n";
 import { tokenStore } from "../../widget/src/core/storage";
 import type { Card, PageContext, WidgetApi, WidgetConfig, WidgetCtx } from "@/lib/widget-contract";
@@ -92,6 +92,34 @@ describe("layout (UD9, UD12)", () => {
     expect(tiles[0].querySelector("img")!.getAttribute("src")).toBe(IMG);
     expect(el.querySelector(".ac-card")).toBeNull();
     expect(CARDS_CSS).toMatch(/\.ac-tile__title\{[^}]*-webkit-line-clamp:2/);
+  });
+
+  it("premium tile: 168 px wide (148 px on phones), square 14 px image, snap row, 36 px arrows, zoom only without reduced motion", () => {
+    expect(CARDS_CSS).toMatch(/\.ac-cards__slide\{[^}]*flex:0 0 168px/);
+    expect(CARDS_CSS).toMatch(/@media \(max-width:639px\)\{\.ac-cards__slide\{flex-basis:148px/);
+    expect(CARDS_CSS).toMatch(/\.ac-tile__media\{[^}]*aspect-ratio:1;border-radius:14px/);
+    expect(CARDS_CSS).toMatch(/\.ac-tile__img\{[^}]*object-fit:cover/);
+    expect(CARDS_CSS).toMatch(/\.ac-cards__track\{[^}]*gap:12px[^}]*scroll-snap-type:x/);
+    expect(CARDS_CSS).toMatch(/\.ac-cards__nav\{[^}]*width:36px;height:36px/);
+    expect(CARDS_CSS).toMatch(/prefers-reduced-motion:no-preference\)\{[^}]*transition:transform \.2s[^}]*\}\.ac-tile:hover \.ac-tile__img\{transform:scale\(1\.03\)/);
+    expect(CARDS_CSS).toMatch(/\.ac-tile:focus-visible\{outline/);
+  });
+
+  it("an on-sale product shows the compare-at price struck through next to the price; a sold-out one says Sold out instead", () => {
+    const el = renderRow([card({ price: "15.00", compareAtPrice: "20.00" }), card({ id: "gid://shopify/Product/2", available: false })]);
+    const [sale, sold] = [...el.querySelectorAll<HTMLElement>(".ac-tile")];
+    expect(sale.querySelector(".ac-tile__price")!.textContent).toBe("$15.00");
+    expect(sale.querySelector("s.ac-tile__compare")!.textContent).toBe("$20.00");
+    expect(sold.querySelector(".ac-tile__price")!.textContent).toBe("Sold out");
+    expect(sold.querySelector(".ac-tile__compare")).toBeNull();
+  });
+
+  it("a title is text, never markup, on the tile too", () => {
+    const el = renderRow([card({ title: "<img src=x onerror=alert(1)>" })]);
+    const tile = el.querySelector(".ac-tile")!;
+    expect(tile.querySelector(".ac-tile__title")!.textContent).toBe("<img src=x onerror=alert(1)>");
+    expect(tile.querySelectorAll("img")).toHaveLength(1); // only the product image
+    expect(tile.querySelector("img")!.getAttribute("src")).toBe(IMG);
   });
 
   it("a thumbnail opens the detail sheet; Back closes it, keeps the card state and returns focus to the thumbnail", () => {
@@ -407,25 +435,72 @@ describe("UD13: the panel doesn't reopen over a product the shopper chose", () =
 });
 
 describe("already in the cart", () => {
-  const status = (el: HTMLElement) => el.querySelector(".ac-card__status") as HTMLElement;
+  const tileBadge = (el: HTMLElement, i = 0) => el.querySelectorAll<HTMLElement>(".ac-tile")[i].querySelector<HTMLElement>(".ac-tile__badge")!;
+  const sheetLine = (el: HTMLElement, i = 0) => el.querySelectorAll<HTMLElement>(".ac-card__incart")[i];
 
-  it("a card whose variant is in the cart says In your cart · View cart", async () => {
-    cartItems = [{ variant_id: 123 }];
+  it("a product with a variant in the cart (quantity 1) shows a check badge 'In your cart' on the image, and the sheet says it above Add", async () => {
+    cartItems = [{ variant_id: 123, quantity: 1 } as never];
     const el = render([card()]);
     await flush();
-    expect(status(el).textContent).toBe("In your cart · View cart");
-    expect(status(el).querySelector("a")?.getAttribute("href")).toBe("https://demo.myshopify.com/cart");
+    expect(tileBadge(el).hidden).toBe(false);
+    expect(tileBadge(el).textContent).toBe("In your cart");
+    expect(tileBadge(el).querySelector("svg")).not.toBeNull();
+    expect(tileBadge(el).parentElement!.classList.contains("ac-tile__media")).toBe(true);
+    expect(sheetLine(el).textContent).toBe("In your cart");
+    expect(sheetLine(el).nextElementSibling).toBe(addButton(el));
   });
 
-  it("any variant of a multi-variant product counts; other products say nothing", async () => {
-    cartItems = [{ variant_id: 22 }];
+  it("a quantity above 1 reads '2 in your cart'", async () => {
+    cartItems = [{ variant_id: 123, quantity: 2 } as never];
+    const el = render([card()]);
+    await flush();
+    expect(tileBadge(el).textContent).toBe("2 in your cart");
+    expect(sheetLine(el).textContent).toBe("2 in your cart");
+  });
+
+  it("any variant of a multi-variant product counts, quantities add up; other products have no badge", async () => {
+    cartItems = [{ variant_id: 22, quantity: 1 } as never, { variant_id: 21, quantity: 2 } as never];
     const multi = card({ variants: [variant("21", [["Size", "S"]]), variant("22", [["Size", "M"]])] });
     const other = card({ id: "gid://shopify/Product/2", variants: [variant("99", [["Title", "Default Title"]])] });
     const el = render([multi, other]);
     await flush();
-    const [a, b] = [...el.querySelectorAll(".ac-card__status")];
-    expect(a.textContent).toBe("In your cart · View cart");
-    expect(b.textContent).toBe("");
+    expect(tileBadge(el, 0).textContent).toBe("3 in your cart");
+    expect(tileBadge(el, 1).hidden).toBe(true);
+    expect(sheetLine(el, 1).hidden).toBe(true);
+  });
+
+  it("the badge appears right after a successful add, and counts up on the next one", async () => {
+    const el = render([card()]);
+    await flush();
+    expect(tileBadge(el).hidden).toBe(true);
+    fetchMock.mockResolvedValue(jsonResponse(200, {}));
+    addButton(el)!.click();
+    await flush();
+    expect(tileBadge(el).textContent).toBe("In your cart");
+    expect(sheetLine(el).textContent).toBe("In your cart");
+    addButton(el)!.click();
+    await flush();
+    expect(tileBadge(el).textContent).toBe("2 in your cart");
+    expect(cartReads).toBe(1); // the add result and the cached cart, no re-read
+  });
+
+  it("no badge after a failed add", async () => {
+    const el = render([card()]);
+    await flush();
+    fetchMock.mockResolvedValue(jsonResponse(422, { description: "No." }));
+    addButton(el)!.click();
+    await flush();
+    expect(tileBadge(el).hidden).toBe(true);
+    expect(sheetLine(el).hidden).toBe(true);
+  });
+
+  it("an add from the cart's re-read shows up too (the panel reopened)", async () => {
+    const el = render([card()]);
+    await flush();
+    cartItems = [{ variant_id: 123, quantity: 1 } as never];
+    refreshCart(page);
+    await flush();
+    expect(tileBadge(el).textContent).toBe("In your cart");
   });
 
   it("reads the cart once for all cards, and not at all on the hosted page", async () => {
@@ -433,9 +508,10 @@ describe("already in the cart", () => {
     await flush();
     expect(cartReads).toBe(1);
     resetCartCache();
-    render([card()], ctx({ hosted: true }));
+    const el = render([card()], ctx({ hosted: true }));
     await flush();
     expect(cartReads).toBe(1);
+    expect(tileBadge(el).hidden).toBe(true);
   });
 });
 
