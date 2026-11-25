@@ -163,6 +163,11 @@ test("product_questions is covered by the RLS check, and a store reads and write
   const rows = await admin`select relname from pg_class where relname = 'product_questions' and relrowsecurity and relforcerowsecurity`;
   expect(rows).toHaveLength(1);
   for (const [id, n] of [[A, "a"], [B, "b"]]) {
+    // The rows belong to products (composite FK), so each store gets products 1 and 2 first.
+    for (const p of ["1", "2"]) {
+      await admin`insert into products (store_id, shopify_id, handle, title, status, published, content, content_hash, shopify_updated_at)
+                  values (${id}, ${`gid://shopify/Product/${p}`}, ${`h${p}`}, 'T', 'ACTIVE', true, 'c', 'h', now())`;
+    }
     await admin`insert into product_questions (store_id, shopify_id, locale, content_hash, questions)
                 values (${id}, 'gid://shopify/Product/1', 'en', 'h', ${admin.json([`q ${n}?`])})`;
   }

@@ -47,6 +47,25 @@ export function deadline(ms: number, parent?: AbortSignal): { signal: AbortSigna
   };
 }
 
+/**
+ * Rejects with name "TimeoutError" after `ms`, or "AbortError" when `parent` aborts (also when it already has). For calls that
+ * take no signal (adminGraphql): the call isn't cancelled, it finishes in the background and its late result is dropped.
+ */
+export function withTimeout<T>(p: Promise<T>, ms: number, parent?: AbortSignal): Promise<T> {
+  p.catch(() => {}); // a late rejection after a timeout must not go unhandled
+  const d = deadline(ms, parent);
+  const limit = new Promise<never>((_, reject) => {
+    const fail = () => {
+      const err = new Error(d.expired() ? "Timed out" : "Aborted");
+      err.name = d.expired() ? "TimeoutError" : "AbortError";
+      reject(err);
+    };
+    if (d.signal.aborted) fail();
+    else d.signal.addEventListener("abort", fail, { once: true });
+  });
+  return Promise.race([p, limit]).finally(d.clear);
+}
+
 // HTTP status of an OpenAI error, if it has one (APIError.status); undefined for network errors.
 export function errorStatus(err: unknown): number | undefined {
   const s = (err as { status?: unknown } | null)?.status;

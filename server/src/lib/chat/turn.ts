@@ -1,6 +1,6 @@
-import { and, asc, desc, eq, gt, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { forStore, type Conn } from "@/db/client";
-import { conversations, messages } from "@/db/schema";
+import { cartEvents, conversations, messages, products } from "@/db/schema";
 import { productGid } from "@/lib/ids";
 import type { SearchHit } from "@/lib/retrieval";
 import { searchProducts } from "@/lib/search-provider";
@@ -11,9 +11,8 @@ import { answer, ChatUnavailable } from "./answer";
 import { applyBudget } from "./budget";
 import { HISTORY_MESSAGES, MCP_DAILY_MESSAGES } from "./limits";
 import { maskPII } from "./mask";
-import { buildInput, LARGE_SYSTEM_PROMPT, SYSTEM_PROMPT, type PromptProducts } from "./prompt";
+import { buildInput, LARGE_SYSTEM_PROMPT, SYSTEM_PROMPT, sanitizeData, type OrderRule, type PromptProducts } from "./prompt";
 import { rewriteQuery, type ChatTurn } from "./rewrite";
-import { ORDER_STATUS_DEF } from "./orders";
 import { runTool, toolDefs, type ToolContext } from "./tools";
 import type { SseEvent } from "./sse";
 import { mintToken, tokenHash, verifyToken } from "./token";
@@ -94,7 +93,7 @@ export function stockThreshold(settings: unknown): number {
 }
 
 export type OpenedTurn =
-  | { ok: true; replay?: undefined; conversationId: string; token: string; history: ChatTurn[]; message: string }
+  | { ok: true; replay?: undefined; conversationId: string; token: string; history: ChatTurn[]; message: string; owned: boolean }
   | { ok: true; replay: { id: string; content: string; cards: Card[] }; conversationId: string; token: string }
   | { ok: false; status: 401 | 404 | 409; session?: true };
 
@@ -130,6 +129,8 @@ export async function openTurn(
   return forStore(store.id, async (tx): Promise<OpenedTurn> => {
     const inConversation = and(eq(messages.storeId, store.id), eq(messages.conversationId, conversationId));
     let earlier: { id: string; content: string } | undefined;
+    // Whether the verified customer of this request owns the conversation (order details may only be saved into one that does).
+    let owned = isNew && opts.customer !== undefined;
     if (isNew) {
       await tx
         .insert(conversations)
@@ -142,8 +143,9 @@ export async function openTurn(
           busyUntil: TURN_LOCK,
         });
     } else {
-      const denied = await ownerDenied(tx, store.id, conversationId, opts.customer);
+      const { denied, owner } = await ownerCheck(tx, store.id, conversationId, opts.customer);
       if (denied) return denied;
+      owned = owner !== null && owner === opts.customer;
       if (opts.requestId) {
         [earlier] = await tx
           .select({ id: messages.id, content: messages.content })
@@ -171,9 +173,9 @@ export async function openTurn(
       .where(earlier ? and(inConversation, lt(messages.createdAt, createdAtOf(earlier.id))) : inConversation)
       .orderBy(desc(messages.createdAt))
       .limit(HISTORY_MESSAGES);
-    if (earlier) return { ok: true, conversationId, token, history: rows.reverse(), message: earlier.content };
+    if (earlier) return { ok: true, conversationId, token, history: rows.reverse(), message: earlier.content, owned };
     await tx.insert(messages).values({ storeId: store.id, conversationId, role: "user", content: message, requestId: opts.requestId });
-    return { ok: true, conversationId, token, history: rows.reverse(), message };
+    return { ok: true, conversationId, token, history: rows.reverse(), message, owned };
   });
 }
 
@@ -187,13 +189,19 @@ export type OwnerDenied = { ok: false; status: 401 | 404; session?: true };
  * leaves it unowned (by design: no adopting a guest chat that someone else may hold the token of).
  */
 export async function ownerDenied(tx: Conn, storeId: string, conversationId: string, customer: string | undefined): Promise<OwnerDenied | null> {
+  return (await ownerCheck(tx, storeId, conversationId, customer)).denied;
+}
+
+/** ownerDenied's answer plus the conversation's owner (null: unowned or gone), for openTurn's "does this customer own it". */
+async function ownerCheck(tx: Conn, storeId: string, conversationId: string, customer: string | undefined): Promise<{ denied: OwnerDenied | null; owner: string | null }> {
   const [c] = await tx
     .select({ owner: conversations.ownerCustomerId })
     .from(conversations)
     .where(and(eq(conversations.storeId, storeId), eq(conversations.id, conversationId)));
-  if (!c?.owner) return null;
-  if (customer === undefined) return { ok: false, status: 401, session: true };
-  return c.owner === customer ? null : { ok: false, status: 404 };
+  const owner = c?.owner ?? null;
+  if (!owner) return { denied: null, owner };
+  if (customer === undefined) return { denied: { ok: false, status: 401, session: true }, owner };
+  return { denied: owner === customer ? null : { ok: false, status: 404 }, owner };
 }
 
 /** A message's created_at, compared in SQL: a JS Date would drop Postgres' microseconds. */
@@ -249,7 +257,29 @@ export type HistoryMessage = {
   status: "ok" | "cut_off";
   cards: Card[];
   rating: -1 | 1 | null;
+  /** Assistant rows only, when something was added to the cart from this answer's cards (oldest first). */
+  cartAdds?: { title: string }[];
 };
+
+const MAX_CART_TITLE = 80;
+const MAX_CART_ADDED = 10;
+const cartTitle = (t: string) => sanitizeData(t).replace(/\s+/g, " ").trim().slice(0, MAX_CART_TITLE);
+
+/** The titles of the products added to the cart from this conversation's cards, most recent first, each product once (at most 10). */
+async function cartAddedTitles(storeId: string, conversationId: string): Promise<string[]> {
+  const at = sql`max(${cartEvents.createdAt})`;
+  const rows = await forStore(storeId, (tx) =>
+    tx
+      .select({ title: products.title })
+      .from(cartEvents)
+      .innerJoin(products, and(eq(products.storeId, cartEvents.storeId), eq(products.shopifyId, cartEvents.productId)))
+      .where(and(eq(cartEvents.storeId, storeId), eq(cartEvents.conversationId, conversationId)))
+      .groupBy(products.storeId, products.shopifyId, products.title)
+      .orderBy(desc(at))
+      .limit(MAX_CART_ADDED),
+  );
+  return rows.map((r) => cartTitle(r.title)).filter(Boolean);
+}
 
 /**
  * GET /api/chat/history (Task 20, UD13): the conversation's last 20 messages, oldest first, already masked (D41).
@@ -282,7 +312,20 @@ export async function readHistory(
       .where(and(eq(messages.storeId, storeId), eq(messages.conversationId, conversationId)))
       .orderBy(desc(messages.createdAt))
       .limit(HISTORY_MESSAGES);
-    return { ok: true as const, messages: rows.reverse().map((r) => ({ ...r, cards: (r.cards as Card[] | null) ?? [] })) };
+    const adds = await tx
+      .select({ messageId: cartEvents.messageId, title: products.title })
+      .from(cartEvents)
+      .innerJoin(products, and(eq(products.storeId, cartEvents.storeId), eq(products.shopifyId, cartEvents.productId)))
+      .where(and(eq(cartEvents.storeId, storeId), eq(cartEvents.conversationId, conversationId), inArray(cartEvents.messageId, rows.map((r) => r.id))))
+      .orderBy(asc(cartEvents.createdAt));
+    const addsOf = (id: string) => adds.filter((a) => a.messageId === id).map((a) => ({ title: cartTitle(a.title) }));
+    return {
+      ok: true as const,
+      messages: rows.reverse().map((r) => {
+        const cartAdds = r.role === "assistant" ? addsOf(r.id) : [];
+        return { ...r, cards: (r.cards as Card[] | null) ?? [], ...(cartAdds.length ? { cartAdds } : {}) };
+      }),
+    };
   });
 }
 
@@ -372,7 +415,7 @@ function topProducts(hits: SearchHit[], live: PromptProducts, n: number): Search
 async function checkProducts(
   store: TurnStore,
   ids: string[],
-  opts: { country?: string; includeGiftCards: boolean; signal: AbortSignal; catalog?: TurnCatalog },
+  opts: { country?: string; includeGiftCards: boolean; signal: AbortSignal; catalog?: TurnCatalog; variantCap?: number },
 ): Promise<PromptProducts> {
   // An mcp store has no table to fall back on, so this comes BEFORE the currency gate (an mcp row's prices are Shopify's
   // own, in the currency the payload names) and never returns fallback cards. Products Shopify couldn't give are absent.
@@ -405,6 +448,8 @@ export async function runTurn(t: {
   country?: string;
   /** The verified customer GID of the signed session (route.ts customerOf); absent for a guest. */
   customer?: string;
+  /** From openTurn: the verified customer owns this conversation. Order details are only offered and saved then. */
+  owned?: boolean;
   signal: AbortSignal;
   send: (event: SseEvent, data: unknown) => void;
 }): Promise<void> {
@@ -450,7 +495,8 @@ export async function runTurn(t: {
     // Shopify gave no answer at all: say so, so the model never turns an outage into "we don't carry that".
     const note = catalog?.degraded ? [CATALOG_DEGRADED, priced.note].filter(Boolean).join(" ") : priced.note;
     const hits = wide ? topProducts(priced.hits, live, PROMPT_PRODUCTS) : priced.hits;
-    const { input, allowed } = buildInput({ hits, live, currentProductId, history: t.history, message: t.message, threshold, note });
+    const cartAdded = catalog ? [] : await cartAddedTitles(storeId, t.conversationId).catch(() => []); // a hint: never fails the turn
+    const { input, allowed } = buildInput({ hits, live, currentProductId, history: t.history, message: t.message, threshold, note, cartAdded });
 
     const cards: Card[] = [];
     // The MCP tools (tools.ts) add the products they find to `live` and `allowed`, so onProduct below finds them too.
@@ -461,22 +507,24 @@ export async function runTurn(t: {
       threshold,
       includeGiftCards: rw.includeGiftCards,
       signal,
-      check: (ids) => checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal, catalog }),
+      check: (ids, o) => checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal, catalog, ...o }),
       catalog,
       customer: t.customer,
     };
-    // Order lookups need the Admin API (installed stores only): offered to a verified customer, a guest is told to sign in.
-    const installed = store.mode !== "mcp";
-    // The Admin tools (admin-tools.ts) need an installed store's token, so an mcp store doesn't get them.
-    const admin = !catalog;
-    const baseDefs = wide ? toolDefs({ admin }).filter((d) => d.name !== "search_products") : toolDefs({ admin });
+    // The Admin tools (admin-tools.ts) and order lookups need an installed store's token, so an mcp store gets neither.
+    const admin = store.mode !== "mcp";
+    // order_status only in a conversation the verified customer owns: its answer is saved in the chat, and an unowned
+    // (guest-started) chat can be opened by anyone holding its token. Otherwise the prompt says what to do instead.
+    const orders = admin && !!t.customer && !!t.owned;
+    const orderRule: OrderRule | undefined = !admin || orders ? undefined : t.customer ? "new_chat" : "sign_in";
+    const defs = toolDefs({ admin, orders });
     const result = await answer({
-      system: SYSTEM_PROMPT(name, installed && !t.customer),
-      largeSystem: LARGE_SYSTEM_PROMPT(name, installed && !t.customer),
+      system: SYSTEM_PROMPT(name, orderRule),
+      largeSystem: LARGE_SYSTEM_PROMPT(name, orderRule),
       input,
       // A budget or price-order question has already been filtered and sorted by applyBudget (D87); a second search would
       // bypass that (a $200 boot under "boots under $50"), so it only gets store_policies.
-      tools: { defs: installed && t.customer ? [...baseDefs, ORDER_STATUS_DEF] : baseDefs, run: (toolName, args) => runTool(toolName, args, toolCtx) },
+      tools: { defs: wide ? defs.filter((d) => d.name !== "search_products") : defs, run: (toolName, args) => runTool(toolName, args, toolCtx) },
       allowed,
       storeId,
       signal,

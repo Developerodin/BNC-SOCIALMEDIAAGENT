@@ -1294,6 +1294,21 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "product_questions_product_fk": {
+          "name": "product_questions_product_fk",
+          "tableFrom": "product_questions",
+          "tableTo": "products",
+          "columnsFrom": [
+            "store_id",
+            "shopify_id"
+          ],
+          "columnsTo": [
+            "store_id",
+            "shopify_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {

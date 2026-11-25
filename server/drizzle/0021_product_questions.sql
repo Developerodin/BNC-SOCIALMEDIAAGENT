@@ -9,3 +9,5 @@ CREATE TABLE "product_questions" (
 );
 --> statement-breakpoint
 ALTER TABLE "product_questions" ADD CONSTRAINT "product_questions_store_id_stores_id_fk" FOREIGN KEY ("store_id") REFERENCES "public"."stores"("id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "product_questions" ADD CONSTRAINT "product_questions_product_fk" FOREIGN KEY ("store_id","shopify_id") REFERENCES "public"."products"("store_id","shopify_id") ON DELETE cascade ON UPDATE no action;

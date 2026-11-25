@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, lt, sql } from "drizzle-orm";
 import { db, forStore, type Conn } from "@/db/client";
-import { productQuestions, products, stores } from "@/db/schema";
+import { products, stores } from "@/db/schema";
 import { splitsPair } from "@/lib/chunking";
 
 export type ShopifyProduct = {
@@ -200,18 +200,13 @@ export async function upsertProducts(storeId: string, ps: ShopifyProduct[], conn
 }
 
 export async function deleteProduct(storeId: string, shopifyId: string): Promise<void> {
-  await forStore(storeId, async (tx) => {
-    await tx.delete(products).where(eq(products.shopifyId, shopifyId));
-    await tx.delete(productQuestions).where(and(eq(productQuestions.storeId, storeId), eq(productQuestions.shopifyId, shopifyId)));
-  });
+  await forStore(storeId, (tx) => tx.delete(products).where(eq(products.shopifyId, shopifyId)));
 }
 
 /** Deletes rows the last full sync didn't touch; returns how many. */
 export async function sweepProducts(storeId: string, before: Date): Promise<number> {
-  const gone = await forStore(storeId, async (tx) => {
-    const rows = await tx.delete(products).where(and(eq(products.storeId, storeId), lt(products.syncedAt, before))).returning({ id: products.shopifyId });
-    if (rows.length) await tx.delete(productQuestions).where(and(eq(productQuestions.storeId, storeId), inArray(productQuestions.shopifyId, rows.map((r) => r.id))));
-    return rows;
-  });
+  const gone = await forStore(storeId, (tx) =>
+    tx.delete(products).where(and(eq(products.storeId, storeId), lt(products.syncedAt, before))).returning({ id: products.shopifyId }),
+  );
   return gone.length;
 }

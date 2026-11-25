@@ -63,15 +63,16 @@ async function loadStore(id = storeId) {
   return { id: s.id, shopDomain: s.shop_domain, name: s.name, primaryLocale: s.primary_locale, currencyCode: s.currency_code, settings: s.settings };
 }
 
-async function start(message = "hello", store?: Awaited<ReturnType<typeof loadStore>>) {
+async function start(message = "hello", store?: Awaited<ReturnType<typeof loadStore>>, customer?: string) {
   const st = store ?? (await loadStore());
-  const opened = await turn.openTurn(st, { message, pageUrl: null });
+  const opened = await turn.openTurn(st, { message, pageUrl: null, customer });
   if (!opened.ok || opened.replay) throw new Error("openTurn failed");
   return { st, ...opened };
 }
 
-async function run(extra: { productId?: string; country?: string; signal?: AbortSignal; message?: string; customer?: string } = {}) {
-  const t = await start(extra.message);
+async function run(extra: { productId?: string; country?: string; signal?: AbortSignal; message?: string; customer?: string; guestChat?: boolean } = {}) {
+  // The chat is started by the customer (owned) unless guestChat: a guest chat the customer later signs in on.
+  const t = await start(extra.message, undefined, extra.guestChat ? undefined : extra.customer);
   const events: { event: string; data: Record<string, unknown> }[] = [];
   await turn.runTurn({
     store: t.st,
@@ -82,6 +83,7 @@ async function run(extra: { productId?: string; country?: string; signal?: Abort
     productId: extra.productId,
     country: extra.country,
     customer: extra.customer,
+    owned: t.owned && extra.customer !== undefined,
     signal: extra.signal ?? new AbortController().signal,
     send: (event, data) => events.push({ event, data: data as Record<string, unknown> }),
   });
@@ -469,6 +471,36 @@ test("order_status is offered only with a verified customer; a guest on an insta
   await run();
   expect(toolNames()).not.toContain("order_status");
   expect(instructionsOf()).toMatch(/sign in to their store account/);
+});
+
+test("order_status is not offered in a conversation the signed-in customer doesn't own: the prompt asks for a new chat", async () => {
+  search.mockResolvedValue([]);
+  liveCheck.mockResolvedValue(liveMap());
+  create.mockImplementation(fakeStream(["ok"]));
+  await run({ customer: "gid://shopify/Customer/42", guestChat: true });
+  expect(toolNames()).not.toContain("order_status");
+  expect(instructionsOf()).toMatch(/New chat/);
+  expect(instructionsOf()).not.toMatch(/sign in to their store account/);
+});
+
+test("openTurn reports whether the verified customer owns the conversation", async () => {
+  search.mockResolvedValue([]);
+  liveCheck.mockResolvedValue(liveMap());
+  create.mockImplementation(fakeStream(["ok"]));
+  const st = await loadStore();
+  const customer = "gid://shopify/Customer/42";
+  const reopen = async (first: Awaited<ReturnType<typeof start>>) => {
+    await turn.runTurn({ store: st, conversationId: first.conversationId, token: first.token, history: first.history, message: first.message, customer, owned: first.owned, signal: new AbortController().signal, send: () => {} });
+    const again = await turn.openTurn(st, { token: first.token, message: "more", pageUrl: null, customer });
+    if (!again.ok || again.replay) throw new Error("reopen failed");
+    return again.owned;
+  };
+  const guest = await start("hi", st);
+  expect(guest.owned).toBe(false);
+  expect(await reopen(guest)).toBe(false); // a guest chat stays unowned after the shopper signs in
+  const mine = await start("hi", st, customer);
+  expect(mine.owned).toBe(true);
+  expect(await reopen(mine)).toBe(true);
 });
 
 test("answer throwing ChatUnavailable gives an error event with the token; the user message stays and no assistant row is saved", async () => {

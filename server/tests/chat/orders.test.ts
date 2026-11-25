@@ -33,7 +33,7 @@ const order = (name: string, over: Record<string, unknown> = {}) => ({
   fulfillments: [{ status: "SUCCESS", trackingInfo: [{ company: "DHL", number: "JD123", url: "https://track.example.com/JD123" }] }],
   ...over,
 });
-const reply = (...orders: unknown[]) => adminGraphql.mockResolvedValue({ customer: { orders: { nodes: orders } } });
+const reply = (...orders: unknown[]) => adminGraphql.mockResolvedValue({ orders: { nodes: orders } });
 const call = (args: unknown = { order_number: null }, c = ctx()) => runTool("order_status", JSON.stringify(args), c);
 
 beforeEach(() => {
@@ -48,10 +48,10 @@ test("queries the session's customer GID, never one the model supplies", async (
   const [storeId, shop, query, vars] = adminGraphql.mock.calls[0];
   expect(storeId).toBe("store-1");
   expect(shop).toBe("x.myshopify.com");
-  expect(vars).toEqual({ id: GID });
-  expect(query).toMatch(/customer\(id: \$id\)/);
-  expect(query).toMatch(/orders\(first: 5, sortKey: CREATED_AT, reverse: true\)/);
-  expect(query).not.toMatch(/query:|email/);
+  // The root orders connection (read_orders only), filtered by the numeric id of the session's GID; no customer(id:) (read_customers).
+  expect(vars).toEqual({ query: "customer_id:42" });
+  expect(query).toMatch(/orders\(first: 5, sortKey: CREATED_AT, reverse: true, query: \$query\)/);
+  expect(query).not.toMatch(/customer\(|email/);
 });
 
 test("no verified customer, or an mcp store: no Admin call", async () => {
@@ -60,7 +60,7 @@ test("no verified customer, or an mcp store: no Admin call", async () => {
   expect(adminGraphql).not.toHaveBeenCalled();
 });
 
-test("lists the recent orders with status, items, tracking, the 60-day note, inside store_data", async () => {
+test("lists the recent orders with status, items, tracking, the recent-orders note, inside store_data", async () => {
   reply(order("#1042"), order("#1041", { cancelledAt: "2026-11-02T09:00:00Z", fulfillments: [] }));
   const out = await call();
   expect(out.startsWith("<store_data>\n")).toBe(true);
@@ -71,7 +71,8 @@ test("lists the recent orders with status, items, tracking, the 60-day note, ins
   expect(out).toContain("carrier DHL, tracking number JD123, tracking link https://track.example.com/JD123");
   expect(out).toContain("Cancelled: yes, on 2026-11-02");
   expect(out).toContain("Cancelled: no");
-  expect(out).toMatch(/last 60 days/);
+  expect(out).toMatch(/5 most recent orders are visible/);
+  expect(out).not.toMatch(/60 days/);
   expect(out.length).toBeLessThan(3200);
 });
 
@@ -119,6 +120,13 @@ test("a non-https tracking link is dropped, the carrier and number stay", async 
   expect(out).not.toMatch(/http:|javascript:|tracking link/);
 });
 
+test("an already-aborted request makes no result and never throws", async () => {
+  adminGraphql.mockReturnValue(new Promise(() => {}));
+  const ac = new AbortController();
+  ac.abort();
+  expect(await call({ order_number: null }, ctx({ signal: ac.signal }))).toMatch(/temporarily unavailable/);
+});
+
 test("Admin errors and timeouts give the unavailable text and never throw", async () => {
   adminGraphql.mockRejectedValue(new Error("boom with order #1042"));
   expect(await call()).toMatch(/temporarily unavailable/);
@@ -136,10 +144,10 @@ test("Admin errors and timeouts give the unavailable text and never throw", asyn
   }
 });
 
-test("no orders at all, or an unknown customer, says so with the 60-day note", async () => {
+test("no orders at all says so", async () => {
   reply();
-  expect(await call()).toMatch(/No orders found in the last 60 days/);
-  adminGraphql.mockResolvedValue({ customer: null });
+  expect(await call()).toMatch(/No orders found/);
+  adminGraphql.mockResolvedValue({ orders: null });
   expect(await call()).toMatch(/No orders found/);
 });
 

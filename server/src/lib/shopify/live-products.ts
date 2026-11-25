@@ -40,14 +40,14 @@ export type LiveCheckResult =
 export type FallbackCard = { id: string; title: string; url: string; imageUrl: string | null };
 
 // §7.6 / D44 / D77: one request per turn for every product. onlineStoreUrl is only fetched for logging (D71).
-const QUERY = `query LiveProducts($ids: [ID!]!, $ctx: ContextualPublicationContext!, $withCtx: Boolean!) {
+const query = (variantCap: number) => `query LiveProducts($ids: [ID!]!, $ctx: ContextualPublicationContext!, $withCtx: Boolean!) {
   nodes(ids: $ids) {
     ... on Product {
       id status publishedAt isGiftCard requiresSellingPlan tracksInventory hasOnlyDefaultVariant onlineStoreUrl
       featuredMedia { preview { image { url } } }
       options { name values }
       publishedInContext(context: $ctx) @include(if: $withCtx)
-      variants(first: ${VARIANT_CAP}) {
+      variants(first: ${variantCap}) {
         pageInfo { hasNextPage }
         nodes {
           id title availableForSale inventoryQuantity inventoryPolicy inventoryItem { tracked }
@@ -144,6 +144,8 @@ export function isThrottled(e: unknown): boolean {
  * C16 a), not a gift card unless asked (D74), and in our table with an https link (D71). Sold-out products are kept (D72).
  * Never throws: a failure returns a reason and the turn falls back to fallbackCards (C11 b).
  * `currency` is the store's currency (stores.currency_code); Admin `price` is in the store's default currency.
+ * `variantCap` (default VARIANT_CAP) lowers the variants requested per product, for checks of many products at once (Shopify
+ * limits one query to 1,000 requested points; products with more variants then get moreVariants).
  * `// ponytail:` one call per turn with no cache; if many shoppers ask about the same products at once, add a 30–60 s
  * per-store cache keyed by product id.
  */
@@ -151,7 +153,7 @@ export async function liveCheck(
   storeId: string,
   shop: string,
   ids: string[],
-  opts: { country?: string; includeGiftCards: boolean; currency: string; signal?: AbortSignal },
+  opts: { country?: string; includeGiftCards: boolean; currency: string; signal?: AbortSignal; variantCap?: number },
 ): Promise<LiveCheckResult> {
   if (opts.signal?.aborted) return { ok: false, reason: "timeout" };
   let rows: Map<string, Row>;
@@ -171,7 +173,7 @@ export async function liveCheck(
   opts.signal?.addEventListener("abort", onAbort, { once: true });
   let data: { nodes: (ProductNode | null)[] };
   try {
-    const call = adminGraphql<{ nodes: (ProductNode | null)[] }>(storeId, shop, QUERY, {
+    const call = adminGraphql<{ nodes: (ProductNode | null)[] }>(storeId, shop, query(opts.variantCap ?? VARIANT_CAP), {
       ids: known,
       ctx: opts.country ? { country: opts.country } : {},
       withCtx: !!opts.country,

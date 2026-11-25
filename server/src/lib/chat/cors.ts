@@ -70,19 +70,22 @@ function tooMany(wait: number): Response {
 }
 
 /** Per-IP then per-store limit under `kind` keys; the 429 Response, or null while within both. */
-function limited(req: Request, kind: "mobile" | "web", storeId: string, ipLimit: number, storeLimit: number): Response | null {
+function limited(req: Request, kind: string, storeId: string, ipLimit: number, storeLimit: number): Response | null {
   // ponytail: in-memory counters (see rate-limit.ts), so N instances allow N times the limits; move with the M10 deployment.
   const wait =
     rateLimit(`${kind}:ip:${storeId}:${clientIp(req)}`, Date.now(), ipLimit) || rateLimit(`${kind}:store:${storeId}`, Date.now(), storeLimit);
   return wait ? tooMany(wait) : null;
 }
 
+/** A route's own rate-limit bucket on the web path (default: the shared "web" one of the chat routes). */
+export type Limits = { kind: string; ip: number; store: number };
+
 /**
  * Steps 1 and 2 of every storefront chat route (Task 19): validate `shop` and load the active store (else 404), then
  * check the Origin against its domains (else 403). A request with no Origin may instead carry the store's mobile app
  * key (appKeyCheck). Every path is rate-limited (per IP and per store). Returns the error Response, or the store and its CORS headers (none for the app).
  */
-export async function storeFor(req: Request, shop: unknown) {
+export async function storeFor(req: Request, shop: unknown, limits?: Limits) {
   if (typeof shop !== "string" || !SHOP.test(shop)) return Response.json({ error: "unknown_shop" }, { status: 404 });
   const [store] = await db
     .select({
@@ -109,7 +112,7 @@ export async function storeFor(req: Request, shop: unknown) {
   const cors = corsFor(req, store);
   if (!cors) return new Response(null, { status: 403 });
   // The Origin is only a claim a script can spoof, so an allowed one is limited too (after the check: refused ones cost nothing).
-  const slow = limited(req, "web", store.id, WEB_IP_LIMIT, WEB_STORE_LIMIT);
+  const slow = limited(req, limits?.kind ?? "web", store.id, limits?.ip ?? WEB_IP_LIMIT, limits?.store ?? WEB_STORE_LIMIT);
   return slow ?? { store: rest, cors };
 }
 

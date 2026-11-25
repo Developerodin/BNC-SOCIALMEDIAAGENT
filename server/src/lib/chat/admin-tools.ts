@@ -5,14 +5,15 @@ import { products } from "@/db/schema";
 import { buildContent } from "@/lib/products";
 import { adminGraphql } from "@/lib/shopify/admin";
 import { refreshProduct } from "@/lib/sync";
-import { numberProducts } from "./number-products";
+import { MAX_DESCRIPTION_CHARS, numberProducts, productNumber } from "./number-products";
+import { withTimeout } from "./openai";
 import { productBlock, sanitizeData } from "./prompt";
 import type { ToolContext } from "./tools";
 
 // Tools that read the store live through the Admin API, offered only for installed stores (mode 'app', so an Admin token
 // exists; turn.ts leaves them out for MCP-only stores, and tools.ts refuses them when the turn has a catalog):
-// - store_overview: catalog-wide facts (how many products, which collections and types) the 8 products per answer can't give.
-// - refresh_product: one product re-read from Shopify, written to our table (the sync's own code) and returned in full.
+// - store_overview: catalog-wide facts (how many products, which collections) the 8 products per answer can't give.
+// - refresh_product: the store's own copy of one product (specifications, collections); re-read from Shopify when it is stale or the shopper says it is outdated.
 // - browse_collection: a collection's products, 8 per page, live-checked and numbered like search_products' results.
 // Like the other tools, when to call each is in its description (see TOOLS_RULE in prompt.ts). Results are plain text for
 // tools.ts to wrap in <store_data>; every merchant string in them is sanitized. Nothing here throws out of the tool loop.
@@ -20,11 +21,13 @@ import type { ToolContext } from "./tools";
 const TIMEOUT_MS = 3000; // like liveCheck
 const MAX_RESULT_CHARS = 3900; // each result stays under ~4,000 characters
 const OVERVIEW_TTL_MS = 10 * 60_000;
-const REFRESH_COOLDOWN_MS = 60_000;
-const MAX_DESCRIPTION_CHARS = 2000;
+const OVERVIEW_FAILURE_MS = 30_000;
+const REFRESH_COOLDOWN_MS = 10 * 60_000;
+const STALE_MS = 15 * 60_000; // a stored product synced longer ago than this is re-read
+const MAX_REFRESHES = 2; // refresh_product calls per turn
 const PAGE_SIZE = 8;
 const MAX_PAGE = 5;
-const MAX_LISTED = 50; // collections and product types in the overview
+const MAX_LISTED = 50; // collections in the overview
 
 const UNAVAILABLE = "Store information is temporarily unavailable. Answer from <store_data> only, or tell the shopper you can't check right now.";
 
@@ -33,7 +36,7 @@ export const ADMIN_TOOL_DEFS: FunctionTool[] = [
     type: "function",
     name: "store_overview",
     description:
-      "Get facts about the whole store, live: how many products it sells, its collections (with product counts) and its product types. Call it for questions about the whole store or catalog: how many products there are, what categories or collections it has, what kinds of products it sells.",
+      "Get facts about the whole store, live: how many products it sells and its collections (with product counts). Call it for questions about the whole store or catalog: how many products there are, what categories or collections it has.",
     strict: true,
     parameters: { type: "object", properties: {}, required: [], additionalProperties: false },
   },
@@ -41,12 +44,15 @@ export const ADMIN_TOOL_DEFS: FunctionTool[] = [
     type: "function",
     name: "refresh_product",
     description:
-      "Re-read ONE product of <store_data> from the store right now and get its full details: description, options, specifications (dimensions, material, care and other product fields) and collections. Call it when the shopper asks about a specific detail <store_data> doesn't show, such as dimensions, material or care, or says the information looks outdated. Not for price or stock: those are only in the LIVE lines.",
+      "Get the store's own record of ONE product of <store_data>: its specifications (store fields such as dimensions, material, care) and collections, re-read from the store when it may be out of date. Call it when the shopper asks about such a specification <store_data> doesn't show, or says the information looks outdated (then set outdated to true). Not for variants, sizes or colours: use product_details for those, if you have it. Not for price or stock: those are only in the LIVE lines.",
     strict: true,
     parameters: {
       type: "object",
-      properties: { product: { type: "string", description: "The product's number from <store_data>, for example '2' for #2." } },
-      required: ["product"],
+      properties: {
+        product: { type: "string", description: "The product's number from <store_data>, for example '2' for #2." },
+        outdated: { type: "boolean", description: "True only when the shopper says the product information looks outdated or wrong, to force a fresh read." },
+      },
+      required: ["product", "outdated"],
       additionalProperties: false,
     },
   },
@@ -73,7 +79,7 @@ export const ADMIN_TOOL_NAMES: ReadonlySet<string> = new Set(ADMIN_TOOL_DEFS.map
 export async function runAdminTool(name: string, args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
   try {
     if (name === "store_overview") return await storeOverview(ctx);
-    if (name === "refresh_product") return await refresh(args.product, ctx);
+    if (name === "refresh_product") return await refresh(args.product, args.outdated === true, ctx);
     return await browse(args.collection, args.page, ctx);
   } catch (e) {
     // No shopper text in the log: only the store, the tool and Shopify's/our own error message.
@@ -82,31 +88,16 @@ export async function runAdminTool(name: string, args: Record<string, unknown>, 
   }
 }
 
-/** Rejects after TIMEOUT_MS or when the request is aborted. The underlying call isn't cancelled (adminGraphql takes no signal); its late result is dropped. */
-function withTimeout<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
-  p.catch(() => {}); // a late rejection after a timeout must not go unhandled
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let onAbort: (() => void) | undefined;
-  const limit = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("timeout")), TIMEOUT_MS);
-    onAbort = () => reject(new Error("aborted"));
-    if (signal.aborted) onAbort();
-    else signal.addEventListener("abort", onAbort, { once: true });
-  });
-  return Promise.race([p, limit]).finally(() => {
-    clearTimeout(timer);
-    if (onAbort) signal.removeEventListener("abort", onAbort);
-  });
-}
-
 const gql = <T>(ctx: ToolContext, query: string, variables?: Record<string, unknown>) =>
-  withTimeout(adminGraphql<T>(ctx.store.id, ctx.store.shopDomain, query, variables), ctx.signal);
+  withTimeout(adminGraphql<T>(ctx.store.id, ctx.store.shopDomain, query, variables), TIMEOUT_MS, ctx.signal);
 
 // ---------------------------------------------------------------------------------------------------------------------
 // store_overview
 
 // Cost (Admin GraphQL, bucket of 1,000 points, restoring 50/s): productsCount ~1, collections(first: 50) with a nested
-// productsCount ~100, productTypes(first: 50) ~50; about 150-200 points per call at worst, so one call per store per 10 minutes.
+// productsCount ~100; about 100-150 points per call at worst, so one call per store per 10 minutes.
+// Product types are left out on purpose: Admin's productTypes lists types used only by draft products too, and our own
+// products table keeps the type only inside its text, so there is no leak-free list to give.
 // "published_status:published" is the Online Store; draft and archived products are not counted. Collection.productsCount
 // counts every product in the collection, including ones not for sale, so a collection's count can be a little high.
 const OVERVIEW = `query StoreOverview {
@@ -115,7 +106,6 @@ const OVERVIEW = `query StoreOverview {
     pageInfo { hasNextPage }
     nodes { id title productsCount { count } }
   }
-  productTypes(first: ${MAX_LISTED}) { pageInfo { hasNextPage } nodes }
 }`;
 
 type Overview = {
@@ -123,35 +113,53 @@ type Overview = {
   atLeast: boolean;
   collections: { id: string; title: string; count: number }[];
   moreCollections: boolean;
-  types: string[];
-  moreTypes: boolean;
 };
 
 // ponytail: per process and per store. With several server instances each keeps its own copy (so up to N calls per 10
 // minutes), and a restart empties it. Upgrade path: a short-TTL row in Postgres, or Redis, if the Admin cost shows up.
+// One request in flight per store (simultaneous first calls share it), and a failure is remembered for 30 s so a broken
+// token or an outage isn't retried by every turn.
 const overviews = new Map<string, { at: number; value: Overview }>();
+const overviewInflight = new Map<string, Promise<Overview>>();
+const overviewFailed = new Map<string, number>();
 
 /** The store's overview, from the 10-minute cache or the Admin API. Throws when the API fails (runAdminTool turns that into "unavailable"). */
-async function overviewOf(ctx: ToolContext): Promise<Overview> {
-  const hit = overviews.get(ctx.store.id);
+function overviewOf(ctx: ToolContext): Promise<Overview> {
+  const id = ctx.store.id;
+  const hit = overviews.get(id);
   const now = Date.now();
-  if (hit && now - hit.at < OVERVIEW_TTL_MS) return hit.value;
+  if (hit && now - hit.at < OVERVIEW_TTL_MS) return Promise.resolve(hit.value);
+  const failedAt = overviewFailed.get(id);
+  if (failedAt !== undefined && now - failedAt < OVERVIEW_FAILURE_MS) return Promise.reject(new Error("store overview failed recently"));
+  const running = overviewInflight.get(id);
+  if (running) return running;
+  const p = fetchOverview(ctx)
+    .then((value) => {
+      for (const [k, v] of overviews) if (now - v.at >= OVERVIEW_TTL_MS) overviews.delete(k);
+      overviews.set(id, { at: Date.now(), value });
+      overviewFailed.delete(id);
+      return value;
+    })
+    .catch((e) => {
+      overviewFailed.set(id, Date.now());
+      throw e;
+    })
+    .finally(() => overviewInflight.delete(id));
+  overviewInflight.set(id, p);
+  return p;
+}
+
+async function fetchOverview(ctx: ToolContext): Promise<Overview> {
   const d = await gql<{
     productsCount: { count: number; precision: string };
     collections: { pageInfo: { hasNextPage: boolean }; nodes: { id: string; title: string; productsCount: { count: number } }[] };
-    productTypes: { pageInfo: { hasNextPage: boolean }; nodes: string[] };
   }>(ctx, OVERVIEW);
-  const value: Overview = {
+  return {
     total: d.productsCount.count,
     atLeast: d.productsCount.precision === "AT_LEAST",
     collections: d.collections.nodes.map((c) => ({ id: c.id, title: c.title, count: c.productsCount.count })),
     moreCollections: d.collections.pageInfo.hasNextPage,
-    types: d.productTypes.nodes.filter(Boolean),
-    moreTypes: d.productTypes.pageInfo.hasNextPage,
   };
-  for (const [k, v] of overviews) if (now - v.at >= OVERVIEW_TTL_MS) overviews.delete(k);
-  overviews.set(ctx.store.id, { at: now, value });
-  return value;
 }
 
 async function storeOverview(ctx: ToolContext): Promise<string> {
@@ -162,49 +170,59 @@ async function storeOverview(ctx: ToolContext): Promise<string> {
       ? `Collections (title, number of products): ${o.collections.map((c) => `${c.title.slice(0, 80)} (${c.count})`).join("; ")}${o.moreCollections ? "; and more not listed" : ""}.`
       : "The store has no collections.",
   );
-  lines.push(o.types.length ? `Product types: ${o.types.map((t) => t.slice(0, 80)).join(", ")}${o.moreTypes ? ", and more not listed" : ""}.` : "The store sets no product types.");
   return sanitizeData(lines.join("\n")).slice(0, MAX_RESULT_CHARS);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // refresh_product
 
-// ponytail: per process, like the overview cache; the limit keeps one shopper (or a loop) from hammering Admin for one
-// product. With several instances the real limit is N per minute. Upgrade path: a shared store.
+// ponytail: per process, like the overview cache; the cooldown keeps one shopper (or a loop) from re-reading one product
+// from Admin again and again. With several instances the real limit is N per window. Upgrade path: a shared store.
 const lastRefresh = new Map<string, number>();
-
-const productNumber = (arg: unknown) => (typeof arg === "number" ? String(arg) : typeof arg === "string" ? arg.trim().replace(/^#/, "") : "");
+// refresh_product calls per turn (a ToolContext lives for one turn).
+const refreshCalls = new WeakMap<ToolContext, number>();
 
 /**
- * Re-reads the product with this number through the sync's own refreshProduct (fetch with metafields and collections,
- * upsert, queue the re-embed), so our copy and its embeddings catch up too. The model never passes a GID, so it can only
- * refresh a product of this turn's <store_data>. Within a minute of the last refresh it gets the stored copy instead.
- * A product that is no longer active and published is reported as gone, never described.
+ * The store's copy of the product with this number: the stored row while it was synced within 15 minutes, otherwise (or when
+ * the shopper says it is outdated) re-read through the sync's own refreshProduct (fetch with metafields and collections,
+ * upsert, queue the re-embed), so our copy and its embeddings catch up too. A product is re-read at most once per 10 minutes;
+ * a timeout keeps that cooldown (the read may still finish in the background), a real error clears it. At most 2 calls per
+ * turn. The model never passes a GID, so it can only refresh a product of this turn's <store_data>. A product that is no
+ * longer active and published is reported as gone, never described.
  */
-async function refresh(arg: unknown, ctx: ToolContext): Promise<string> {
+async function refresh(arg: unknown, outdated: boolean, ctx: ToolContext): Promise<string> {
   const n = productNumber(arg);
   const id = ctx.allowed.get(n);
   if (!id) return "Unknown product number: use a number from <store_data>.";
+  const calls = (refreshCalls.get(ctx) ?? 0) + 1;
+  refreshCalls.set(ctx, calls);
+  if (calls > MAX_REFRESHES) return "Product details were already looked up twice in this turn. Answer from <store_data> and what you have.";
 
   const key = `${ctx.store.id}|${id}`;
   const now = Date.now();
+  const [row] = await forStore(ctx.store.id, (tx) =>
+    tx
+      .select({ content: products.content, syncedAt: products.syncedAt, status: products.status, published: products.published })
+      .from(products)
+      .where(and(eq(products.storeId, ctx.store.id), eq(products.shopifyId, id))),
+  );
   const last = lastRefresh.get(key);
-  if (last !== undefined && now - last < REFRESH_COOLDOWN_MS) {
-    const [row] = await forStore(ctx.store.id, (tx) =>
-      tx.select({ content: products.content }).from(products).where(and(eq(products.storeId, ctx.store.id), eq(products.shopifyId, id))),
-    );
-    if (!row) return "Product details are unavailable right now. Answer from <store_data> only.";
-    const body = `#${n}\n(This product was refreshed less than a minute ago; this is the stored copy.)\n${row.content}`;
-    return sanitizeData(body).slice(0, MAX_RESULT_CHARS);
+  const cooling = last !== undefined && now - last < REFRESH_COOLDOWN_MS;
+  const stale = !row || now - row.syncedAt.getTime() > STALE_MS;
+  if (row && (!stale && !outdated || cooling)) {
+    if (row.status !== "ACTIVE" || !row.published) return "This product is no longer available in the store.";
+    return sanitizeData(`#${n}\n(Stored copy of the product.)\n${row.content}`).slice(0, MAX_RESULT_CHARS);
   }
+  if (!row && cooling) return "Product details are unavailable right now. Answer from <store_data> only.";
   for (const [k, t] of lastRefresh) if (now - t >= REFRESH_COOLDOWN_MS) lastRefresh.delete(k);
   lastRefresh.set(key, now);
 
   let p;
   try {
-    p = await withTimeout(refreshProduct(ctx.store.id, id), ctx.signal);
+    p = await withTimeout(refreshProduct(ctx.store.id, id), TIMEOUT_MS, ctx.signal);
   } catch (e) {
-    lastRefresh.delete(key); // nothing was refreshed, so a retry is allowed
+    // A timeout or abort keeps the cooldown: the read may still finish in the background. A real error allows a retry.
+    if (!(e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError"))) lastRefresh.delete(key);
     throw e;
   }
   if (p === undefined) {

@@ -226,3 +226,24 @@ test("cards come back exactly as saved (C15 b), with no live re-check", async ()
   const { messages } = await (await get(shopA, c.token)).json();
   expect(messages[1].cards).toEqual(cards);
 });
+
+test("assistant items carry the adds made from their cards (oldest first); other items have no cartAdds", async () => {
+  await admin`insert into products (store_id, shopify_id, handle, title, status, published, content, content_hash, shopify_updated_at)
+              values (${storeA}, 'gid://shopify/Product/71', 'a', 'Wax <b>One</b>', 'ACTIVE', true, 'c', 'h', now()),
+                     (${storeA}, 'gid://shopify/Product/72', 'b', 'Wax Two', 'ACTIVE', true, 'c', 'h', now())`;
+  const c = await conversation(storeA);
+  const [, answer] = await addMessages(storeA, c.id, [
+    { role: "user", content: "wax" },
+    { role: "assistant", content: "two waxes" },
+    { role: "assistant", content: "nothing added" },
+  ]);
+  const add = (product: string, at: string) =>
+    admin`insert into cart_events (store_id, conversation_id, message_id, product_id, variant_id, quantity, event_id, created_at)
+          values (${storeA}, ${c.id}, ${answer}, ${product}, '1', 1, gen_random_uuid(), ${at}::timestamptz)`;
+  await add("gid://shopify/Product/72", "2026-11-24T11:00:02Z");
+  await add("gid://shopify/Product/71", "2026-11-24T11:00:01Z");
+  const { messages } = await (await get(shopA, c.token)).json();
+  expect(messages[0]).not.toHaveProperty("cartAdds");
+  expect(messages[1].cartAdds).toEqual([{ title: "Wax <b>One</b>" }, { title: "Wax Two" }]);
+  expect(messages[2]).not.toHaveProperty("cartAdds");
+});

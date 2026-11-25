@@ -4,9 +4,9 @@ import { searchProducts } from "@/lib/search-provider";
 import { getProduct } from "@/lib/shopify/catalog-mcp";
 import { CATALOG_DEGRADED, catalogProduct, type TurnCatalog } from "@/lib/shopify/catalog-turn";
 import { askPolicies, POLICY_TYPES, type PolicyType } from "@/lib/shopify/storefront-mcp";
-import { orderStatus } from "./orders";
+import { ORDER_STATUS_DEF, orderStatus } from "./orders";
 import { ADMIN_TOOL_DEFS, ADMIN_TOOL_NAMES, runAdminTool } from "./admin-tools";
-import { numberProducts } from "./number-products";
+import { MAX_DESCRIPTION_CHARS, numberProducts, productNumber } from "./number-products";
 import { productBlock, sanitizeData, type PromptProducts } from "./prompt";
 
 // The chat agent's tools (Responses API function tools), run by answer()'s tool loop:
@@ -14,6 +14,9 @@ import { productBlock, sanitizeData, type PromptProducts } from "./prompt";
 // - search_products: another product search through the store's provider (ours, or Shopify's Catalog MCP, D89), when the
 //   turn's first search didn't fit. New products are live-checked and numbered after this turn's, so [[product:<n>]]
 //   cards work for them.
+// - product_details: one product's variants, options and catalog details (Shopify UCP get_product); only with UCP_AGENT_PROFILE_URL.
+// - store_overview, refresh_product, browse_collection (admin-tools.ts): live Admin API reads, installed stores only.
+// - order_status (orders.ts): the signed-in shopper's own recent orders, only in a chat that shopper owns.
 // Results are wrapped in <store_data> and sanitized like the rest of the store data (prompt rules 1 and 8).
 
 /** At most this many new products per search_products call, so one call can't flood the prompt. */
@@ -63,7 +66,7 @@ const PRODUCT_DETAILS_DEF: FunctionTool = {
   type: "function",
   name: "product_details",
   description:
-    "Get the full details of ONE product from <store_data>: its description and specifications, and all its options and variants (sizes, colours, materials). Call it when the shopper asks about a specific product's details that <store_data> doesn't cover, such as whether a size or colour exists or what it is made of. Not for price or stock: those are only in the LIVE lines.",
+    "Get the variants, options and catalog details of ONE product from <store_data> (from Shopify's catalog): its description and all its options and variants (sizes, colours, materials). Call it when the shopper asks whether a size, colour or other variant exists, or about its options. Not for the store's own specifications such as dimensions, material or care, and not when the shopper says the information looks outdated: use refresh_product for those, if you have it. Not for price or stock: those are only in the LIVE lines.",
   strict: true,
   parameters: {
     type: "object",
@@ -75,11 +78,13 @@ const PRODUCT_DETAILS_DEF: FunctionTool = {
 
 /**
  * The tools to offer: TOOL_DEFS, plus product_details when the UCP agent profile is configured, plus the Admin API tools
- * (admin-tools.ts) when `admin` is true: only for installed stores, since an MCP-only store has no Admin token.
+ * (admin-tools.ts) when `admin` is true: only for installed stores, since an MCP-only store has no Admin token. `orders`
+ * adds order_status (turn.ts: admin, and the verified customer owns the conversation); it never applies without `admin`.
  */
-export const toolDefs = (opts: { admin?: boolean } = {}): FunctionTool[] => {
+export const toolDefs = (opts: { admin?: boolean; orders?: boolean } = {}): FunctionTool[] => {
   const base = process.env.UCP_AGENT_PROFILE_URL ? [...TOOL_DEFS, PRODUCT_DETAILS_DEF] : TOOL_DEFS;
-  return opts.admin ? [...base, ...ADMIN_TOOL_DEFS] : base;
+  if (!opts.admin) return base;
+  return opts.orders ? [...base, ...ADMIN_TOOL_DEFS, ORDER_STATUS_DEF] : [...base, ...ADMIN_TOOL_DEFS];
 };
 
 export type ToolContext = {
@@ -92,7 +97,7 @@ export type ToolContext = {
   includeGiftCards: boolean;
   signal: AbortSignal;
   /** The turn's live check (turn.ts checkProducts). */
-  check: (ids: string[]) => Promise<PromptProducts>;
+  check: (ids: string[], opts?: { variantCap?: number }) => Promise<PromptProducts>;
   /** An mcp-mode store's per-turn catalog (see catalog-turn.ts); undefined for installed stores. */
   catalog?: TurnCatalog;
   /** The verified customer GID from the signed session (never from the model or the shopper's text); order_status reads only this customer's orders. */
@@ -110,8 +115,11 @@ export async function runTool(name: string, rawArgs: string, ctx: ToolContext): 
     return "Invalid arguments.";
   }
   if (name === "product_details") return data(await productDetails(args.product, ctx));
-  if (name === "order_status") return data(await orderStatus(args, ctx));
-  if (ADMIN_TOOL_NAMES.has(name)) return ctx.catalog ? `Unknown tool: ${name}.` : data(await runAdminTool(name, args, ctx));
+  // The Admin tools and order_status need an installed store's token: an mcp store (it has a catalog) never gets them.
+  if (name === "order_status" || ADMIN_TOOL_NAMES.has(name)) {
+    if (ctx.catalog) return `Unknown tool: ${name}.`;
+    return data(name === "order_status" ? await orderStatus(args, ctx) : await runAdminTool(name, args, ctx));
+  }
   const query = typeof args.query === "string" ? args.query.slice(0, 500) : "";
   if (!query.trim()) return "Invalid arguments: query is empty.";
 
@@ -132,7 +140,6 @@ export async function runTool(name: string, rawArgs: string, ctx: ToolContext): 
 
 /** The product_details text is cut to this many characters (descriptions can be long). */
 const MAX_DETAILS_CHARS = 4000;
-const MAX_DESCRIPTION_CHARS = 2000;
 const MAX_VARIANTS = 40;
 
 const text = (v: unknown): string => (typeof v === "string" ? v.replace(/\s+/g, " ").trim() : "");
@@ -149,7 +156,7 @@ const list = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.fi
  * doesn't have: description, options and variant names. Links, images and selling-plan prices are left out too.
  */
 async function productDetails(arg: unknown, ctx: ToolContext): Promise<string> {
-  const n = typeof arg === "number" ? String(arg) : typeof arg === "string" ? arg.trim().replace(/^#/, "") : "";
+  const n = productNumber(arg);
   const id = ctx.allowed.get(n);
   if (!id) return "Unknown product number: use a number from <store_data>.";
   // An mcp store goes through the turn's breaker and time budget; an installed store calls get_product as before.

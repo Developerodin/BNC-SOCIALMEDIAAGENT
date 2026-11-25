@@ -1,6 +1,7 @@
 import type { FunctionTool } from "openai/resources/responses/responses";
 import { adminGraphql } from "@/lib/shopify/admin";
 import { httpsUrl } from "@/lib/shopify/live-products";
+import { withTimeout } from "./openai";
 import { sanitizeData } from "./prompt";
 import type { ToolContext } from "./tools";
 
@@ -8,9 +9,11 @@ import type { ToolContext } from "./tools";
 // session's verified GID (ToolContext.customer, set by the route from the signed X-AskCart-Customer session): the model
 // passes no id, and orders are never searched store-wide, by number alone or by email. Only the fields below are kept, so
 // addresses, emails, phones, payment data, notes and prices never reach the model.
+// The orders are read with the root `orders(query: "customer_id:<id>")`, which needs only read_orders; `customer(id:)` would
+// need read_customers, which the app doesn't have.
 // Failure modes: Admin error, timeout or a missing token -> one "temporarily unavailable" sentence (the tool loop never sees
-// a throw). Ceiling: the app has read_orders only, so Shopify shows orders of the last 60 days; the model is told so. The
-// 5 most recent orders are fetched, so an older order that is still within 60 days is "not found among recent orders".
+// a throw). Ceiling: only the 5 most recent orders are fetched, so an older order is "not found among recent orders" and the
+// model points the shopper to the store's account page.
 
 const TIMEOUT_MS = 3000;
 const ORDERS = 5;
@@ -22,7 +25,7 @@ export const ORDER_STATUS_DEF: FunctionTool = {
   type: "function",
   name: "order_status",
   description:
-    "Look up the signed-in shopper's own recent orders: order status, delivery, shipping and tracking. Call it when the shopper asks about their own order, delivery, shipping status or tracking. Only their 5 most recent orders from the last 60 days are visible.",
+    "Look up the signed-in shopper's own recent orders: order status, delivery, shipping and tracking. Call it when the shopper asks about their own order, delivery, shipping status or tracking. Only their 5 most recent orders are visible.",
   strict: true,
   parameters: {
     type: "object",
@@ -34,14 +37,12 @@ export const ORDER_STATUS_DEF: FunctionTool = {
   },
 };
 
-const QUERY = `query CustomerOrders($id: ID!) {
-  customer(id: $id) {
-    orders(first: ${ORDERS}, sortKey: CREATED_AT, reverse: true) {
-      nodes {
-        name createdAt displayFinancialStatus displayFulfillmentStatus cancelledAt
-        lineItems(first: ${LINE_ITEMS}) { nodes { title variantTitle quantity } }
-        fulfillments(first: 5) { status trackingInfo(first: 3) { company number url } }
-      }
+const QUERY = `query CustomerOrders($query: String!) {
+  orders(first: ${ORDERS}, sortKey: CREATED_AT, reverse: true, query: $query) {
+    nodes {
+      name createdAt displayFinancialStatus displayFulfillmentStatus cancelledAt
+      lineItems(first: ${LINE_ITEMS}) { nodes { title variantTitle quantity } }
+      fulfillments(first: 5) { status trackingInfo(first: 3) { company number url } }
     }
   }
 }`;
@@ -56,7 +57,7 @@ type OrderNode = {
   fulfillments?: { status?: unknown; trackingInfo?: { company?: unknown; number?: unknown; url?: unknown }[] }[];
 };
 
-const WINDOW_NOTE = "Only orders from the last 60 days are visible here; an older order may exist that is not shown.";
+const WINDOW_NOTE = "Only the 5 most recent orders are visible here; an older order may exist that is not shown, and the shopper can find it on the store's account page.";
 const UNAVAILABLE = "Order lookup is temporarily unavailable. Suggest the shopper checks their order confirmation email or the store's account page.";
 
 const str = (v: unknown, max = MAX_TEXT): string => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "");
@@ -93,23 +94,19 @@ function describe(o: OrderNode): string {
 }
 
 async function fetchOrders(ctx: ToolContext, customer: string): Promise<OrderNode[] | null> {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
-  const onAbort = () => ac.abort();
-  ctx.signal.addEventListener("abort", onAbort, { once: true });
   try {
-    const call = adminGraphql<{ customer: { orders?: { nodes?: OrderNode[] } } | null }>(ctx.store.id, ctx.store.shopDomain, QUERY, { id: customer });
-    call.catch(() => {}); // a late rejection after a timeout must not go unhandled
-    const aborted = new Promise<never>((_, reject) => ac.signal.addEventListener("abort", () => reject(new DOMException("Timed out", "AbortError")), { once: true }));
-    const data = await Promise.race([call, aborted]);
-    return arr(data?.customer?.orders?.nodes);
+    // The numeric id of the verified session GID, never anything the model or the shopper wrote.
+    const id = customer.slice(customer.lastIndexOf("/") + 1);
+    const data = await withTimeout(
+      adminGraphql<{ orders?: { nodes?: OrderNode[] } }>(ctx.store.id, ctx.store.shopDomain, QUERY, { query: `customer_id:${id}` }),
+      TIMEOUT_MS,
+      ctx.signal,
+    );
+    return arr(data?.orders?.nodes);
   } catch (err) {
     // Store id and error name only: never order contents or the shopper's text.
     console.warn("order lookup failed", { storeId: ctx.store.id, error: err instanceof Error ? err.name : typeof err });
     return null;
-  } finally {
-    clearTimeout(timer);
-    ctx.signal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -120,7 +117,7 @@ export async function orderStatus(args: Record<string, unknown>, ctx: ToolContex
   const wanted = typeof args.order_number === "string" ? normalize(args.order_number.slice(0, 40)) : "";
   const all = await fetchOrders(ctx, ctx.customer);
   if (all === null) return UNAVAILABLE;
-  if (all.length === 0) return `No orders found in the last 60 days. ${WINDOW_NOTE}`;
+  if (all.length === 0) return "No orders found for this shopper.";
 
   const orders = wanted ? all.filter((o) => sameOrder(str(o.name, 40), wanted)) : all;
   if (orders.length === 0) return sanitizeData(`Order ${str(args.order_number, 40)} was not found among the shopper's ${all.length} most recent orders. ${WINDOW_NOTE}`);

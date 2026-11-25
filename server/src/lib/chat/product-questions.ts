@@ -7,12 +7,13 @@ import { sanitizeData } from "./prompt";
 
 // The product-page block's suggested questions when the merchant wrote none (GET /api/chat/product-questions).
 
-export const QUESTIONS_TIMEOUT_MS = 5000;
+const QUESTIONS_TIMEOUT_MS = 5000;
 const MAX_QUESTIONS = 3;
 const MAX_QUESTION_CHARS = 80;
 const MAX_CONTENT_CHARS = 6000; // a product's text; the rest adds cost, not better questions
 
-const LANGUAGE: Record<string, string> = { en: "English", fr: "French", de: "German", es: "Spanish", it: "Italian", nl: "Dutch" };
+// The prompt's language name comes from the locale code (widgetLocale's six locales), so there is no second list to keep in step.
+const languageName = (lang: string) => new Intl.DisplayNames(["en"], { type: "language" }).of(lang) ?? "English";
 
 const SCHEMA = {
   type: "object",
@@ -68,39 +69,55 @@ async function generate(content: string, language: string): Promise<string[] | n
   }
 }
 
-export type ProductQuestionsResult = { questions: string[]; failed: boolean };
+type ProductQuestionsResult = { questions: string[]; failed: boolean };
+
+// ponytail: per process. Simultaneous first requests for one product and language share one OpenAI call; with several
+// instances each makes its own, and the upsert makes the later write harmless.
+const inflight = new Map<string, Promise<ProductQuestionsResult>>();
 
 /**
- * Up to 3 questions for one product in the widget's locale nearest `locale`. Empty for an unknown or unpublished product
- * or a gift card. Served from product_questions while its content_hash matches the product's; otherwise regenerated and
- * upserted. Never throws on an OpenAI problem: `failed` is true and nothing is cached (so the next request retries).
- * An empty answer from the model is treated like a failure and not cached, so a thin product costs one call per request;
- * the per-IP and per-store limits bound that.
- * Two first requests at once may both generate; the upsert makes the second write harmless (last one wins).
+ * Up to 3 questions for one product in the widget's locale nearest `locale`. Empty for an unpublished product or a gift card.
+ * Served from product_questions while its content_hash matches the product's: that includes an empty list the model gave for a
+ * thin product (stored as `[]`), so it costs one call until the product changes. A product not synced yet is `failed` (the
+ * route caches that for 60 s only, so a new product gets its questions soon after the sync). Never throws on an OpenAI
+ * problem: `failed` is true and nothing is cached (so the next request retries).
  */
-export async function productQuestionsFor(storeId: string, shopifyId: string, locale: string): Promise<ProductQuestionsResult> {
+export function productQuestionsFor(storeId: string, shopifyId: string, locale: string): Promise<ProductQuestionsResult> {
   const lang = widgetLocale(locale);
+  const key = `${storeId}|${shopifyId}|${lang}`;
+  const running = inflight.get(key);
+  if (running) return running;
+  const p = compute(storeId, shopifyId, lang).finally(() => inflight.delete(key));
+  inflight.set(key, p);
+  return p;
+}
+
+async function compute(storeId: string, shopifyId: string, lang: string): Promise<ProductQuestionsResult> {
+  // The product text is read only on a cache miss.
   const found = await forStore(storeId, async (tx) => {
     const [p] = await tx
-      .select({ content: products.content, contentHash: products.contentHash, status: products.status, published: products.published, isGiftCard: products.isGiftCard })
+      .select({ contentHash: products.contentHash, status: products.status, published: products.published, isGiftCard: products.isGiftCard })
       .from(products)
       .where(and(eq(products.storeId, storeId), eq(products.shopifyId, shopifyId)));
-    if (!p || p.status !== "ACTIVE" || !p.published || p.isGiftCard) return null;
+    if (!p) return "missing" as const;
+    if (p.status !== "ACTIVE" || !p.published || p.isGiftCard) return null;
     const [cached] = await tx
       .select({ contentHash: productQuestions.contentHash, questions: productQuestions.questions })
       .from(productQuestions)
       .where(and(eq(productQuestions.storeId, storeId), eq(productQuestions.shopifyId, shopifyId), eq(productQuestions.locale, lang)));
     return { p, cached };
   });
+  if (found === "missing") return { questions: [], failed: true };
   if (!found) return { questions: [], failed: false };
   const { p, cached } = found;
-  if (cached?.contentHash === p.contentHash) {
-    const questions = cleanQuestions(cached.questions);
-    if (questions.length) return { questions, failed: false };
-  }
+  if (cached?.contentHash === p.contentHash) return { questions: cleanQuestions(cached.questions), failed: false };
 
-  const questions = await generate(p.content, LANGUAGE[lang]);
-  if (!questions?.length) return { questions: [], failed: true };
+  const [row] = await forStore(storeId, (tx) =>
+    tx.select({ content: products.content }).from(products).where(and(eq(products.storeId, storeId), eq(products.shopifyId, shopifyId))),
+  );
+  if (!row) return { questions: [], failed: true };
+  const questions = await generate(row.content, languageName(lang));
+  if (!questions) return { questions: [], failed: true };
   await forStore(storeId, (tx) =>
     tx
       .insert(productQuestions)

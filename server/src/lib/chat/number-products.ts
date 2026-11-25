@@ -1,5 +1,13 @@
 import type { ToolContext } from "./tools";
 
+/** Shared by the product tools (tools.ts, admin-tools.ts): a product's description is cut to this many characters. */
+export const MAX_DESCRIPTION_CHARS = 2000;
+/** Variants requested per product when a tool live-checks several at once (browse_collection: 8 products), to stay well inside Shopify's 1,000-point query limit. */
+const TOOL_VARIANT_CAP = 10;
+
+/** The product number a tool argument holds: "2", 2 and "#2" are all "2". */
+export const productNumber = (arg: unknown) => (typeof arg === "number" ? String(arg) : typeof arg === "string" ? arg.trim().replace(/^#/, "") : "");
+
 /**
  * Numbers products for this turn's [[product:<n>]] cards. Products already numbered keep their number; the others are
  * live-checked with the turn's check, added to `ctx.live` and `ctx.allowed`, and numbered after the existing ones.
@@ -11,7 +19,7 @@ export async function numberProducts(ids: string[], ctx: ToolContext): Promise<M
   const numberOf = new Map([...ctx.allowed].map(([n, id]) => [id, n]));
   const fresh = [...new Set(ids)].filter((id) => !numberOf.has(id));
   if (fresh.length) {
-    const r = await ctx.check(fresh);
+    const r = await ctx.check(fresh, { variantCap: TOOL_VARIANT_CAP });
     if (r.ok !== ctx.live.ok) return null;
     for (const id of fresh) {
       const got = r.ok ? r.products.get(id) : r.cards.get(id);

@@ -162,13 +162,11 @@ test("empty cases return 200 with no questions and never call OpenAI", async () 
   await admin`update stores set mode = 'app' where id = ${storeB}`;
 });
 
-test("an OpenAI error, timeout, bad JSON or empty answer gives no questions, caches nothing, and retries next time", async () => {
+test("an OpenAI error, timeout or bad JSON gives no questions, caches nothing, and retries next time", async () => {
   const failures = [
     () => create.mockRejectedValueOnce(apiError(500)),
     () => create.mockRejectedValueOnce(apiError(429)),
     () => create.mockResolvedValueOnce({ output_text: "not json" }),
-    () => create.mockResolvedValueOnce(ok([])),
-    () => create.mockResolvedValueOnce(ok(["no question mark"])),
   ];
   for (const fail of failures) {
     fail();
@@ -218,12 +216,73 @@ test("CORS: other origins and no origin are 403, an unknown shop is 404, the pre
   expect(pre.headers.get("access-control-allow-methods")).toContain("GET");
 });
 
-test("callers are rate limited per IP", async () => {
+test("callers are rate limited per IP, in a bucket of their own that the chat routes' limits don't share", async () => {
   create.mockResolvedValue(ok(QUESTIONS));
   let last: Response | undefined;
-  for (let i = 0; i < 61; i++) last = await get(shopA, "&product=1");
+  for (let i = 0; i < 31; i++) last = await get(shopA, "&product=1");
   expect(last!.status).toBe(429);
   expect(last!.headers.get("retry-after")).toBeTruthy();
+  // The same caller still has the whole "web" budget (history, chat, ...) left.
+  const history = await (await import("@/app/api/chat/history/route")).GET(
+    new Request(`http://localhost/api/chat/history?shop=${shopA}`, { headers: { origin: ORIGIN } }),
+  );
+  expect(history.status).toBe(401); // no token: it got past the rate limit
+});
+
+test("an empty answer from the model is cached as an empty list until the product changes; errors are not", async () => {
+  create.mockResolvedValueOnce(ok([]));
+  const first = await get(shopA, "&product=1");
+  expect(await first.json()).toEqual({ questions: [] });
+  expect(first.headers.get("cache-control")).toBe("public, max-age=3600");
+  expect(await cached(storeA, "1")).toMatchObject([{ questions: [] }]);
+  const again = await get(shopA, "&product=1");
+  expect(await again.json()).toEqual({ questions: [] });
+  expect(create).toHaveBeenCalledTimes(1);
+  // A changed product is asked again.
+  const [{ content_hash }] = await admin`select content_hash from products where store_id = ${storeA} and shopify_id = 'gid://shopify/Product/1'`;
+  await admin`update products set content_hash = 'changed2' where store_id = ${storeA} and shopify_id = 'gid://shopify/Product/1'`;
+  create.mockResolvedValueOnce(ok(QUESTIONS));
+  expect(await (await get(shopA, "&product=1")).json()).toEqual({ questions: QUESTIONS });
+  await admin`update products set content_hash = ${content_hash} where store_id = ${storeA} and shopify_id = 'gid://shopify/Product/1'`;
+});
+
+test("a product that is not synced yet is a 60 s answer; an unpublished one and a gift card stay an hour", async () => {
+  const unknown = await get(shopA, "&product=99");
+  expect(await unknown.json()).toEqual({ questions: [] });
+  expect(unknown.headers.get("cache-control")).toBe("public, max-age=60");
+  for (const id of ["2", "3", "4"]) expect((await get(shopA, `&product=${id}`)).headers.get("cache-control")).toBe("public, max-age=3600");
+  expect(create).not.toHaveBeenCalled();
+});
+
+test("an empty locale means English", async () => {
+  create.mockResolvedValueOnce(ok(QUESTIONS));
+  const res = await get(shopA, "&product=1&locale=");
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ questions: QUESTIONS });
+  expect((await cached(storeA, "1"))[0].locale).toBe("en");
+  expect(create.mock.calls[0][0].instructions).toContain("English");
+});
+
+test("the question language is named from the widget locale", async () => {
+  create.mockResolvedValueOnce(ok(QUESTIONS));
+  await get(shopA, "&product=1&locale=fr-CA");
+  expect(create.mock.calls[0][0].instructions).toContain("in French");
+});
+
+test("simultaneous first requests share one OpenAI call", async () => {
+  create.mockImplementation(() => new Promise((res) => setTimeout(() => res(ok(QUESTIONS)), 30)));
+  const all = await Promise.all([get(shopA, "&product=1"), get(shopA, "&product=1"), get(shopA, "&product=1")]);
+  for (const res of all) expect(await res.json()).toEqual({ questions: QUESTIONS });
+  expect(create).toHaveBeenCalledTimes(1);
+});
+
+test("the product text is read only when the cached questions are stale", async () => {
+  create.mockResolvedValueOnce(ok(QUESTIONS));
+  await get(shopA, "&product=1");
+  const spy = vi.spyOn(client, "forStore");
+  await get(shopA, "&product=1");
+  expect(spy).toHaveBeenCalledTimes(1); // the hash lookup only, no second read of products.content
+  spy.mockRestore();
 });
 
 test("a store only gets its own cache: the same product id in another store is generated separately", async () => {
@@ -234,7 +293,7 @@ test("a store only gets its own cache: the same product id in another store is g
   expect(create.mock.calls[1][0].input).toContain("Store B shirt");
 });
 
-test("deleting a product (webhook) or sweeping it after a full sync removes its cached questions", async () => {
+test("deleting a product (webhook) or sweeping it after a full sync removes its cached questions (FK cascade)", async () => {
   create.mockResolvedValue(ok(QUESTIONS));
   await get(shopA, "&product=1");
   await get(shopB, "&product=1", "https://shop-b.example.com");

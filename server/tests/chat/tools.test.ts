@@ -64,7 +64,7 @@ test("search_products numbers new products after this turn's, adds them to live 
   ]);
   const c = ctx();
   const out = await runTool("search_products", JSON.stringify({ query: "boots" }), c);
-  expect(c.check).toHaveBeenCalledWith([gid(7)]);
+  expect(c.check).toHaveBeenCalledWith([gid(7)], { variantCap: 10 });
   expect(c.allowed.get("2")).toBe(gid(7));
   expect(c.live.ok && c.live.products.has(gid(7))).toBe(true);
   expect(out).toContain("#1 Wax");
@@ -106,6 +106,20 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   vi.useRealTimers();
+});
+
+test("toolDefs adds the Admin tools for installed stores and order_status only with orders", () => {
+  vi.stubEnv("UCP_AGENT_PROFILE_URL", "");
+  expect(toolDefs({ orders: true })).toBe(TOOL_DEFS); // orders never applies without admin
+  expect(toolDefs({ admin: true }).map((d) => d.name)).toEqual([...TOOL_DEFS.map((d) => d.name), "store_overview", "refresh_product", "browse_collection"]);
+  expect(toolDefs({ admin: true, orders: true }).map((d) => d.name).at(-1)).toBe("order_status");
+});
+
+test("an mcp store (a catalog) is refused order_status and the Admin tools alike", async () => {
+  const c = ctx({ catalog: {} as never });
+  for (const name of ["order_status", "store_overview", "refresh_product", "browse_collection"]) {
+    expect(await runTool(name, "{}", c)).toBe(`Unknown tool: ${name}.`);
+  }
 });
 
 test("product_details is offered only when UCP_AGENT_PROFILE_URL is set, and TOOL_DEFS stays the same", () => {

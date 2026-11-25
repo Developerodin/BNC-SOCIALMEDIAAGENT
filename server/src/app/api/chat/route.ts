@@ -87,6 +87,7 @@ export async function POST(req: Request) {
         productId: typeof body.productId === "string" ? body.productId : undefined,
         country: typeof body.country === "string" ? body.country : undefined,
         customer: who.customer,
+        owned: opened.owned,
         signal: ac.signal,
         send: (event, data) => write(sseEvent(event, data)),
       })

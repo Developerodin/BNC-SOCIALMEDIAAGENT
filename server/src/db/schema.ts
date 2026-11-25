@@ -217,7 +217,7 @@ export const faqs = pgTable(
 );
 
 // AI-written suggested questions for the product-page block (GET /api/chat/product-questions), one row per product and
-// locale. No FK to products: deleteProduct/sweepProducts delete these rows explicitly, and a store delete cascades.
+// locale. The composite FK cascades a deleted or swept product's rows, like chunks.
 export const productQuestions = pgTable(
   "product_questions",
   {
@@ -229,7 +229,11 @@ export const productQuestions = pgTable(
     questions: jsonb("questions").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.storeId, t.shopifyId, t.locale] })],
+  (t) => [
+    primaryKey({ columns: [t.storeId, t.shopifyId, t.locale] }),
+    // Named: the generated name is over Postgres' 63-character limit.
+    foreignKey({ name: "product_questions_product_fk", columns: [t.storeId, t.shopifyId], foreignColumns: [products.storeId, products.shopifyId] }).onDelete("cascade"),
+  ],
 );
 
 // --- Partner connect (plan 2026-11-24, Task P1) ---
