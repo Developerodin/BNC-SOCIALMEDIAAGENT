@@ -2,7 +2,7 @@
   "launcher": {
     "label": "Ask us anything",
     "aria_label": "Open the chat assistant",
-    "teaser": "Questions? We’re here to help.",
+    "teaser": "Questions? Our AI assistant can help.",
     "teaser_close": "Dismiss"
   },
   "ask_block": {
@@ -13,7 +13,7 @@
     "heading": "Ask our AI agent",
     "placeholder": "Ask your question",
     "send": "Send",
-    "note": "The answers use data from this product (description, dimensions, price, stock, options)."
+    "note": "Answers are written by an AI assistant from this product's data (description, dimensions, price, stock, options)."
   },
   "faq": {
     "heading": "Frequently asked questions",

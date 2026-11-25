@@ -191,14 +191,17 @@ test("sanitizeData strips markers and data-block tags, even when nested", () => 
   expect(sanitizeData("plain [link] text")).toBe("plain [link] text");
 });
 
-test("the viewing-product and cart rules are in both models' prompts, after the friendly-assistant rule", () => {
+test("the AI-identity, viewing-product and cart rules are in both models' prompts, after the friendly-assistant rule", () => {
   for (const p of [SYSTEM_PROMPT("S"), LARGE_SYSTEM_PROMPT("S")]) {
     const lines = p.split("\n");
     const friendly = lines.findIndex((l) => l.startsWith("- Talk like a friendly store assistant."));
     expect(lines[friendly + 1]).toBe(
-      "- If <store_data> marks a product as the one the shopper is viewing and they ask to compare, for alternatives or for suggestions, compare the others against it: say briefly how each one differs from it. Show its card first.",
+      "- If the shopper asks whether you are a person, say plainly that you are an AI assistant. Never claim to be a human or a member of staff.",
     );
     expect(lines[friendly + 2]).toBe(
+      "- If <store_data> marks a product as the one the shopper is viewing and they ask to compare, for alternatives or for suggestions, compare the others against it: say briefly how each one differs from it. Show its card first.",
+    );
+    expect(lines[friendly + 3]).toBe(
       "- Products listed as added to the cart in this chat are already in the shopper's cart. Build on that (for example, what goes with them) and don't suggest adding them again.",
     );
   }

@@ -282,7 +282,8 @@ Sources: [IP allowlists for custom apps installed outside your organization](htt
    AskCart chat on → Save. App embeds are per theme: use the published one.)
 4. Optional: **Chat widget** card: name, accent colour, avatar (a `cdn.shopify.com` Files URL), launcher text and side,
    welcome message, up to 4 suggested questions, teaser, and **Chat button**: on every page (default), on product
-   pages only, or hidden (the product block then opens the chat). **Save** updates the storefront.
+   pages only, or hidden (the product block then opens the chat). **Save** updates the storefront. Keep it clear to shoppers that they are chatting with an AI: don't give the
+   assistant a human-sounding name, photo or welcome text that makes it look like a real person.
 5. **Ask our AI agent** on product pages: **Add to product pages** (Setup guide or the Chat widget card) → the theme
    editor opens on the product template with the block added → drag it **below the Buy buttons** → **Save**. It then
    shows on every product using that template. The block's questions can be typed in its settings; left empty, AskCart

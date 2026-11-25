@@ -2,7 +2,7 @@
   "launcher": {
     "label": "Stel ons je vraag",
     "aria_label": "Chatassistent openen",
-    "teaser": "Vragen? We helpen je graag.",
+    "teaser": "Vragen? Onze AI-assistent helpt je graag.",
     "teaser_close": "Sluiten"
   },
   "ask_block": {
@@ -13,7 +13,7 @@
     "heading": "Vraag het onze AI-assistent",
     "placeholder": "Stel je vraag",
     "send": "Verstuur",
-    "note": "De antwoorden gebruiken gegevens van dit product (beschrijving, afmetingen, prijs, voorraad, opties)."
+    "note": "De antwoorden worden door een AI-assistent geschreven op basis van de gegevens van dit product (beschrijving, afmetingen, prijs, voorraad, opties)."
   },
   "faq": {
     "heading": "Veelgestelde vragen",

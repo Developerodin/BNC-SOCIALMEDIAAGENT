@@ -14,6 +14,7 @@ export const CSS =
   ":where(.panel) *{box-sizing:border-box;font:inherit;color:inherit;margin:0}" +
   ".panel.left{right:auto;left:20px}" +
   ".panel.drawer{top:0;bottom:0;right:0;left:auto;width:420px;max-width:100vw;height:100vh;height:100dvh;max-height:none;border-radius:0;animation:sl .25s ease-out}" +
+  ".hd .ai{display:none}.panel.titled .ai{display:block;font-size:12px;line-height:16px;opacity:.85}" +
   ".panel.titled .av{display:none}.panel.titled .sub{order:-1;font-size:12px;font-weight:700;opacity:.85}" +
   ".panel.titled .name{font-family:var(--font-heading-family,inherit);font-weight:var(--font-heading-weight,700);font-size:18px;line-height:24px;text-transform:uppercase}" +
   ".panel.full{inset:0;width:100%;height:100vh;height:100dvh;max-height:none;border-radius:0}" +

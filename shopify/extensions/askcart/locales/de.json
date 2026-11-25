@@ -2,7 +2,7 @@
   "launcher": {
     "label": "Fragen Sie uns",
     "aria_label": "Chat-Assistenten öffnen",
-    "teaser": "Fragen? Wir helfen gern.",
+    "teaser": "Fragen? Unser KI-Assistent hilft gern.",
     "teaser_close": "Schließen"
   },
   "ask_block": {
@@ -13,7 +13,7 @@
     "heading": "Frag unseren KI-Agenten",
     "placeholder": "Stell deine Frage",
     "send": "Senden",
-    "note": "Die Antworten nutzen Daten zu diesem Produkt (Beschreibung, Maße, Preis, Lagerbestand, Optionen)."
+    "note": "Die Antworten werden von einem KI-Assistenten aus den Daten dieses Produkts verfasst (Beschreibung, Maße, Preis, Lagerbestand, Optionen)."
   },
   "faq": {
     "heading": "Häufig gestellte Fragen",

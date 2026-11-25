@@ -27,6 +27,17 @@ X-AskCart-App-Key: ackm_…
   and the merchant's **Replace key** / **Revoke key** buttons. Replace or revoke stops the old key **at once**, so
   ship the new key in an app update (or load it from your own config server) before replacing.
 
+### Tell shoppers it's an AI (required)
+
+Show, where the chat opens and before the first message, that the shopper is talking to an AI. Use these texts:
+
+- en: You're chatting with an AI assistant.
+- fr: Vous discutez avec un assistant IA.
+- de: Du chattest mit einem KI-Assistenten.
+- es: Estás chateando con un asistente de IA.
+- it: Stai chattando con un assistente IA.
+- nl: Je chat met een AI-assistent.
+
 ## Conversations
 
 A conversation is identified by a **conversation token** the server hands out. Send no token to start a new

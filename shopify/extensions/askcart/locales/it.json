@@ -2,7 +2,7 @@
   "launcher": {
     "label": "Chiedici qualsiasi cosa",
     "aria_label": "Apri l’assistente chat",
-    "teaser": "Domande? Siamo qui per aiutarti.",
+    "teaser": "Domande? Il nostro assistente IA può aiutarti.",
     "teaser_close": "Chiudi"
   },
   "ask_block": {
@@ -13,7 +13,7 @@
     "heading": "Chiedi al nostro agente IA",
     "placeholder": "Scrivi la tua domanda",
     "send": "Invia",
-    "note": "Le risposte usano i dati di questo prodotto (descrizione, dimensioni, prezzo, disponibilità, opzioni)."
+    "note": "Le risposte sono scritte da un assistente IA a partire dai dati di questo prodotto (descrizione, dimensioni, prezzo, disponibilità, opzioni)."
   },
   "faq": {
     "heading": "Domande frequenti",

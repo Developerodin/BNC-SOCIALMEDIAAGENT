@@ -2,7 +2,7 @@
   "launcher": {
     "label": "Posez-nous vos questions",
     "aria_label": "Ouvrir l’assistant de discussion",
-    "teaser": "Des questions ? Nous sommes là pour vous aider.",
+    "teaser": "Des questions ? Notre assistant IA peut vous aider.",
     "teaser_close": "Fermer"
   },
   "ask_block": {
@@ -13,7 +13,7 @@
     "heading": "Demandez à notre agent IA",
     "placeholder": "Posez votre question",
     "send": "Envoyer",
-    "note": "Les réponses s’appuient sur les données de ce produit (description, dimensions, prix, stock, options)."
+    "note": "Les réponses sont rédigées par un assistant IA à partir des données de ce produit (description, dimensions, prix, stock, options)."
   },
   "faq": {
     "heading": "Questions fréquentes",

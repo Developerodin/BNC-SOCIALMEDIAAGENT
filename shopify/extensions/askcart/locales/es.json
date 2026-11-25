@@ -2,7 +2,7 @@
   "launcher": {
     "label": "Pregúntanos lo que quieras",
     "aria_label": "Abrir el asistente de chat",
-    "teaser": "¿Tienes preguntas? Estamos aquí para ayudarte.",
+    "teaser": "¿Tienes preguntas? Nuestro asistente de IA puede ayudarte.",
     "teaser_close": "Cerrar"
   },
   "ask_block": {
@@ -13,7 +13,7 @@
     "heading": "Pregunta a nuestro agente de IA",
     "placeholder": "Escribe tu pregunta",
     "send": "Enviar",
-    "note": "Las respuestas usan datos de este producto (descripción, dimensiones, precio, stock, opciones)."
+    "note": "Las respuestas las redacta un asistente de IA a partir de los datos de este producto (descripción, dimensiones, precio, stock, opciones)."
   },
   "faq": {
     "heading": "Preguntas frecuentes",

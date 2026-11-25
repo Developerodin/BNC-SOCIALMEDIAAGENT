@@ -844,6 +844,27 @@ describe("drawer mode and send-on-open (the Ask our AI agent block)", () => {
     expect(sh().querySelector(".hd img, .hd b")).toBeNull(); // no markup came from the strings
   });
 
+  it("a drawer keeps the fixed AI line under the merchant's eyebrow and heading; the floating header shows it as the subtitle", async () => {
+    const p = setup(mockApi());
+    await p.open({ mode: "drawer", title });
+    expect(q(".hd .ai")!.textContent).toBe("AI shopping assistant");
+    expect(panelEl().classList.contains("titled")).toBe(true); // the CSS shows .ai only in the titled drawer header
+    await p.open({});
+    expect(panelEl().classList.contains("titled")).toBe(false);
+    expect(q(".hd .sub")!.textContent).toBe("AI shopping assistant");
+  });
+
+  it("the dialog is described by the AI notice, so a screen reader announces it on open, in both modes", async () => {
+    const p = setup(mockApi());
+    for (const args of [{}, { mode: "drawer" as const, title }]) {
+      await p.open(args);
+      const id = panelEl().getAttribute("aria-describedby")!;
+      const notice = sh().getElementById(id)!;
+      expect(notice.classList.contains("notice")).toBe(true);
+      expect(notice.textContent).toContain("You're chatting with an AI assistant.");
+    }
+  });
+
   it("opening without a mode afterwards is the normal floating panel with the assistant's header", async () => {
     const p = setup(mockApi());
     await p.open({ mode: "drawer", title });

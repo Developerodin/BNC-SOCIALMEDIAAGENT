@@ -480,6 +480,7 @@ function MobileKeyCard() {
           )}
         </s-stack>
         <s-paragraph>Your mobile app sends this key to use the same chat assistant as your store.</s-paragraph>
+        <s-paragraph>Your app must show shoppers they&apos;re chatting with an AI (see the API guide).</s-paragraph>
         {!has && <s-paragraph>No key yet. Your mobile app can&apos;t use the chat until you create one.</s-paragraph>}
         {shown && (
           <s-stack direction="block" gap="small">
@@ -658,6 +659,7 @@ function WidgetSettingsCard() {
       <s-stack direction="block" gap="base">
         <s-paragraph>Change how the chat looks on your store. Anything you leave unchanged uses our defaults.</s-paragraph>
         <s-text-field label="Name" value={form.name} maxLength={40} error={err("name")} onInput={(e) => set("name", valueOf(e))} />
+        <s-paragraph>Shoppers must be able to tell they&apos;re chatting with an AI: keep it clear it&apos;s an assistant, not a real person.</s-paragraph>
         <s-stack direction="inline" gap="base" alignItems="end">
           <s-text-field label="Accent color" value={form.accent} maxLength={7} error={err("accent") ?? (validAccent ? undefined : "Use a color like #0A0A0A")} onInput={(e) => set("accent", valueOf(e))} />
           <input type="color" value={accent} onChange={(e) => set("accent", e.target.value)} aria-label="Accent color picker" />

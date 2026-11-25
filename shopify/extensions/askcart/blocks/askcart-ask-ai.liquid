@@ -46,9 +46,7 @@
         <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 4l7 7-1.41 1.41L13 7.83V20h-2V7.83l-4.59 4.58L5 11z"/></svg>
       </button>
     </form>
-    {%- if block.settings.show_note -%}
-      <p class="askcart-ai__note">{{ 'ask_ai.note' | t | escape }}</p>
-    {%- endif -%}
+    <p class="askcart-ai__note">{{ 'ask_ai.note' | t | escape }}</p>
   </div>
 {%- endif -%}
 
@@ -66,8 +64,7 @@
     { "type": "paragraph", "content": "Leave all three empty and the AI writes questions for each product." },
     { "type": "text", "id": "question_1", "label": "Question 1" },
     { "type": "text", "id": "question_2", "label": "Question 2" },
-    { "type": "text", "id": "question_3", "label": "Question 3" },
-    { "type": "checkbox", "id": "show_note", "label": "Show the note under the input", "default": true }
+    { "type": "text", "id": "question_3", "label": "Question 3" }
   ]
 }
 {% endschema %}

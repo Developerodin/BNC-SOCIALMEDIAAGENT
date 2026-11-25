@@ -200,8 +200,13 @@ describe("askcart-ask-ai.liquid", () => {
 
   it("has the merchant settings", () => {
     const ids = schema.settings.filter((s: { id?: string }) => s.id).map((s: { id: string }) => s.id);
-    expect(ids).toEqual(["eyebrow", "heading", "question_1", "question_2", "question_3", "show_note"]);
-    expect(schema.settings.find((s: { id?: string }) => s.id === "show_note")).toMatchObject({ type: "checkbox", default: true });
+    expect(ids).toEqual(["eyebrow", "heading", "question_1", "question_2", "question_3"]);
+  });
+
+  it("always shows the AI note: no setting can switch it off, and it is escaped", () => {
+    expect(liquid).not.toContain("show_note");
+    expect(liquid).toMatch(/<p class="askcart-ai__note">\{\{ 'ask_ai\.note' \| t \| escape \}\}<\/p>/);
+    expect(liquid.slice(0, liquid.indexOf("{% schema %}"))).not.toMatch(/\{%-?\s*if[^%]*%\}\s*<p class="askcart-ai__note"/);
   });
 
   it("falls back to the storefront locale strings and renders visible (the script hides it when the embed is off)", () => {

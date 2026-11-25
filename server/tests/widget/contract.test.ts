@@ -27,6 +27,18 @@ describe("extension locales", () => {
     expect(load("en.default").launcher.label).toBe("Ask us anything");
   });
 
+  it.each(LANGS)("%s: the block note and the default teaser say it is an AI", (lang) => {
+    const l = load(lang);
+    const ai = /\b(AI|IA|KI)\b|AI-/;
+    expect(l.ask_ai.note).toMatch(ai);
+    expect(l.launcher.teaser).toMatch(ai);
+  });
+  it("English note and teaser wording", () => {
+    const en = load("en.default");
+    expect(en.ask_ai.note).toBe("Answers are written by an AI assistant from this product's data (description, dimensions, price, stock, options).");
+    expect(en.launcher.teaser).toBe("Questions? Our AI assistant can help.");
+  });
+
   it.each(LANGS.slice(1))("%s has the same keys as English, all non-empty strings", (lang) => {
     const en = keys(load("en.default")).sort();
     const other = load(lang);

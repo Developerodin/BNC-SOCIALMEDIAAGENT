@@ -125,7 +125,11 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   const sub = document.createElement("span");
   sub.className = "sub";
   sub.textContent = t("subtitle");
-  who.append(name, sub);
+  // Drawer header: the merchant's eyebrow and heading replace the name and subtitle, so the AI line is kept as a fixed third line.
+  const aiLine = document.createElement("span");
+  aiLine.className = "ai";
+  aiLine.textContent = t("subtitle");
+  who.append(name, sub, aiLine);
   const menu = createMenu(t, [
     { label: t("new_chat"), run: newChat },
     { label: t("delete_chat"), run: () => void deleteChat() },
@@ -157,6 +161,8 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   count.hidden = true;
   const notice = document.createElement("p");
   notice.className = "notice";
+  notice.id = "askcart-notice";
+  panel.setAttribute("aria-describedby", notice.id); // read out when the dialog opens
   notice.textContent = `${t("ai_notice")} ${t("retention", { days: config.retentionDays })}`;
   const privacy = resolveHttpsUrl(page.privacyUrl); // Liquid gives shop.privacy_policy.url as a path
   if (privacy) {
