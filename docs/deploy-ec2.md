@@ -379,3 +379,21 @@ to notice a hung one.
 
 **Deploy off-peak.** A restart in the middle of an answer cuts it off and locks that conversation for about 90 seconds
 (the shopper sees "busy" until the lock expires). `--kill-timeout 10000` lets short answers finish first, not long ones.
+
+## Troubleshooting: product sync failed ("Shopify refused access to your products")
+
+Seen on Bois & Chiffons on 2026-11-25: the sync showed **Failed** right after the app's permissions were widened.
+The log line is tagged `[bulk-access-denied]` (`pm2 logs askcart --lines 200 --nostream | grep bulk-access-denied`)
+and Shopify's error is `Access denied for bulkOperationRunQuery`.
+
+- **Cause:** the store's token was issued before the merchant approved the new scopes. A still-valid token is never
+  exchanged again on its own, and a refresh keeps its old scopes, so Shopify refuses the product export.
+- **Fix for the merchant:** Shopify admin → **Settings → Apps** → the app → approve any pending permission request,
+  then **reopen the app**. Opening it fetches a fresh token and restarts the sync automatically (session.ts); the
+  admin card shows these steps. **Bulk operations need no setting in Shopify:** every installed app may run them, so
+  there is nothing to switch on.
+- **Manual fallback (server):** delete the store's tokens so the next app open exchanges new ones:
+  `psql "$DATABASE_ADMIN_URL" -c "delete from store_tokens where store_id = (select id from stores where shop_domain = '<shop>.myshopify.com');"`
+  then the merchant reopens the app.
+- **Still failing:** the app config may lack a scope the export needs (`read_products`, `read_publications`).
+  Check `shopify.app.*.toml`, run `shopify app deploy`, and have the merchant approve again.
