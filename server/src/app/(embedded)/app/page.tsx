@@ -713,6 +713,22 @@ function WidgetSettingsCard() {
           </s-stack>
           <s-paragraph>PNG, JPG or WebP, up to 2 MB. Leave empty to use your logo from Settings → Brand.</s-paragraph>
           {errors.includes("avatarUrl") && <s-text tone="critical">Not valid</s-text>}
+          {/* Not the real widget: the chat header as shoppers see it (panel/styles.ts: logo whole, max 160x60; else the initial). */}
+          <div
+            aria-label="Chat header preview"
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, maxWidth: 360, padding: "16px 12px", border: "1px solid #e3e3e3", borderRadius: 12, background: "#fff", color: "#111" }}
+          >
+            {form.avatarUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={form.avatarUrl} alt="" style={{ display: "block", maxWidth: 160, maxHeight: 60, objectFit: "contain" }} />
+            ) : (
+              <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 56, height: 56, borderRadius: "50%", background: "#f4f4f4", border: "1px solid #e5e5e5", color: accent, fontWeight: 600, fontSize: 24 }}>
+                {(form.name.trim() || "A").charAt(0).toUpperCase()}
+              </span>
+            )}
+            <span style={{ fontWeight: 600, fontSize: 17 }}>Your {form.name.trim() || "store"} expert</span>
+            {!form.avatarUrl && <span style={{ fontSize: 12, color: "#666" }}>On your store, your Settings → Brand logo shows here if you have one.</span>}
+          </div>
         </s-stack>
         <s-stack direction="inline" gap="base">
           <s-select label="Button style" value={form.style} onChange={(e) => set("style", valueOf(e) as WidgetForm["style"])}>
