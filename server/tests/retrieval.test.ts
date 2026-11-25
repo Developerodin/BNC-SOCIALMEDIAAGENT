@@ -193,3 +193,23 @@ test("the caller's abort cancels the query embedding at once", async () => {
   ac.abort();
   expect(await p).toBe("aborted");
 });
+
+test("each query binds the query vector once, so Postgres computes every chunk's distance once", async () => {
+  const a = await seeded(boots("1"), dress("2"));
+  const sent: { text: string; params: unknown[] }[] = [];
+  const opts = client.sql.options as { debug?: unknown };
+  opts.debug = (_conn: number, text: string, params: unknown[]) => sent.push({ text, params });
+  try {
+    const hits = await retrieval.search(a, "hiking boots", 1, { productId: gid("2"), minScore: 0 });
+    expect(hits.map((h) => h.productId)).toEqual([gid("1"), gid("2")]);
+    expect(hits[0].score).toBeGreaterThan(hits[1].score);
+  } finally {
+    opts.debug = false;
+  }
+  const vector = sent.filter((q) => q.text.includes("<=>"));
+  expect(vector).toHaveLength(2); // the top-k query and the current product's extra chunks
+  for (const q of vector) {
+    expect(q.text.match(/<=>/g)).toHaveLength(1);
+    expect(q.params.filter((p) => typeof p === "string" && p.startsWith("["))).toHaveLength(1);
+  }
+});

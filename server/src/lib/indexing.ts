@@ -22,8 +22,10 @@ type Row = typeof chunks.$inferInsert;
  * missing or stale, BATCH products at a time: chunk, embed (outside any transaction), then swap that batch's chunks in
  * its own transaction. A failed batch leaves its old chunks in place; a retry skips the batches already done because
  * their hashes match.
- * ponytail: all changed products of a store are embedded in one job run. Page them (for example 500 products per run,
- * then re-enqueue) if a first sync of a large catalog makes the job outlive `expireInSeconds`.
+ * ponytail: all changed products of a store are embedded in one job run. Measured on a first sync: 20k products
+ * (~220 tokens each) took 163 s in 367 OpenAI calls at ~1.5M tokens/min, against pg-boss's default 15 min
+ * `expireInSeconds` and the key's 5M tokens/min, so the ceiling is roughly 100k changed products per run. Page them
+ * (for example 500 products per run, then re-enqueue) before catalogs get there.
  */
 export async function embedStore(
   { storeId }: { storeId: string },
