@@ -165,7 +165,7 @@ describe("hosted page side (cards)", () => {
     const ctx: WidgetCtx = { config: { stockThreshold: 5 } as WidgetConfig, page: { ...base, ...over }, api: {} as WidgetApi, t: translator("en"), announce: () => {} };
     renderCards(into, [card], ctx);
     openSheets(into);
-    return { btn: into.querySelector<HTMLButtonElement>("button.ac-card__add")!, status: into.querySelector(".ac-card__status")! };
+    return { btn: into.querySelector<HTMLButtonElement>("button.ac-card__add")!, status: into.querySelector(".ac-card__status")!, row: into.querySelector(".ac-card__cartrow")! };
   }
   const click = (btn: HTMLElement, trusted = true) => {
     const ev = new MouseEvent("click", { bubbles: true });
@@ -182,16 +182,17 @@ describe("hosted page side (cards)", () => {
     }));
   const sentId = () => (post.mock.calls[0][0] as { id: string }).id;
 
-  it("a trusted click posts the request to the store origin and shows Added + View cart on success", async () => {
-    const { btn, status } = setup();
+  it("a trusted click posts the request to the store origin and shows Added on the button and Added · View cart below it", async () => {
+    const { btn, row } = setup();
     expect(btn.textContent).toBe("Add to cart");
     click(btn);
     expect(post).toHaveBeenCalledTimes(1);
     expect(post.mock.calls[0]).toEqual([{ type: "askcart:add", id: expect.any(String), variantId: "11", qty: 1 }, STORE]);
     reply(sentId());
     await vi.advanceTimersByTimeAsync(0);
-    expect(status.textContent).toContain("Added");
-    const a = status.querySelector<HTMLAnchorElement>("a")!;
+    expect(btn.textContent).toBe("Added");
+    expect(row.textContent).toContain("Added");
+    const a = row.querySelector<HTMLAnchorElement>("a")!;
     expect(a.href).toBe(`${STORE}/cart`);
     expect(a.target).toBe("_top");
     expect(open).not.toHaveBeenCalled();
@@ -222,7 +223,7 @@ describe("hosted page side (cards)", () => {
     ack(sentId(), o);
     reply(sentId(), o);
     await vi.advanceTimersByTimeAsync(1500);
-    expect(btn.disabled).toBe(true); // still waiting for an ack
+    expect(btn.getAttribute("aria-busy")).toBe("true"); // still waiting for an ack
     await vi.advanceTimersByTimeAsync(1000);
     expect(status.textContent).toBe("");
     expect(btn.textContent).toBe("Buy on the store");
@@ -252,7 +253,7 @@ describe("hosted page side (cards)", () => {
     ack((post.mock.calls[1][0] as { id: string }).id);
     reply((post.mock.calls[1][0] as { id: string }).id);
     await vi.advanceTimersByTimeAsync(0);
-    expect(btn.nextElementSibling!.textContent).toContain("Added");
+    expect(btn.previousElementSibling!.textContent).toContain("Added");
   });
 
   describe("a slow cart (acked)", () => {
@@ -264,29 +265,31 @@ describe("hosted page side (cards)", () => {
       const ctx: WidgetCtx = { config: { stockThreshold: 5 } as WidgetConfig, page: { ...base, ...bridged }, api: { logCartAdd: log } as unknown as WidgetApi, t: translator("en"), announce: () => {} };
       renderCards(into, [card], ctx, "m1");
       openSheets(into);
-      return { btn: into.querySelector<HTMLButtonElement>("button.ac-card__add")!, status: into.querySelector(".ac-card__status")! };
+      return { btn: into.querySelector<HTMLButtonElement>("button.ac-card__add")!, status: into.querySelector(".ac-card__status")!, row: into.querySelector(".ac-card__cartrow")! };
     }
     afterEach(() => localStorage.clear());
 
     it("a final reply after 10 s is still a success, logged once", async () => {
-      const { btn, status } = setupLogged();
+      const { btn, row } = setupLogged();
       click(btn);
       ack(sentId());
       await vi.advanceTimersByTimeAsync(10000);
       expect(btn.textContent).toBe("Adding…");
       reply(sentId());
       await vi.advanceTimersByTimeAsync(0);
-      expect(status.textContent).toContain("Added");
+      expect(row.textContent).toContain("Added");
       expect(log).toHaveBeenCalledTimes(1);
     });
 
     it("an ack with no final reply shows Check your cart with the cart link, logs once, and a late reply changes nothing", async () => {
-      const { btn, status } = setupLogged();
+      const { btn, row } = setupLogged();
       click(btn);
       ack(sentId());
       await vi.advanceTimersByTimeAsync(15100);
-      expect(status.textContent).toContain("Check your cart");
-      expect(status.querySelector<HTMLAnchorElement>("a")!.href).toBe(`${STORE}/cart`);
+      expect(row.textContent).toContain("Check your cart");
+      expect(row.querySelector<HTMLAnchorElement>("a")!.href).toBe(`${STORE}/cart`);
+      expect(btn.textContent).toBe("Check your cart"); // the result shows on the button for a moment, then it goes back
+      await vi.advanceTimersByTimeAsync(1600);
       expect(btn.textContent).toBe("Add to cart"); // not flipped to Buy on the store
       expect(log).toHaveBeenCalledTimes(1);
       reply(sentId());
