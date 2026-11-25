@@ -66,9 +66,24 @@ function setup(block: HTMLElement) {
   if (accent) {
     block.style.setProperty("--askcart-ai-accent", accent);
     block.style.setProperty("--askcart-ai-on", textOn(accent));
-    block.style.setProperty("--askcart-ai-accent-rgb", triplet(accent)); // fallbacks for the theme's own button colours
-    block.style.setProperty("--askcart-ai-on-rgb", triplet(textOn(accent)));
   }
+  // The theme's own colours, only when written as Dawn's "R, G, B" triplets: other themes use the same names for hex or
+  // other formats, and rgb(var(...)) of those is invalid, which would leave the send button transparent. The button
+  // pair is used together or not at all, so the arrow always contrasts with its background; otherwise the AskCart accent.
+  const css = getComputedStyle(block);
+  const themeRgb = (name: string) => {
+    const v = css.getPropertyValue(name).trim();
+    return /^\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}$/.test(v) ? v : null;
+  };
+  const btn = themeRgb("--color-button");
+  const btnText = themeRgb("--color-button-text");
+  const pair = btn && btnText ? [btn, btnText] : accent ? [triplet(accent), triplet(textOn(accent))] : null;
+  if (pair) {
+    block.style.setProperty("--askcart-btn-rgb", pair[0]);
+    block.style.setProperty("--askcart-btn-text-rgb", pair[1]);
+  }
+  const fg = themeRgb("--color-foreground");
+  if (fg) block.style.setProperty("--askcart-fg-rgb", fg);
 
   const ask = (message: string) => {
     const eyebrow = block.querySelector("[data-askcart-eyebrow]")?.textContent ?? "";

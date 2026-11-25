@@ -276,9 +276,11 @@ describe("askcart-ask-ai.liquid theme matching", () => {
   });
 
   it("uses Dawn-family variables, each with a fallback", () => {
-    for (const v of ["--inputs-radius", "--buttons-radius", "--color-foreground", "--color-button", "--color-button-text"]) {
+    for (const v of ["--inputs-radius", "--buttons-radius", "--askcart-fg-rgb", "--askcart-btn-rgb", "--askcart-btn-text-rgb"]) {
       expect(css).toMatch(new RegExp(`var\\(${v},\\s*\\S`));
     }
+    // Theme colours never go into rgb() unchecked: a hex --color-button would make the send button transparent.
+    expect(css).not.toMatch(/var\(--color-(button|foreground)/);
   });
 
   it("text is in em (scales with the theme), touch targets are at least 44px, and nothing renders hidden", () => {
@@ -286,5 +288,33 @@ describe("askcart-ask-ai.liquid theme matching", () => {
     expect(css).toMatch(/--askcart-h: 48px/);
     expect(css).toMatch(/\.askcart-ai__send \{[^}]*width: 44px; height: 44px/);
     expect(liquid).toContain("{{ 'ask_ai.note' | t | escape }}");
+  });
+});
+
+describe("theme colours", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const vars = (b: HTMLElement) => ["--askcart-btn-rgb", "--askcart-btn-text-rgb", "--askcart-fg-rgb"].map((n) => b.style.getPropertyValue(n));
+
+  it("uses the theme's button and text colours when they are R, G, B triplets", () => {
+    mockFetch(json({ questions: [] }));
+    const b = page();
+    // Set on the block: happy-dom doesn't inherit custom properties from <html> the way browsers do.
+    b.style.setProperty("--color-button", "200, 100, 50");
+    b.style.setProperty("--color-button-text", "255, 255, 255");
+    b.style.setProperty("--color-foreground", "18, 18, 18");
+    initAskAiBlocks(document);
+    expect(vars(b)).toEqual(["200, 100, 50", "255, 255, 255", "18, 18, 18"]);
+  });
+
+  it("falls back to the AskCart accent when the theme writes those colours another way (hex)", () => {
+    mockFetch(json({ questions: [] }));
+    const b = page({ accent: "#112233" });
+    b.style.setProperty("--color-button", "#c86432");
+    b.style.setProperty("--color-button-text", "#ffffff");
+    b.style.setProperty("--color-foreground", "#121212");
+    initAskAiBlocks(document);
+    expect(vars(b)).toEqual(["17, 34, 51", "255, 255, 255", ""]);
   });
 });
