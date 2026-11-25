@@ -1,10 +1,10 @@
-import { and, eq, sql as dsql } from "drizzle-orm";
+import { and, eq, inArray, sql as dsql } from "drizzle-orm";
 import { RequestedTokenType } from "@shopify/shopify-api";
 import { type Conn, db, forStore } from "@/db/client";
 import { stores, storeTokens } from "@/db/schema";
 import { refreshShopInfo } from "@/lib/shop-info";
 import { upsertStore } from "@/lib/stores";
-import { BULK_ACCESS_DENIED, enqueueSync } from "@/lib/sync";
+import { BULK_ACCESS_DENIED, BULK_ACCESS_DENIED_OLD, enqueueSync } from "@/lib/sync";
 import { shopify } from "./api";
 import { RECONNECT_NEEDED, saveTokens, tokensUsable } from "./tokens";
 
@@ -83,7 +83,7 @@ export async function authenticateEmbedded(req: Request): Promise<{ storeId: str
     const denied = await db
       .update(stores)
       .set({ syncError: null })
-      .where(and(eq(stores.id, existing), eq(stores.syncError, BULK_ACCESS_DENIED)))
+      .where(and(eq(stores.id, existing), inArray(stores.syncError, [BULK_ACCESS_DENIED, BULK_ACCESS_DENIED_OLD])))
       .returning({ id: stores.id });
     if (denied.length) {
       await db.transaction(async (lock) => {

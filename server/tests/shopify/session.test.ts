@@ -184,6 +184,17 @@ test("valid tokens after a bulk access denial are exchanged again and the sync i
   expect(exchange).toHaveBeenCalledTimes(2);
 });
 
+test("a store still holding the old access-denied message also gets a fresh token and a resync", async () => {
+  const { BULK_ACCESS_DENIED_OLD } = await import("@/lib/sync");
+  const exchange = vi.spyOn(api.shopify.auth, "tokenExchange").mockResolvedValue(exchanged());
+  const auth = `Bearer ${idToken(process.env.SHOPIFY_API_SECRET!)}`;
+  const { storeId } = await session.authenticateEmbedded(req(auth));
+  await admin`update stores set sync_error = ${BULK_ACCESS_DENIED_OLD} where id = ${storeId}`;
+  await session.authenticateEmbedded(req(auth));
+  expect(exchange).toHaveBeenCalledTimes(2);
+  expect((await admin`select sync_error from stores`)[0].sync_error).toBeNull();
+});
+
 test("an access token inside the refresh window with an expired refresh token is exchanged", async () => {
   const exchange = vi.spyOn(api.shopify.auth, "tokenExchange").mockResolvedValue(exchanged());
   const auth = `Bearer ${idToken(process.env.SHOPIFY_API_SECRET!)}`;

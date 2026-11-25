@@ -36,7 +36,10 @@ export async function enqueueSync(storeId: string): Promise<boolean> {
  * stores.sync_error when Shopify refuses bulkOperationRunQuery to this app. Retrying can't fix it, and neither can the
  * merchant (it means bulk access or a scope is missing), so they get a neutral message; the developer gets the log.
  */
-export const BULK_ACCESS_DENIED = "Product sync is temporarily unavailable. We've been notified and are fixing it.";
+export const BULK_ACCESS_DENIED =
+  "Sync failed: Shopify refused access to your products. To fix it: 1) Go to Settings → Apps → this app and approve any pending permission request. 2) Reopen this app; the sync restarts automatically. Shopify's bulk operations, which the sync uses, need no setting to be switched on. If it still fails, click Resync or contact support.";
+/** The message stores got before BULK_ACCESS_DENIED had steps; still matched so those stores also recover (session.ts). */
+export const BULK_ACCESS_DENIED_OLD = "Product sync is temporarily unavailable. We've been notified and are fixing it.";
 
 const HOUR_MS = 3600_000;
 export type ResyncFrequency = "daily" | "weekly" | "off";
