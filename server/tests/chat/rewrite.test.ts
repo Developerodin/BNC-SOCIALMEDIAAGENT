@@ -183,3 +183,12 @@ test("output without budget or sort (an older shape) still parses, with both nul
   const r = await rewriteQuery({ message: "wax", history: [], storeLocale: "en", signal: new AbortController().signal });
   expect(r).toMatchObject({ query: "wax", budget: null, sort: null });
 });
+
+test("the instructions ask for the main product types when the shopper names a room or broad category", async () => {
+  create.mockResolvedValueOnce(ok({ query: "lit, table de chevet", includeGiftCards: false }));
+  await rewriteQuery({ message: "bedroom", history: [], storeLocale: "fr", signal: new AbortController().signal });
+  const instructions: string = create.mock.calls[0][0].instructions;
+  expect(instructions).toContain(
+    "If the shopper asks for a room, space or broad category rather than a product (for example 'bedroom', 'living room', 'for my office', 'outdoor'), write a query that lists the main product types sold for it (for example for a bedroom: bed, bedside table, wardrobe, chest of drawers, bench), in the store's language. Put the most typical product first.",
+  );
+});

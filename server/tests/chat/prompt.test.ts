@@ -41,7 +41,7 @@ test("system prompt is identical across turns and carries rules 1-8", () => {
   expect(a).toContain('"Snow Shop"'); // 1: store name
   expect(a).toContain("only from the store data"); // 1: grounding
   expect(a).toContain("don't know"); // 1
-  expect(a).toContain("shopper's language"); // 1: D38
+  expect(a).not.toContain("Reply in the shopper's language");
   expect(a).toContain("no products match or none are relevant, say so honestly and suggest refining the question"); // 1: D85
   expect(a).toContain("Prices come only from the LIVE lines"); // 2: D93
   expect(a).toContain("You may state, compare and sort products by those prices"); // 2: D93
@@ -317,5 +317,14 @@ test("the cart rule is in both models, right after the cart-adds rule, and the p
     expect(p).toContain("- Prices come only from the LIVE lines.");
     expect(p).not.toMatch(/mention a sale/);
     expect(p).toContain("- Don't describe a product as on sale or discounted, and don't state a 'was' price; you may give its current LIVE price.");
+  }
+});
+
+test("both system prompts tell the model to reply in the language of the shopper's latest message", () => {
+  const rule =
+    "- Always reply in the language of the shopper's latest message, even when the store data, product names or earlier messages are in another language. Keep product names as they are.";
+  for (const p of [SYSTEM_PROMPT("S"), LARGE_SYSTEM_PROMPT("S")]) {
+    expect(p).toContain(`\n${rule}\n`);
+    expect(p).toContain("suggest refining the question.\n");
   }
 });

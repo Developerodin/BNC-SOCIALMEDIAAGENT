@@ -44,6 +44,7 @@ function instructions(storeLocale: string | null, storeCurrency: string | null):
     "You turn a shopper's latest chat message into one standalone product-search query for an online store's catalog.",
     "Use the earlier messages only to resolve what the latest message refers to (for example \"the red one\" or \"does it come in XL?\").",
     "Keep it short: the product type, plus any attributes, use or audience the shopper mentioned. Do not answer the shopper.",
+    "If the shopper asks for a room, space or broad category rather than a product (for example 'bedroom', 'living room', 'for my office', 'outdoor'), write a query that lists the main product types sold for it (for example for a bedroom: bed, bedside table, wardrobe, chest of drawers, bench), in the store's language. Put the most typical product first.",
     "Set includeGiftCards to true only when the shopper is asking for a gift card or voucher, in any language. Otherwise set it to false.",
     "Leave prices and budgets out of the query.",
     "Set budget only when the shopper states a price limit or range, in any language (for example \"under 50\", \"between 20 and 40\", \"at least 100\"): max for an upper limit, min for a lower one, null for a side they didn't give. Use plain numbers in the currency's major units (1000, not \"1,000\" or cents). If the shopper gives no budget, set budget to null. Never guess one.",
