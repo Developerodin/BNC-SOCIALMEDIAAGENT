@@ -4,7 +4,7 @@ import { type Conn, db, forStore } from "@/db/client";
 import { stores, storeTokens } from "@/db/schema";
 import { refreshShopInfo } from "@/lib/shop-info";
 import { upsertStore } from "@/lib/stores";
-import { enqueueSync } from "@/lib/sync";
+import { BULK_ACCESS_DENIED, enqueueSync } from "@/lib/sync";
 import { shopify } from "./api";
 import { RECONNECT_NEEDED, saveTokens, tokensUsable } from "./tokens";
 
@@ -77,6 +77,22 @@ export async function authenticateEmbedded(req: Request): Promise<{ storeId: str
 
   const existing = await hasValidTokens(shop);
   if (existing) {
+    // A sync Shopify refused (BULK_ACCESS_DENIED) usually means the stored token predates a scope the merchant has since
+    // approved: a valid token is never exchanged again on its own, and a refresh keeps its scopes. Exchange once now and
+    // resync. The conditional update lets one request win.
+    const denied = await db
+      .update(stores)
+      .set({ syncError: null })
+      .where(and(eq(stores.id, existing), eq(stores.syncError, BULK_ACCESS_DENIED)))
+      .returning({ id: stores.id });
+    if (denied.length) {
+      await db.transaction(async (lock) => {
+        await lock.execute(dsql`select pg_advisory_xact_lock(hashtext(${shop}))`);
+        await exchangeTokens(lock, shop, sessionToken);
+      });
+      await enqueueSync(existing);
+      return { storeId: existing, shop };
+    }
     // Backstop: a store flagged while its tokens are valid would be skipped by every job, and no exchange would run to
     // clear it. Clear it here and resume the sync it skipped. The conditional update lets one request win the enqueue.
     const cleared = await db

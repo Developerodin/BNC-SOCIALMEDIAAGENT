@@ -166,6 +166,24 @@ test("valid tokens with a leftover reconnect flag clear it and resume the sync, 
   expect(await admin`select id from pgboss.job where name = 'store-sync' and singleton_key = ${storeId}`).toHaveLength(0);
 });
 
+test("valid tokens after a bulk access denial are exchanged again and the sync is restarted", async () => {
+  const { BULK_ACCESS_DENIED } = await import("@/lib/sync");
+  const exchange = vi.spyOn(api.shopify.auth, "tokenExchange").mockResolvedValue(exchanged());
+  const auth = `Bearer ${idToken(process.env.SHOPIFY_API_SECRET!)}`;
+  const { storeId } = await session.authenticateEmbedded(req(auth));
+  await admin`delete from pgboss.job where name = 'store-sync' and singleton_key = ${storeId}`;
+  await admin`update stores set sync_error = ${BULK_ACCESS_DENIED} where id = ${storeId}`;
+
+  await session.authenticateEmbedded(req(auth));
+  expect(exchange).toHaveBeenCalledTimes(2); // a fresh token carries the scopes approved since the first one
+  expect((await admin`select sync_error from stores`)[0].sync_error).toBeNull();
+  expect(await admin`select id from pgboss.job where name = 'store-sync' and singleton_key = ${storeId}`).toHaveLength(1);
+
+  // The next load has nothing to fix: no further exchange.
+  await session.authenticateEmbedded(req(auth));
+  expect(exchange).toHaveBeenCalledTimes(2);
+});
+
 test("an access token inside the refresh window with an expired refresh token is exchanged", async () => {
   const exchange = vi.spyOn(api.shopify.auth, "tokenExchange").mockResolvedValue(exchanged());
   const auth = `Bearer ${idToken(process.env.SHOPIFY_API_SECRET!)}`;
