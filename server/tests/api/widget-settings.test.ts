@@ -17,6 +17,9 @@ vi.mock("@/lib/widget-config", async (orig) => ({
   syncWidgetConfig: vi.fn(async () => {}),
 }));
 
+const cleanup = vi.hoisted(() => vi.fn<(storeId: string, shop: string, url: string) => Promise<boolean>>(async () => true));
+vi.mock("@/lib/shopify/logo", () => ({ deleteOldLogo: cleanup }));
+
 let admin: ReturnType<typeof postgres>;
 let route: typeof import("@/app/api/app/widget-settings/route");
 let client: typeof import("@/db/client");
@@ -41,6 +44,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   sync.mockClear();
+  cleanup.mockClear();
   vi.spyOn(console, "warn").mockImplementation(() => {});
   await admin`update stores set settings = ${admin.json({ stockThreshold: 7, embedDomains: ["a.com"] })}, name = 'Acme', primary_locale = 'en' where id = ${current}`;
 });
@@ -119,4 +123,42 @@ test("PUT reset clears the card's fields but not other widget or settings keys",
 
 test("PUT over the body cap is a 413", async () => {
   expect((await call("PUT", { welcome: "x".repeat(9000) })).status).toBe(413);
+});
+
+const A = "https://cdn.shopify.com/s/files/1/0001/files/askcart-logo-1.png";
+const B = "https://cdn.shopify.com/s/files/1/0001/files/askcart-logo-2.png";
+
+test("replacing the saved logo deletes the old file; saving the same one, or the first one, deletes nothing", async () => {
+  await call("PUT", { avatarUrl: A });
+  await call("PUT", { avatarUrl: A, name: "Acme 2" });
+  expect(cleanup).not.toHaveBeenCalled();
+  await call("PUT", { avatarUrl: B });
+  expect(cleanup).toHaveBeenCalledTimes(1);
+  expect(cleanup).toHaveBeenCalledWith(current, "x.myshopify.com", A);
+});
+
+test("Remove + Save and Reset delete the old file too", async () => {
+  await call("PUT", { avatarUrl: A });
+  await call("PUT", { avatarUrl: "" });
+  expect(cleanup).toHaveBeenLastCalledWith(current, "x.myshopify.com", A);
+  await call("PUT", { avatarUrl: B });
+  await call("PUT", { reset: true });
+  expect(cleanup).toHaveBeenLastCalledWith(current, "x.myshopify.com", B);
+  expect(cleanup).toHaveBeenCalledTimes(2);
+});
+
+test("a rejected save keeps the old file", async () => {
+  await call("PUT", { avatarUrl: A });
+  expect((await call("PUT", { avatarUrl: "https://evil.com/a.png" })).status).toBe(400);
+  expect(cleanup).not.toHaveBeenCalled();
+});
+
+test("a failing delete does not fail the save", async () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  await call("PUT", { avatarUrl: A });
+  cleanup.mockRejectedValueOnce(new Error("Shopify down"));
+  const res = await call("PUT", { avatarUrl: B });
+  expect(res.status).toBe(200);
+  expect((await res.json()).avatarUrl).toBe(B);
+  expect((await stored()).widget.avatarUrl).toBe(B);
 });

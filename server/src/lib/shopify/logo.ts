@@ -94,3 +94,30 @@ export async function uploadLogo(storeId: string, shop: string, bytes: Uint8Arra
     await new Promise((r) => setTimeout(r, POLL.everyMs));
   }
 }
+
+// Only files this app created are named like this (uploadLogo); a merchant's own files never match.
+const OUR_FILE = /\/(askcart-logo-\d+\.(?:png|jpg|webp))$/;
+const FIND = `query($q: String!) { files(first: 10, query: $q) { nodes { id ... on MediaImage { image { url } } } } }`;
+const DELETE = `mutation($ids: [ID!]!) { fileDelete(fileIds: $ids) { deletedFileIds userErrors { message } } }`;
+
+/**
+ * Deletes the Shopify Files entry behind a logo URL this app uploaded earlier. Does nothing for any other URL: the name
+ * must be askcart-logo-<n>.<ext> and the found file's own URL path must be the same. Needs read_files and write_files.
+ * Returns whether a file was deleted; throws LogoUploadError on a Shopify failure (callers treat that as non-fatal).
+ */
+export async function deleteOldLogo(storeId: string, shop: string, url: string): Promise<boolean> {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  const name = OUR_FILE.exec(u.pathname)?.[1];
+  if (!name || u.hostname !== "cdn.shopify.com") return false;
+  const { files } = await gql<{ files: { nodes: { id?: string; image?: { url?: string } | null }[] } }>(storeId, shop, FIND, { q: `filename:${name}` });
+  const ids = files.nodes.filter((n) => n.id && n.image?.url && new URL(n.image.url).pathname === u.pathname).map((n) => n.id!);
+  if (!ids.length) return false;
+  const res = await gql<{ fileDelete: UserErrors }>(storeId, shop, DELETE, { ids });
+  if (res.fileDelete.userErrors.length) throw new LogoUploadError("failed", "fileDelete refused");
+  return true;
+}

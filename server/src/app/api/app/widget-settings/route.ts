@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
 import { readSmallJson, withStore } from "@/lib/admin-route";
+import { deleteOldLogo } from "@/lib/shopify/logo";
 import { appOrigin, resolveWidgetConfig, syncWidgetConfig } from "@/lib/widget-config";
 
 // The merchant's "Chat widget" card. GET answers with the effective look and which fields still show a default; PUT
@@ -76,6 +77,8 @@ export function PUT(req: Request) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return Response.json({ error: "invalid_body" }, { status: 400 });
     const body = raw as Obj;
 
+    let before: unknown; // the logo URL stored before this save
+    let after: unknown; // and after it
     const res = await db.transaction(async (tx) => {
       const [s] = await tx
         .select({ settings: stores.settings, name: stores.name, primaryLocale: stores.primaryLocale })
@@ -96,10 +99,18 @@ export function PUT(req: Request) {
 
       const stored = { ...next, widget: dropDefaults(widget, defaults as unknown as Obj) };
       await tx.update(stores).set({ settings: stored }).where(eq(stores.id, storeId));
+      before = obj(settings.widget).avatarUrl;
+      after = obj(stored.widget).avatarUrl;
       return Response.json(view(resolveWidgetConfig({ ...s, settings: stored }, apiBase)));
     });
     // Saved: push it to the theme widget now. Never throws; if the write fails the next app load retries.
     if (res.ok) await syncWidgetConfig(storeId, shop);
+    // A replaced or removed logo that this app uploaded is deleted from the store's Files (deleteOldLogo ignores any
+    // other URL). In the background and best effort: the save has already succeeded, and a store without the optional
+    // file scopes, or a Shopify error, just leaves the file there.
+    if (res.ok && typeof before === "string" && before !== after) {
+      deleteOldLogo(storeId, shop, before).catch((e) => console.error("old logo cleanup failed:", e instanceof Error ? e.message : "error"));
+    }
     return res;
   });
 }
