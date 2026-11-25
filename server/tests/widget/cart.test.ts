@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // @vitest-environment-options {"url":"https://demo.myshopify.com/products/tee"}
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { addToCart, CART_CHANGED, cartState, cartVariantIds, refreshCart, resetCartCache } from "../../widget/src/cart";
+import { addToCart, CART_CHANGED, cartState, cartSummaryNow, cartVariantIds, refreshCart, resetCartCache } from "../../widget/src/cart";
 import type { PageContext } from "@/lib/widget-contract";
 import { jsonResponse } from "./core/helpers";
 
@@ -188,5 +188,31 @@ describe("cartVariantIds", () => {
   it("an unreadable cart is an empty set, never an error", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("offline"));
     expect((await cartVariantIds(page)).size).toBe(0);
+  });
+});
+
+describe("cartSummaryNow", () => {
+  const line = (over: object) => ({ variant_id: 1, quantity: 1, product_title: "Tee", variant_title: "Default Title", final_line_price: 63000, line_price: 63000, ...over });
+
+  it("reads cart.js and gives compact lines: no Default Title, formatted prices and total, at most 20 lines, short titles", async () => {
+    const items = [line({ quantity: 2, product_title: "Wax", variant_title: "Large", final_line_price: 139990 }), line({ product_title: "T".repeat(200) }), ...Array.from({ length: 25 }, () => line({}))];
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items, item_count: 28, total_price: 202985, currency: "USD" }));
+    const s = await cartSummaryNow(page);
+    expect(fetchMock.mock.calls[0][0]).toBe("/fr/cart.js");
+    expect(s!.items).toHaveLength(20);
+    expect(s!.items[0]).toEqual({ title: "Wax", variant: "Large", quantity: 2, price: expect.stringMatching(/^(US)?[$]1,399.90$/) });
+    expect(s!.items[1]).toEqual({ title: "T".repeat(80), quantity: 1, price: expect.stringMatching(/^(US)?[$]630.00$/) });
+    expect(s!.total).toMatch(/^(US)?[$]2,029.85$/);
+  });
+
+  it("falls back to line_price, and is null for an empty, unreadable or currency-less cart", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [{ ...line({}), final_line_price: undefined }], total_price: 63000, currency: "USD" }));
+    expect((await cartSummaryNow(page))!.items[0].price).toMatch(/^(US)?[$]630.00$/);
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [], total_price: 0, currency: "USD" }));
+    expect(await cartSummaryNow(page)).toBeNull();
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [line({})], total_price: 63000 }));
+    expect(await cartSummaryNow(page)).toBeNull();
+    fetchMock.mockRejectedValueOnce(new TypeError("offline"));
+    expect(await cartSummaryNow(page)).toBeNull();
   });
 });

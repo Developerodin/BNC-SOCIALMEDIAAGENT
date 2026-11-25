@@ -1412,3 +1412,26 @@ describe("panel motion", () => {
   });
 });
 
+
+describe("the cart summary on a chat message", () => {
+  const cartJson = { items: [{ variant_id: 1, quantity: 2, product_title: "Wax", variant_title: "Large", final_line_price: 139990 }], item_count: 2, total_price: 139990, currency: "USD" };
+
+  it("is sent from a store page, read fresh from cart.js", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, cartJson)));
+    const api = mockApi({ send: vi.fn(async () => sseResponse([ev("text", { delta: "ok" }), ev("done", { conversationToken: "t1", messageId: "m1" })])) });
+    await setup(api).open();
+    await type("what's in my cart?");
+    const price = expect.stringMatching(/1,399.90$/);
+    expect(api.send.mock.calls[0][0].cart).toEqual({ items: [{ title: "Wax", variant: "Large", quantity: 2, price }], total: price });
+  });
+
+  it("is not sent, and cart.js is not read, on the hosted page", async () => {
+    const f = vi.fn<typeof fetch>(async () => jsonResponse(200, cartJson));
+    vi.stubGlobal("fetch", f);
+    const api = mockApi({ send: vi.fn(async () => sseResponse([ev("text", { delta: "ok" }), ev("done", { conversationToken: "t1", messageId: "m1" })])) });
+    await setup(api, config(), pageCtx({ cartUrl: "", hosted: true })).open();
+    await type("what's in my cart?");
+    expect(api.send.mock.calls[0][0].cart).toBeNull();
+    expect(f.mock.calls.some(([u]) => String(u).endsWith("/cart.js"))).toBe(false);
+  });
+});

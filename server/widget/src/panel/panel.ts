@@ -22,7 +22,7 @@ import { createMenu } from "./menu";
 import { createMessages, type Renderers } from "./messages";
 import { CSS, FULL_BELOW } from "./styles";
 import { CARDS_CSS } from "../cards";
-import { CART_CHANGED, cartState, refreshCart } from "../cart";
+import { CART_CHANGED, cartState, cartSummaryNow, refreshCart } from "../cart";
 
 export type PanelOptions = Renderers & {
   api: WidgetApi;
@@ -376,9 +376,10 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     const answer = messages.answer();
     const ac = new AbortController();
     turn = ac;
+    const cart = !page.hosted && cartHref ? await cartSummaryNow(page) : null; // the hosted page has no cart access
     const outcome = await runSend(
       api,
-      { message, token: tokens.get(), requestId, productId, country: page.country, currency: page.currency, pageUrl: location.href, signal: ac.signal },
+      { message, token: tokens.get(), requestId, productId, country: page.country, currency: page.currency, pageUrl: location.href, cart, signal: ac.signal },
       (e) => {
         if (e.kind === "meta") tokens.set(e.token);
         else if (e.kind === "status") answer.status(e.step);

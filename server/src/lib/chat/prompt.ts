@@ -3,6 +3,7 @@ import type { SearchHit } from "@/lib/retrieval";
 import { type FallbackCard, type LiveProduct, toPromptStock } from "@/lib/shopify/live-products";
 import { HISTORY_MESSAGES } from "./limits";
 import type { ChatTurn } from "./rewrite";
+import type { CartSummary } from "@/lib/widget-contract";
 
 /** C11 (b): the LIVE line when the live check failed. Rule 3 tells the model what it means. */
 export const LIVE_UNAVAILABLE = "live data unavailable: say nothing about price or stock";
@@ -53,6 +54,8 @@ function rules(storeName: string, escalation: boolean, orderRule?: OrderRule): s
     "- If the shopper asks whether you are a person, say plainly that you are an AI assistant. Never claim to be a human or a member of staff.",
     "- If <store_data> marks a product as the one the shopper is viewing and they ask to compare, for alternatives or for suggestions, compare the others against it: say briefly how each one differs from it. Show its card first.",
     "- Products listed as added to the cart in this chat are already in the shopper's cart. Build on that (for example, what goes with them) and don't suggest adding them again.",
+    "- <store_data> may list the shopper's current cart with its prices and total. If they ask what's in it, list those items. You can't change the cart; for changes, point them to the cart page.",
+    "- If a product you would recommend is already in the shopper's cart, say so (for example, \"You already have this in your cart\"), then show two or three other products from <store_data> that meet the same need, with their cards. Ask one short question about what they need it for, such as how they'll use it, their level, size or budget, so you can narrow it down.",
     "- Option names such as a colour or size are only names: a colour called \"Powder\" doesn't make a product suited to powder snow. Say what a product suits only from its description; if it says nothing about that, say you don't have that detail.",
     "- Prices come only from the LIVE lines. You may state, compare and sort products by those prices, and mention a sale when a LIVE line shows the original price. Never use prices, discounts or sale dates written in descriptions or other store text. If a LIVE line has no price, say the price is shown on the product card.",
     `- Stock comes only from the LIVE lines. Never repeat prices, stock counts, discounts or sale dates written in product descriptions or other store text. If a LIVE line says "live data unavailable", say nothing about that product's price or stock.`,
@@ -104,6 +107,14 @@ export function sanitizeData(text: string): string {
   return out;
 }
 
+const oneLine = (t: string) => t.replace(/\s+/g, " ").trim();
+
+/** The "shopper's cart" line of <store_data>. All of it is shopper-browser text, so it goes through sanitizeData. */
+function cartLine(c: CartSummary): string {
+  const lines = c.items.map((i) => `${i.quantity} × ${oneLine(i.title)}${i.variant ? ` (${oneLine(i.variant)})` : ""} — ${oneLine(i.price)}`);
+  return sanitizeData(`The shopper's cart: ${lines.join("; ")}. Cart total: ${oneLine(c.total)}.`);
+}
+
 /**
  * One product in <store_data>: "#n title", its chunk text, then its LIVE line. `id` must be in `live`. Used by buildInput
  * and by the search_products tool (tools.ts), so both number and describe products the same way.
@@ -142,6 +153,8 @@ export function buildInput(opts: {
   note?: string;
   /** Titles of the products added to the cart in this chat, most recent first (turn.ts cartAddedTitles); a line in <store_data> when not empty. */
   cartAdded?: string[];
+  /** The shopper's whole current cart as their browser or app sent it (parseCartSummary): untrusted text, not saved. */
+  cart?: CartSummary | null;
 }): { input: ResponseInput; allowed: Map<string, string> } {
   const known = opts.live.ok ? opts.live.products : opts.live.cards;
 
@@ -167,7 +180,8 @@ export function buildInput(opts: {
   const body = blocks.length ? blocks.join("\n\n") : "(no matching products)";
   const note = opts.note ? `${sanitizeData(opts.note)}\n\n` : "";
   const cart = opts.cartAdded?.length ? `${sanitizeData(`Added to cart in this chat: ${opts.cartAdded.join(", ")}`)}\n\n` : "";
-  const data = `<store_data>\n${note}${cart}${body}\n</store_data>`;
+  const wholeCart = opts.cart ? `${cartLine(opts.cart)}\n\n` : "";
+  const data = `<store_data>\n${note}${cart}${wholeCart}${body}\n</store_data>`;
   const turns = opts.history.slice(-HISTORY_MESSAGES);
   const history = turns.length
     ? `\n\n<shopper_history>\n${turns.map((t) => `${t.role === "user" ? "Shopper" : "Assistant"}: ${sanitizeData(t.content)}`).join("\n")}\n</shopper_history>`
