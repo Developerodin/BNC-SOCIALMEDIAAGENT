@@ -67,6 +67,13 @@ test("suggested: absent gets the defaults, an explicit empty list stays empty, m
   expect(r.defaulted).toContain("accent");
 });
 
+test("buildWidgetConfig accepts the logo-tab launcher style", () => {
+  const out = wc.buildWidgetConfig({ settings: { widget: { launcher: { style: "tab" } } }, name: "Acme" }, API);
+  expect(out.launcher.style).toBe("tab");
+  const bad = wc.buildWidgetConfig({ settings: { widget: { launcher: { style: "banner" } } }, name: "Acme" }, API);
+  expect(bad.launcher.style).toBe("pill");
+});
+
 test("buildWidgetConfig keeps valid merchant values", () => {
   const settings = {
     stockThreshold: 3,

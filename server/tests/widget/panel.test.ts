@@ -95,6 +95,7 @@ beforeEach(() => {
     d.className = "stub-thumbs";
     into.append(d);
   });
+  vi.stubGlobal("matchMedia", () => ({ matches: true })); // reduced motion: the panel hides at once (the animated close has its own tests)
   (window as unknown as { happyDOM: { setViewport(v: { width: number; height: number }): void } }).happyDOM.setViewport({ width: 1280, height: 800 });
 });
 afterEach(() => {
@@ -541,10 +542,11 @@ describe("header and empty state", () => {
     expect(q(".avatar.initial")!.textContent).toBe("M");
     expect(q("img.avatar")).toBeNull();
     expect(q(".hd .name")!.textContent).toBe("Your maison bleue expert");
-    expect(q(".hd .sub")!.textContent).toBe("AI shopping assistant");
+    expect(q(".hd .sub")).toBeNull(); // the AI notice moved above the input
+    expect(q(".ft .notice")!.nextElementSibling!.classList.contains("row")).toBe(true);
   });
 
-  it("the header says it in every language and always keeps the AI line", async () => {
+  it("the header says it in every language and always keeps the AI notice above the input", async () => {
     const expected: Record<string, string> = {
       en: "Your Demo Store expert", fr: "Votre expert Demo Store", de: "Ihr Demo Store-Experte",
       es: "Tu experto de Demo Store", it: "Il tuo esperto Demo Store", nl: "Jouw Demo Store-expert",
@@ -553,8 +555,8 @@ describe("header and empty state", () => {
       document.body.innerHTML = "";
       await setup(mockApi(), config(), pageCtx({ locale })).open();
       expect(q(".hd .name")!.textContent).toBe(name);
-      expect(q(".hd .sub")!.textContent).toBe(translator(locale)("subtitle"));
-      expect(q(".hd .sub")!.hidden).toBe(false);
+      expect(q(".ft .notice")!.textContent).toContain(translator(locale)("ai_notice"));
+      expect(q(".ft .notice")!.hidden).toBe(false);
       panel.destroy();
     }
   });
@@ -564,9 +566,9 @@ describe("header and empty state", () => {
     await setup(mockApi(), config(), pageCtx({ productId: "1", viewing })).open();
     const card = q(".viewing")!;
     expect(card.hidden).toBe(false);
-    expect(q(".vw-label")!.textContent).toBe("You're viewing");
+    expect(q(".vw-label")!.textContent).toBe("$20.00 · You're viewing");
     expect(q(".vw-title")!.textContent).toBe("Linen <b>tee</b>");
-    expect(q(".vw-price")!.textContent).toBe("$20.00");
+    expect(q(".vw-title")!.nextElementSibling).toBe(q(".vw-label"));
     expect(card.querySelector("img")!.getAttribute("src")).toBe(viewing.image);
     expect(card.querySelector("b")).toBeNull();
     panel.destroy();
@@ -789,8 +791,8 @@ describe("header and empty state", () => {
     await setup(mockApi()).open();
     const css = q("style")!.textContent!;
     const reduced = css.slice(css.indexOf("prefers-reduced-motion"));
-    expect(css).toContain("animation:in");
-    expect(reduced).toContain(".panel{animation:none}");
+    expect(css).toContain("animation:in .22s cubic-bezier(0.22,1,0.36,1)");
+    expect(reduced).toContain(".panel,.panel.full:not(.drawer),.msg.in,.txt.in,.status,.err,.cards.in{animation:none}");
     expect(reduced).toContain(".stx{animation:none;background:none");
   });
 });
@@ -996,20 +998,23 @@ describe("inline (the hosted page)", () => {
 });
 
 describe("expanded mode", () => {
-  const btn = () => q<HTMLButtonElement>("button.wide-btn")!;
+  // Expand / Collapse lives in the header menu now.
+  const openMenu = () => q<HTMLButtonElement>("button.menu")!.click();
+  const item = () => qa(".mlist button")[0] as HTMLButtonElement;
   const UI_KEY = `askcart:${SHOP}:ui`;
 
   it("toggles the wide class, aria-pressed and label, and persists the choice", async () => {
     await setup(mockApi()).open();
-    expect(btn().hidden).toBe(false);
-    expect(btn().getAttribute("aria-pressed")).toBe("false");
-    expect(btn().getAttribute("aria-label")).toBe("Expand");
-    btn().click();
+    expect(q("button.wide-btn")).toBeNull();
+    openMenu();
+    expect(item().hidden).toBe(false);
+    expect(item().textContent).toBe("Expand");
+    item().click();
     expect(q(".panel")!.classList.contains("wide")).toBe(true);
-    expect(btn().getAttribute("aria-pressed")).toBe("true");
-    expect(btn().getAttribute("aria-label")).toBe("Collapse");
     expect(JSON.parse(localStorage.getItem(UI_KEY)!).wide).toBe(true);
-    btn().click();
+    openMenu();
+    expect(item().textContent).toBe("Collapse");
+    item().click();
     expect(q(".panel")!.classList.contains("wide")).toBe(false);
     expect(JSON.parse(localStorage.getItem(UI_KEY)!).wide).toBe(false);
   });
@@ -1018,7 +1023,9 @@ describe("expanded mode", () => {
     localStorage.setItem(UI_KEY, JSON.stringify({ wide: true }));
     await setup(mockApi()).open();
     expect(q(".panel")!.classList.contains("wide")).toBe(true);
-    expect(btn().getAttribute("aria-pressed")).toBe("true");
+    openMenu();
+    expect(item().textContent).toBe("Collapse");
+    q<HTMLButtonElement>("button.menu")!.click();
     input().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
     expect(q(".panel")!.hidden).toBe(true);
   });
@@ -1029,7 +1036,8 @@ describe("expanded mode", () => {
     window.innerWidth = 400;
     try {
       await setup(mockApi()).open();
-      expect(btn().hidden).toBe(true);
+      openMenu();
+      expect(item().hidden).toBe(true);
       expect(q(".panel")!.classList.contains("wide")).toBe(false);
     } finally {
       window.innerWidth = w;
@@ -1042,7 +1050,8 @@ describe("expanded mode", () => {
     document.body.append(host);
     panel = mount(host, config(), pageCtx({ hosted: true }), { api: mockApi(), renderCards, renderFeedback, inline: true });
     await panel.open();
-    expect(btn().hidden).toBe(true);
+    openMenu();
+    expect(item().hidden).toBe(true);
   });
 
   it("has Expand/Collapse labels in every locale", async () => {
@@ -1063,16 +1072,16 @@ describe("drawer mode and send-on-open (the Ask our AI agent block)", () => {
     await setup(mockApi()).open({ mode: "drawer", title: { eyebrow: "<b>More</b>", heading: "Ask <img src=x onerror=alert(1)>" } });
     expect(panelEl().classList.contains("drawer")).toBe(true);
     expect(q(".hd .name")!.textContent).toBe("Your Demo Store expert");
-    expect(q(".hd .sub")!.textContent).toBe("AI shopping assistant");
+    expect(q(".hd .sub")).toBeNull();
     expect(sh().querySelector(".hd img, .hd b")).toBeNull();
   });
 
   it("the AI line is in the header in the drawer and in the floating panel", async () => {
     const p = setup(mockApi());
     await p.open({ mode: "drawer", title });
-    expect(q(".hd .sub")!.textContent).toBe("AI shopping assistant");
+    expect(q(".hd .sub")).toBeNull();
     await p.open({});
-    expect(q(".hd .sub")!.textContent).toBe("AI shopping assistant");
+    expect(q(".hd .sub")).toBeNull();
     expect(CSS).not.toMatch(/\.sub\{[^}]*display:none/);
   });
 
@@ -1093,7 +1102,7 @@ describe("drawer mode and send-on-open (the Ask our AI agent block)", () => {
     await p.open({});
     expect(panelEl().classList.contains("drawer")).toBe(false);
     expect(q(".hd .name")!.textContent).toBe("Your Demo Store expert");
-    expect(q(".hd .sub")!.textContent).toBe("AI shopping assistant");
+    expect(q(".hd .sub")).toBeNull();
   });
 
   it("a message is sent once the chat has loaded, scoped to the product, with no suggestions left", async () => {
@@ -1242,3 +1251,164 @@ describe("the \"added to your cart\" note", () => {
     expect(sh().querySelector(".note i")).toBeNull();
   });
 });
+
+describe("header logo, composer and the viewing thumbnail", () => {
+  const LOGO = "https://cdn.shopify.com/s/files/brand-logo.png";
+
+  it("logo: the avatar wins, then the shop's brand logo, then the initial", async () => {
+    await setup(mockApi(), config({ avatarUrl: "https://cdn.shopify.com/s/files/av.png" }), pageCtx({ logo: LOGO })).open();
+    expect(q<HTMLImageElement>("img.avatar")!.getAttribute("src")).toBe("https://cdn.shopify.com/s/files/av.png");
+    panel.destroy();
+    document.body.innerHTML = "";
+    await setup(mockApi(), config(), pageCtx({ logo: LOGO })).open();
+    expect(q<HTMLImageElement>("img.avatar")!.getAttribute("src")).toBe(LOGO);
+    expect(q(".avatar.initial")).toBeNull();
+    panel.destroy();
+    document.body.innerHTML = "";
+    await setup(mockApi(), config(), pageCtx({ logo: "https://evil.com/l.png" })).open();
+    expect(q("img.avatar")).toBeNull();
+    expect(q(".avatar.initial")!.textContent).toBe("D");
+  });
+
+  it("a logo is shown whole (contain, no circle) and only the initial is a circle", () => {
+    expect(CSS).toMatch(/\.avatar\{[^}]*object-fit:contain/);
+    expect(CSS).not.toMatch(/\.avatar\{[^}]*border-radius:50%/);
+    expect(CSS).toMatch(/\.avatar\.initial\{[^}]*border-radius:50%/);
+  });
+
+  it("the 'You're viewing' thumbnail loads from Liquid's protocol-relative store URL", async () => {
+    (window as unknown as { happyDOM: { setURL(u: string): void } }).happyDOM.setURL("https://shop.example/products/tee");
+    const viewing = { title: "Tee", image: "//shop.example/cdn/shop/files/tee.jpg?width=160", price: "$20.00" };
+    await setup(mockApi(), config(), pageCtx({ productId: "1", viewing })).open();
+    expect(q(".viewing img")!.getAttribute("src")).toBe("https://shop.example/cdn/shop/files/tee.jpg?width=160");
+  });
+
+  it("the viewing line is just 'You're viewing' when there is no price", async () => {
+    await setup(mockApi(), config(), pageCtx({ productId: "1", viewing: { title: "Tee", image: null, price: null } })).open();
+    expect(q(".vw-label")!.textContent).toBe("You're viewing");
+  });
+
+  it("header actions: cart, new chat, menu, divider, close, with the menu holding Expand and Delete chat", async () => {
+    await setup(mockApi()).open();
+    const names = qa(".actions > *").map((e) => e.getAttribute("aria-label") ?? e.className);
+    expect(names).toEqual(["Cart", "New chat", "mwrap", "sep", "Close"]);
+    expect(q("svg path[stroke-width='1.5']")).not.toBeNull(); // thin outline icons
+    q<HTMLButtonElement>("button.menu")!.click();
+    expect(qa(".mlist button").map((b) => b.textContent)).toEqual(["Expand", "Delete chat"]);
+  });
+
+  it("the composer: the AI notice and its privacy link sit above the input, and Send is inside the input's pill", async () => {
+    await setup(mockApi()).open();
+    const kids = Array.from(q(".ft")!.children).map((e) => e.className);
+    expect(kids.indexOf("notice")).toBeLessThan(kids.indexOf("row"));
+    expect(q(".notice")!.textContent).toContain("You're chatting with an AI assistant.");
+    expect(q(".notice a")!.textContent).toBe("Privacy policy");
+    expect(q(".row")!.contains(q("button.send"))).toBe(true);
+    expect(q(".row")!.contains(input())).toBe(true);
+    expect(CSS).toMatch(/textarea\{[^}]*border:0;[^}]*font-size:16px/);
+    expect(CSS).toMatch(/\.send\{position:absolute;right:6px;/);
+  });
+});
+
+describe("panel motion", () => {
+  type FakeAnim = { onfinish: (() => void) | null; cancel: ReturnType<typeof vi.fn> };
+  const animate = () => {
+    const anims: FakeAnim[] = [];
+    const fn = vi.fn(() => {
+      const a: FakeAnim = { onfinish: null, cancel: vi.fn() };
+      anims.push(a);
+      return a;
+    });
+    (HTMLElement.prototype as unknown as { animate: unknown }).animate = fn;
+    return { fn, anims };
+  };
+  const motionOk = () => vi.stubGlobal("matchMedia", () => ({ matches: false }));
+  afterEach(() => {
+    delete (HTMLElement.prototype as unknown as { animate?: unknown }).animate;
+  });
+
+  it("close() animates out, hides when the animation ends, and gives focus back at once", async () => {
+    const { fn, anims } = animate();
+    motionOk();
+    await setup(mockApi()).open();
+    panel.close();
+    const el = q(".panel")!;
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify((fn.mock.calls[0] as unknown[])[0])).toContain("scale(.97)");
+    expect(el.hidden).toBe(false);
+    expect(el.inert).toBe(true);
+    expect(JSON.parse(localStorage.getItem(`askcart:${SHOP}:ui`)!).open).toBe(false); // state is already closed
+    anims[0].onfinish!();
+    expect(el.hidden).toBe(true);
+    expect(el.inert).toBe(false);
+    expect(anims[0].cancel).toHaveBeenCalled(); // no held end frame left to hide the reopened panel
+  });
+
+  it("the drawer slides out to the right", async () => {
+    const { fn } = animate();
+    motionOk();
+    await setup(mockApi()).open({ mode: "drawer" });
+    panel.close();
+    expect(JSON.stringify((fn.mock.calls[0] as unknown[])[0])).toContain("translateX(100%)");
+  });
+
+  it("opening again during the exit cancels it", async () => {
+    const { anims } = animate();
+    motionOk();
+    await setup(mockApi()).open();
+    panel.close();
+    await panel.open();
+    expect(anims[0].cancel).toHaveBeenCalled();
+    expect(q(".panel")!.hidden).toBe(false);
+    expect(q(".panel")!.inert).toBe(false);
+  });
+
+  it("reduced motion: no animation, hidden at once", async () => {
+    const { fn } = animate();
+    await setup(mockApi()).open(); // beforeEach stubs reduce
+    panel.close();
+    expect(fn).not.toHaveBeenCalled();
+    expect(q(".panel")!.hidden).toBe(true);
+  });
+
+  it("a panel restored on a page load (focus:false) skips its entrance animation, and the next open animates", async () => {
+    const p = setup(mockApi());
+    await p.open({ focus: false });
+    expect(q(".panel")!.classList.contains("still")).toBe(true);
+    p.close();
+    expect(q(".panel")!.classList.contains("still")).toBe(false);
+    await p.open();
+    expect(q(".panel")!.classList.contains("still")).toBe(false);
+  });
+
+  it("uses custom easing curves, not the built-in ease-out", () => {
+    expect(CSS).toContain("animation:in .22s cubic-bezier(0.22,1,0.36,1)");
+    expect(CSS).toContain("animation:sl .3s cubic-bezier(0.32,0.72,0,1)");
+    expect(CSS).not.toMatch(/animation:(in|sl|inf) [.\d]+s ease-out/);
+  });
+
+  it("live messages fade in, history is drawn instantly", async () => {
+    const api = mockApi({
+      history: vi.fn(async () => [{ id: "u", role: "user", content: "old", status: "ok", cards: [], rating: null }] as HistoryItem[]),
+      send: vi.fn(async () => sseResponse([ev("text", { delta: "Hi" }), ev("done", { conversationToken: "t", messageId: null })])),
+    });
+    localStorage.setItem(TOKEN_KEY, "tok");
+    await setup(api).open();
+    await flush();
+    expect(q(".msg.user")!.classList.contains("in")).toBe(false);
+    await type("new question");
+    const users = qa(".msg.user");
+    expect(users[1].classList.contains("in")).toBe(true);
+    expect(q(".msg.bot .txt")!.classList.contains("in")).toBe(true);
+  });
+
+  it("the desktop drawer mode is remembered for the next page load", async () => {
+    const UI = `askcart:${SHOP}:ui`;
+    const p = setup(mockApi());
+    await p.open({ mode: "drawer" });
+    expect(JSON.parse(localStorage.getItem(UI)!).drawer).toBe(true);
+    await p.open({});
+    expect(JSON.parse(localStorage.getItem(UI)!).drawer).toBe(false);
+  });
+});
+

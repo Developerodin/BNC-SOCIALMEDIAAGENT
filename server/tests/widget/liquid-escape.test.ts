@@ -33,7 +33,7 @@ describe("Liquid outputs are escaped (Task 33)", () => {
     for (const { expr, capture } of outputs(src)) {
       const filters = expr.split("|").map((s) => s.trim());
       const last = filters[filters.length - 1];
-      if (last === "escape") continue;
+      if (last === "escape" || last === "escape_once") continue; // escape_once: text that may already be a (HTML-escaped) translation
       if (expr === "block.shopify_attributes" || expr === "shopify_attributes") continue; // the latter is the block's pass-through to the snippet
       if (last === "t" && !/_html['"]/.test(filters[0])) continue;
       if (capture && (last === "json" || captures.has(expr))) continue;
@@ -50,6 +50,17 @@ describe("Liquid outputs are escaped (Task 33)", () => {
     }
     expect(src).toContain('"viewing":{{ viewing }}');
     expect(src).toContain('data-page="{{ ctx | strip | escape }}"');
+  });
+
+  it("the embed's logo (the shop's brand logo URL) is JSON-escaped like the rest of the page context", () => {
+    const src = readFileSync(path.join(blocks, "askcart-embed.liquid"), "utf8");
+    const logo = src.match(/\{%-?\s*capture logo\s*-?%\}([\s\S]*?)\{%-?\s*endcapture/)![1];
+    for (const expr of ["shop.brand.logo | image_url: width: 256", "shop.brand.square_logo | image_url: width: 256"]) expect(logo).toContain(`{{ ${expr} | json }}`);
+    expect(src).toContain('"logo":{{ logo }}');
+  });
+
+  it("translations are not escaped a second time (Shopify's t already escapes them: a second pass shows &#39;)", () => {
+    for (const file of files) expect(readFileSync(file, "utf8")).not.toMatch(/\|\s*t\s*\|\s*escape\b/);
   });
 
   it("every capture is output only through escape", () => {

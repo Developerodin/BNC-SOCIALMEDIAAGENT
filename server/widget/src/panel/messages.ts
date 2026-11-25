@@ -47,8 +47,9 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
     return node;
   };
 
-  function user(text: string): HTMLElement {
-    return add(el("div", "msg user", text));
+  /** `live` bubbles fade in; history is drawn instantly. */
+  function user(text: string, live = true): HTMLElement {
+    return add(el("div", live ? "msg user in" : "msg user", text));
   }
 
   /** "✓ <title> added to your cart · View cart": a system line (not a bubble) right after the answer's bubble and the
@@ -94,7 +95,7 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
 
   function history(items: HistoryItem[]) {
     for (const m of items) {
-      if (m.role === "user") user(m.content);
+      if (m.role === "user") user(m.content, false);
       else bot(m.content, m.cards, m.id, m.rating, m.status === "cut_off", m.cartAdds);
     }
   }
@@ -116,7 +117,7 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
       el: wrap,
       append(delta) {
         if (!txt) {
-          txt = el("div", "txt");
+          txt = el("div", "txt in");
           wrap.prepend(txt);
           typing.remove(); // the status line is for the wait before the first token (a retried stream starts without it)
         }
@@ -142,7 +143,7 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
         typing.remove();
         wrap.classList.remove("pending");
         if (cards.length) {
-          const box = el("div", "cards");
+          const box = el("div", "cards in"); // live answer: the cards fade up once
           wrap.append(box);
           r.renderCards(box, cards, ctx, messageId, (title, href) => addedNote(wrap, title, href, true));
         }

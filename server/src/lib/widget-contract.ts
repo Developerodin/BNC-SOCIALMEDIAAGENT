@@ -10,7 +10,7 @@ export type WidgetConfig = {
   accent: string; // #rrggbb
   avatarUrl: string | null; // https://cdn.shopify.com/... only (UD7b)
   launcher: {
-    style: "pill" | "icon";
+    style: "pill" | "icon" | "tab"; // tab: a small logo tab docked to the screen edge
     label: string | null;
     side: "right" | "left";
     offset: number;
@@ -36,6 +36,8 @@ export type PageContext = {
   designMode: boolean;
   /** Whether a customer is logged in on the storefront (a boolean from Liquid, never the id). Absent on the hosted page. */
   loggedIn?: boolean;
+  /** The store's Shopify brand logo (Liquid image_url, may be protocol-relative); the chat's logo when no avatar is set. */
+  logo?: string | null;
   /** Product pages only: the product being viewed, for the "You're viewing" card. Absent elsewhere and on the hosted page. */
   viewing?: { title: string; image: string | null; price: string | null };
   /** Only on the hosted chat page (/chat/<shop>): there is no storefront cart, so a card opens the product on the store. */

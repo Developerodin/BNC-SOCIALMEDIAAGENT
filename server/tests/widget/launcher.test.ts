@@ -394,3 +394,123 @@ describe("automatic Ask our AI agent block", () => {
     expect(document.querySelectorAll("script[src*='askcart-ask-ai']")).toHaveLength(0);
   });
 });
+
+describe("logo tab launcher", () => {
+  const tabCfg = (side: "right" | "left" = "right", over: Partial<WidgetConfig> = {}) =>
+    config({ launcher: { style: "tab", label: null, side, offset: 60, scope: "all" }, ...over });
+
+  it("is a labelled tab docked to the right edge, with no inline offset, and the chat icon when there is no logo", () => {
+    mountRoot(tabCfg());
+    start();
+    expect(button().classList.contains("tab")).toBe(true);
+    expect(button().classList.contains("sl")).toBe(false);
+    expect(button().getAttribute("aria-label")).toBe("Open the chat assistant");
+    expect(button().style.bottom).toBe("");
+    expect(button().style.right).toBe("");
+    expect(button().textContent).toBe("");
+    expect(button().querySelector("svg")).not.toBeNull();
+    expect(button().querySelector("img")).toBeNull();
+  });
+
+  it("is docked to the left edge when the side is left", () => {
+    mountRoot(tabCfg("left"));
+    start();
+    expect(button().classList.contains("sl")).toBe(true);
+  });
+
+  it("shows the avatar, else the shop's brand logo (page.logo), and never an unsafe URL", () => {
+    mountRoot(tabCfg("right", { avatarUrl: "https://cdn.shopify.com/s/files/av.png" }), { logo: "https://cdn.shopify.com/s/files/logo.png" });
+    start();
+    expect(button().querySelector("img")!.getAttribute("src")).toBe("https://cdn.shopify.com/s/files/av.png");
+    document.body.innerHTML = "";
+    mountRoot(tabCfg(), { logo: "https://cdn.shopify.com/s/files/logo.png" });
+    start();
+    expect(button().querySelector("img")!.getAttribute("src")).toBe("https://cdn.shopify.com/s/files/logo.png");
+    document.body.innerHTML = "";
+    mountRoot(tabCfg(), { logo: "https://evil.com/logo.png" });
+    start();
+    expect(button().querySelector("img")).toBeNull();
+  });
+
+  it("is mid-height, with an accent dot, and its CSS has reduced-motion and a 44px+ target", () => {
+    mountRoot(tabCfg());
+    start();
+    const css = shadow().querySelector("style")!.textContent!;
+    expect(css).toMatch(/\.l\.tab\{top:50%;bottom:auto;right:0;width:56px;height:64px/);
+    expect(css).toContain(".l.tab::after");
+    expect(css).toContain("@media (prefers-reduced-motion:reduce){.l,.t{animation:none;transition:none}}");
+    expect(css).toContain("@media (hover:hover) and (prefers-reduced-motion:no-preference){.l:hover");
+  });
+
+  it("opens the chat on a click like the other styles", () => {
+    mountRoot(tabCfg());
+    start();
+    button().click();
+    expect(scripts()).toHaveLength(1);
+  });
+
+  it("the teaser sits next to the tab, not at the bottom", () => {
+    vi.useFakeTimers();
+    mountRoot(tabCfg("right", { teaser: { enabled: true, text: "Hi", delaySec: 1 } }));
+    start();
+    vi.advanceTimersByTime(1500);
+    expect(teaser()!.style.top).toBe("50%");
+    expect(teaser()!.style.right).toBe("64px");
+    expect(teaser()!.style.bottom).toBe("");
+  });
+});
+
+describe("restoring the chat on a page load", () => {
+  it("reopens it as the drawer when it was a drawer", () => {
+    localStorage.setItem(`askcart:${SHOP}:ui`, JSON.stringify({ open: true, drawer: true }));
+    mountRoot();
+    start();
+    expect(widgetLoaded()).toHaveBeenCalledWith({ productId: null, focus: false, mode: "drawer" });
+  });
+
+  it("reopens the floating panel otherwise", () => {
+    localStorage.setItem(`askcart:${SHOP}:ui`, JSON.stringify({ open: true, drawer: false }));
+    mountRoot();
+    start();
+    expect(widgetLoaded()).toHaveBeenCalledWith({ productId: null, focus: false });
+  });
+});
+
+describe("automatic block placement on Dawn-like markup", () => {
+  const AI_SRC = "https://cdn.shopify.com/extensions/x/assets/askcart-ask-ai.js";
+  const template = `<template data-askcart-ask-ai-auto data-script="${AI_SRC}"><link rel="stylesheet" href="x.css"><div class="askcart-ai" data-askcart-ask-ai></div></template>`;
+  const dawn = `<main><div class="product__info-container">
+    <div class="price-block"><p class="price">$20.00</p><p>Tax included.</p>
+      <form action="/cart/add" id="product-form-installment-1" class="installment"><input type="hidden" name="id" value="1"></form></div>
+    <div id="buy"><product-form class="product-form"><form action="/cart/add" id="product-form-1">
+      <button type="submit" name="add">Add to cart</button><div class="shopify-payment-button"><button type="button">Buy it now</button></div>
+    </form></product-form></div>
+    <div id="after">Description</div></div></main>`;
+
+  it("skips the hidden installment form and lands after the Buy buttons, including Buy it now", () => {
+    document.body.insertAdjacentHTML("beforeend", dawn + template);
+    mountRoot();
+    start();
+    const block = document.querySelector("[data-askcart-ask-ai]")!;
+    expect(block.closest(".price-block")).toBeNull();
+    expect(block.closest("product-form")).toBeNull();
+    // right after the buy-buttons wrapper, before the description
+    expect(document.querySelector("product-form")!.nextElementSibling!.matches("link")).toBe(true);
+    expect(document.querySelector("#buy")!.contains(block)).toBe(true);
+    expect(block.parentElement!.nextElementSibling!.id).toBe("after");
+  });
+
+  it("lands after a Buy it now button that sits outside the product-form wrapper", () => {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<main><div id="buy"><product-form><form action="/cart/add"><button type="submit">Add</button></form></product-form>
+        <div id="pay"><div class="shopify-payment-button"><button>Buy it now</button></div></div></div><p id="after"></p></main>` + template,
+    );
+    mountRoot();
+    start();
+    const block = document.querySelector("[data-askcart-ask-ai]")!;
+    expect(document.querySelector("#pay")!.nextElementSibling!.matches("link")).toBe(true);
+    expect(block.parentElement!.nextElementSibling!.id).toBe("after");
+  });
+});
+

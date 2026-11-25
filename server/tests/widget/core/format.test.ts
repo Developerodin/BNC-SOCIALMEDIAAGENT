@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
-import { contrastRatio, formatPrice, resolveHttpsUrl, safeHex, safeHttpsUrl, safeImageUrl, stockLabel, textOn } from "../../../widget/src/core/format";
+import { brandLogo, contrastRatio, formatPrice, resolveHttpsUrl, safeHex, safeHttpsUrl, safeImageUrl, stockLabel, textOn } from "../../../widget/src/core/format";
 import { translator } from "../../../widget/src/core/i18n";
 
 const t = translator("en");
@@ -37,6 +37,31 @@ describe("format", () => {
     expect(safeImageUrl("https://cdn.shopify.com.evil.com/a.png")).toBeNull();
     expect(safeImageUrl("http://cdn.shopify.com/a.png")).toBeNull();
     expect(safeImageUrl("https://cdn.shopify.com/s/files/a.png")).toBe("https://cdn.shopify.com/s/files/a.png");
+  });
+
+  it("accepts Liquid's protocol-relative and same-store /cdn/shop/ image URLs, resolved against the page", () => {
+    (window as unknown as { happyDOM: { setURL(u: string): void } }).happyDOM.setURL("https://shop.example/products/tee");
+    expect(safeImageUrl("//shop.example/cdn/shop/files/a.jpg?width=160")).toBe("https://shop.example/cdn/shop/files/a.jpg?width=160");
+    expect(safeImageUrl("/cdn/shop/files/a.jpg")).toBe("https://shop.example/cdn/shop/files/a.jpg");
+    expect(safeImageUrl("//cdn.shopify.com/s/files/a.png")).toBe("https://cdn.shopify.com/s/files/a.png");
+    // other hosts, other paths on the store, and look-alikes stay out
+    expect(safeImageUrl("//evil.example/cdn/shop/files/a.jpg")).toBeNull();
+    expect(safeImageUrl("//shop.example/evil/a.jpg")).toBeNull();
+    expect(safeImageUrl("/a.png")).toBeNull();
+    expect(safeImageUrl("//shop.example.evil.com/cdn/shop/a.jpg")).toBeNull();
+    expect(safeImageUrl("http://shop.example/cdn/shop/a.jpg")).toBeNull();
+    expect(safeImageUrl("javascript:alert(1)")).toBeNull();
+    expect(safeImageUrl(null)).toBeNull();
+  });
+
+  it("the chat's logo is the avatar, else the shop's brand logo, else nothing", () => {
+    (window as unknown as { happyDOM: { setURL(u: string): void } }).happyDOM.setURL("https://shop.example/");
+    const av = "https://cdn.shopify.com/s/files/av.png";
+    expect(brandLogo(av, "//shop.example/cdn/shop/files/logo.png")).toBe(av);
+    expect(brandLogo(null, "//shop.example/cdn/shop/files/logo.png")).toBe("https://shop.example/cdn/shop/files/logo.png");
+    expect(brandLogo("https://evil.com/a.png", "https://cdn.shopify.com/l.png")).toBe("https://cdn.shopify.com/l.png");
+    expect(brandLogo(null, "https://evil.com/l.png")).toBeNull();
+    expect(brandLogo(null, null)).toBeNull();
   });
 
   it("picks black or white text for contrast on the accent (UD17), and checks hex colours", () => {

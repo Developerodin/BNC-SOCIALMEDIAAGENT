@@ -26,7 +26,14 @@ export function renderRich(box: HTMLElement, text: string) {
   const flush = () => {
     // Line breaks next to a list are dropped: the list's own margin spaces it.
     const t = plain.join("\n").replace(/^\n+|\n+$/g, "");
-    if (t) inline(box, t);
+    const paras = t ? t.split(/\n{2,}/) : [];
+    if (paras.length === 1) inline(box, t);
+    else
+      for (const p of paras) {
+        const e = document.createElement("p"); // blank lines between paragraphs: each gets its own <p> (spaced in styles.ts)
+        inline(e, p);
+        box.append(e);
+      }
     plain = [];
   };
   for (const line of text.split("\n")) {

@@ -9,8 +9,8 @@
     "button": "Vraag over dit product"
   },
   "ask_ai": {
-    "eyebrow": "Nog vragen?",
-    "heading": "Vraag het onze AI-assistent",
+    "eyebrow": "Jouw {{ store }}-expert",
+    "heading": "Een vraag over dit product?",
     "placeholder": "Stel je vraag",
     "send": "Verstuur",
     "note": "De antwoorden worden door een AI-assistent geschreven op basis van de gegevens van dit product (beschrijving, afmetingen, prijs, voorraad, opties)."

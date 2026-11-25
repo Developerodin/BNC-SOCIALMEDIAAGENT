@@ -7,27 +7,17 @@
 // the server disagreeing. Ceiling: a very slow request blocks re-rating until it settles (fetch has no timeout here).
 import type { FeedbackRenderer, WidgetCtx } from "../../src/lib/widget-contract";
 import { tokenStore } from "./core/storage";
+import { strokeIcon } from "./panel/icons";
 
 type Rating = -1 | 1 | null;
 
-const NS = "http://www.w3.org/2000/svg";
+// Thin outline thumbs (1.5px stroke), like the header icons.
 const ICON: Record<-1 | 1, string> = {
-  1: "M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z",
-  [-1]: "M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z",
+  1: "M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3",
+  [-1]: "M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17",
 };
 
-function icon(d: string): SVGSVGElement {
-  const svg = document.createElementNS(NS, "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("width", "16");
-  svg.setAttribute("height", "16");
-  svg.setAttribute("aria-hidden", "true");
-  const path = document.createElementNS(NS, "path");
-  path.setAttribute("d", d);
-  path.setAttribute("fill", "currentColor");
-  svg.append(path);
-  return svg;
-}
+const icon = (d: string) => strokeIcon(d, 18);
 
 /**
  * Renders the thumbs into `into`, replacing any thumbs rendered there before. Accepts a null id (an answer the server

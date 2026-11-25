@@ -7,8 +7,9 @@
 {%- endcomment -%}
 {%- assign cfg = app.metafields.askcart.widget.value -%}
 {%- if product and cfg.enabled and cfg.apiBase != blank -%}
+  {%- assign store_name = cfg.name | default: shop.name -%}
   {%- assign eyebrow = block.settings.eyebrow -%}
-  {%- if eyebrow == blank -%}{%- assign eyebrow = 'ask_ai.eyebrow' | t -%}{%- endif -%}
+  {%- if eyebrow == blank -%}{%- assign eyebrow = 'ask_ai.eyebrow' | t: store: store_name -%}{%- endif -%}
   {%- assign pill_count = 0 -%}
   {%- if block.settings.question_1 != blank -%}{%- assign pill_count = pill_count | plus: 1 -%}{%- endif -%}
   {%- if block.settings.question_2 != blank -%}{%- assign pill_count = pill_count | plus: 1 -%}{%- endif -%}

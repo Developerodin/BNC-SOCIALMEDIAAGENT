@@ -42,3 +42,12 @@ describe("renderRich", () => {
     expect(box.querySelectorAll("li")).toHaveLength(2);
   });
 });
+
+describe("renderRich paragraphs", () => {
+  it("puts text separated by a blank line in separate <p> elements, and a single block stays bare", () => {
+    expect(render("One.\n\nTwo.\n\nThree.").innerHTML).toBe("<p>One.</p><p>Two.</p><p>Three.</p>");
+    expect(render("One.\nStill one.").innerHTML).toBe("One.\nStill one.");
+    expect(render("Intro.\n\nMore **bold**.").innerHTML).toBe("<p>Intro.</p><p>More <strong>bold</strong>.</p>");
+  });
+});
+

@@ -519,7 +519,7 @@ type WidgetForm = {
   name: string;
   accent: string;
   avatarUrl: string;
-  style: "pill" | "icon";
+  style: "pill" | "icon" | "tab";
   label: string;
   side: "right" | "left";
   scope: "all" | "product" | "none";
@@ -533,7 +533,7 @@ type WidgetView = {
   name: string;
   accent: string;
   avatarUrl: string | null;
-  launcher: { style: "pill" | "icon"; label: string | null; side: "right" | "left"; scope: "all" | "product" | "none" };
+  launcher: { style: "pill" | "icon" | "tab"; label: string | null; side: "right" | "left"; scope: "all" | "product" | "none" };
   welcome: string | null;
   suggested: string[];
   teaser: { enabled: boolean; text: string | null; delaySec: number };
@@ -663,7 +663,7 @@ function WidgetSettingsCard() {
           <input type="color" value={accent} onChange={(e) => set("accent", e.target.value)} aria-label="Accent color picker" />
           {/* Not the real widget: only the accent and the text color the widget will pick on it. */}
           <span style={{ display: "inline-block", padding: "6px 16px", borderRadius: 999, background: accent, color: textOn(accent) }}>
-            {form.style === "icon" ? "Chat" : form.label || "Ask us anything"}
+            {form.style !== "pill" ? "Chat" : form.label || "Ask us anything"}
           </span>
         </s-stack>
         <s-text-field
@@ -678,6 +678,7 @@ function WidgetSettingsCard() {
           <s-select label="Button style" value={form.style} onChange={(e) => set("style", valueOf(e) as WidgetForm["style"])}>
             <s-option value="pill">Pill with label</s-option>
             <s-option value="icon">Icon only</s-option>
+            <s-option value="tab">Logo tab</s-option>
           </s-select>
           <s-select label="Button side" value={form.side} onChange={(e) => set("side", valueOf(e) as WidgetForm["side"])}>
             <s-option value="right">Right</s-option>

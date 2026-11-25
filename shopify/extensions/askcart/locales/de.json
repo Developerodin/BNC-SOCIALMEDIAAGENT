@@ -9,8 +9,8 @@
     "button": "Frage zu diesem Produkt"
   },
   "ask_ai": {
-    "eyebrow": "Weitere Fragen?",
-    "heading": "Frag unseren KI-Agenten",
+    "eyebrow": "Ihr {{ store }}-Experte",
+    "heading": "Eine Frage zu diesem Produkt?",
     "placeholder": "Stell deine Frage",
     "send": "Senden",
     "note": "Die Antworten werden von einem KI-Assistenten aus den Daten dieses Produkts verfasst (Beschreibung, Maße, Preis, Lagerbestand, Optionen)."
