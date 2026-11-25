@@ -57,7 +57,22 @@ export function start(): (() => void) | undefined {
   }
   if (!cfg || !cfg.enabled || !cfg.launcher || !page || typeof page.shop !== "string") return;
   const d = root.dataset;
-  const ui = uiState(page.shop); // the same storage the panel writes (core/storage.ts)
+  // "Ask our AI agent" without theme editing: the embed ships the block in a <template>; put it after the buy form unless
+  // the merchant placed the block by hand (any [data-askcart-ask-ai] already in the page), then load its script.
+  // Template content is a separate fragment, so the query below only sees blocks that are really in the page.
+  const tpl = document.querySelector<HTMLTemplateElement>("template[data-askcart-ask-ai-auto]");
+  if (tpl && !document.querySelector("[data-askcart-ask-ai]")) {
+    const forms = Array.from(document.querySelectorAll("form[action*='/cart/add']"));
+    const form = forms.find((f) => f.closest("main")) ?? forms[0]; // not the cart drawer's or a footer's form
+    if (form) {
+      (form.closest("product-form") ?? form).after(tpl.content.cloneNode(true)); // Dawn wraps the form in <product-form>
+      const s = document.createElement("script");
+      s.async = true;
+      s.src = tpl.dataset.script ?? "";
+      if (s.src) document.head.append(s);
+    }
+  }
+  const ui =uiState(page.shop); // the same storage the panel writes (core/storage.ts)
   const left = cfg.launcher.side === "left";
   // The button follows launcher.scope (a config from before it existed means "all"). With no button the launcher still
   // mounts and listens for `askcart:open`, so the product block can open the chat.

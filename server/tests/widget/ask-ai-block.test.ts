@@ -188,9 +188,13 @@ describe("Ask our AI agent block", () => {
   });
 });
 
+const ext = path.resolve(__dirname, "../../../shopify/extensions/askcart");
+const blockSrc = readFileSync(path.join(ext, "blocks/askcart-ask-ai.liquid"), "utf8");
+const snippetSrc = readFileSync(path.join(ext, "snippets/askcart-ask-ai.liquid"), "utf8"); // the markup, shared with the app embed
+
 describe("askcart-ask-ai.liquid", () => {
-  const liquid = readFileSync(path.resolve(__dirname, "../../../shopify/extensions/askcart/blocks/askcart-ask-ai.liquid"), "utf8");
-  const schema = JSON.parse(liquid.split("{% schema %}")[1].split("{% endschema %}")[0]);
+  const liquid = blockSrc + snippetSrc;
+  const schema = JSON.parse(blockSrc.split("{% schema %}")[1].split("{% endschema %}")[0]);
 
   it("is a product-page section block that loads askcart-ask-ai.js", () => {
     expect(schema.target).toBe("section");
@@ -270,7 +274,7 @@ describe("lazy questions fetch", () => {
 });
 
 describe("askcart-ask-ai.liquid theme matching", () => {
-  const liquid = readFileSync(path.resolve(__dirname, "../../../shopify/extensions/askcart/blocks/askcart-ask-ai.liquid"), "utf8");
+  const liquid = blockSrc + snippetSrc;
   // App blocks can't hold {% stylesheet %} (Shopify's AppBlockValidTags check): the CSS is an asset named in the schema.
   const css = readFileSync(path.resolve(__dirname, "../../../shopify/extensions/askcart/assets/askcart-ask-ai.css"), "utf8");
 
@@ -344,5 +348,48 @@ describe("theme colours, space-separated", () => {
       "255, 255, 255",
       "18, 18, 18",
     ]);
+  });
+});
+
+describe("the app embed's automatic copy of the block", () => {
+  const embed = readFileSync(path.join(ext, "blocks/askcart-embed.liquid"), "utf8");
+  const schema = JSON.parse(embed.split("{% schema %}")[1].split("{% endschema %}")[0]);
+  const tpl = embed.match(/<template data-askcart-ask-ai-auto[\s\S]*?<\/template>/)![0];
+
+  it("has an on-by-default checkbox with the agreed wording", () => {
+    expect(schema.settings).toEqual([
+      {
+        type: "checkbox",
+        id: "auto_ask_ai",
+        label: 'Show "Ask our AI agent" below Add to cart on product pages',
+        info: "If you place the block yourself in the theme editor, yours is used instead.",
+        default: true,
+      },
+    ]);
+  });
+
+  it("renders the template only on product pages with the setting on, inside the enabled branch", () => {
+    expect(embed).toContain("{%- if block.settings.auto_ask_ai and request.page_type == 'product' and product and cfg.apiBase != blank -%}");
+    expect(embed.indexOf("data-askcart-ask-ai-auto")).toBeGreaterThan(embed.indexOf('id="askcart-root"'));
+  });
+
+  it("uses the block's own snippet with AI-written questions (none set) and no editor attributes", () => {
+    expect(tpl).toMatch(/\{%-? render 'askcart-ask-ai', cfg: cfg, product: product, eyebrow: ask_eyebrow, heading: ask_heading, pill_count: 3 -%\}/);
+    expect(tpl).not.toContain("question_");
+    expect(tpl).not.toContain("shopify_attributes");
+    expect(blockSrc).toContain("{%- render 'askcart-ask-ai',");
+    expect(tpl).toContain('<link rel="stylesheet"');
+  });
+
+  it("escapes the script and stylesheet URLs", () => {
+    expect(tpl).toContain("data-script=\"{{ 'askcart-ask-ai.js' | asset_url | escape }}\"");
+    expect(tpl).toContain("href=\"{{ 'askcart-ask-ai.css' | asset_url | escape }}\"");
+  });
+
+  it("every output in the snippet is escaped, except the editor attributes the block passes through", () => {
+    const body = snippetSrc.replace(/\{%-?\s*comment\s*-?%\}[\s\S]*?\{%-?\s*endcomment\s*-?%\}/, "");
+    const outs = [...body.matchAll(/\{\{-?\s*([\s\S]*?)\s*-?\}\}/g)].map((m) => m[1]);
+    expect(outs.length).toBeGreaterThan(8);
+    expect(outs.filter((e) => !/\|\s*escape$/.test(e))).toEqual(["shopify_attributes"]);
   });
 });

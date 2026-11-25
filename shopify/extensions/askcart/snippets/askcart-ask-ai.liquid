@@ -1,0 +1,38 @@
+{%- comment -%}
+  The "Ask our AI agent" markup, shared by the app block (blocks/askcart-ask-ai.liquid) and the app embed's automatic
+  copy (blocks/askcart-embed.liquid), so the two cannot drift apart. Parameters: cfg (the widget config), product,
+  eyebrow, heading, pill_count, question_1..3, shopify_attributes (the block's editor attributes; empty for the embed).
+  Every value leaves Liquid through `escape` (Review Focus 2).
+{%- endcomment -%}
+<div
+  class="askcart-ai"
+  data-askcart-ask-ai
+  data-shop="{{ shop.permanent_domain | escape }}"
+  data-product="{{ product.id | escape }}"
+  data-locale="{{ request.locale.iso_code | escape }}"
+  data-api="{{ cfg.apiBase | escape }}"
+  data-accent="{{ cfg.accent | escape }}"
+  data-q1="{{ question_1 | escape }}"
+  data-q2="{{ question_2 | escape }}"
+  data-q3="{{ question_3 | escape }}"
+  {{ shopify_attributes }}
+>
+  <p class="askcart-ai__eyebrow" data-askcart-eyebrow>{{ eyebrow | escape }}</p>
+  <h2 class="askcart-ai__heading" data-askcart-heading>{{ heading | escape }}</h2>
+  <div class="askcart-ai__pills" data-askcart-pills data-askcart-loading style="--askcart-pills: {{ pill_count | escape }}"></div>
+  <form class="askcart-ai__form" data-askcart-form>
+    <input
+      class="askcart-ai__input"
+      type="text"
+      name="question"
+      maxlength="2000"
+      autocomplete="off"
+      placeholder="{{ 'ask_ai.placeholder' | t | escape }}"
+      aria-label="{{ 'ask_ai.placeholder' | t | escape }}"
+    >
+    <button class="askcart-ai__send" type="submit" aria-label="{{ 'ask_ai.send' | t | escape }}">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 4l7 7-1.41 1.41L13 7.83V20h-2V7.83l-4.59 4.58L5 11z"/></svg>
+    </button>
+  </form>
+  <p class="askcart-ai__note">{{ 'ask_ai.note' | t | escape }}</p>
+</div>

@@ -288,6 +288,11 @@ Sources: [IP allowlists for custom apps installed outside your organization](htt
    editor opens on the product template with the block added → drag it **below the Buy buttons** → **Save**. It then
    shows on every product using that template. The block's questions can be typed in its settings; left empty, AskCart
    writes up to 3 per product with AI (cached until the product changes).
+   **No theme editing needed:** with the **AskCart chat** app embed on, product pages show the block automatically below
+   Add to cart / Buy buttons (embed setting **Show "Ask our AI agent" below Add to cart on product pages**, on by default,
+   AI-written questions). The launcher inserts it after the product page's buy form (`form[action*="/cart/add"]`, inside
+   `<product-form>` on Dawn). If the block was placed by hand in the theme editor, that one is used and nothing is added.
+   A theme that builds its buy form with JavaScript after page load gets no automatic block; place it by hand there.
 
 The chat button now shows bottom-right on their storefront, and product pages show the Ask our AI agent block.
 
