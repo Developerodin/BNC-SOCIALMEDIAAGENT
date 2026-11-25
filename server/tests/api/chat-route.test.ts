@@ -316,7 +316,7 @@ test("cancelling the response body mid-stream aborts the OpenAI request, saves t
       const rows = await admin`select m.content, m.status from messages m
         join messages u on u.conversation_id = m.conversation_id and u.role = 'user' and u.content = 'cancel me'
         where m.role = 'assistant'`;
-      expect(rows).toEqual([{ content: "Partial ", status: "cut_off" }]);
+      expect(rows).toEqual([{ content: "Partial", status: "cut_off" }]);
     });
     await new Promise((r) => setTimeout(r, 20));
     expect(unhandled).not.toHaveBeenCalled();
@@ -416,7 +416,7 @@ test("a repeated requestId after done replays the saved answer as SSE (meta, tex
   liveCheck.mockResolvedValueOnce({ ok: true, products: new Map([[gid("1"), live("1")]]) });
   create.mockImplementation(fakeStream(["Here ", "you go: ", "[[product:1]]"]));
   const firstEvents = await readAll(await post({ shop: shopA, message: "tee?", conversationToken: tok, requestId }));
-  expect(firstEvents.map((e) => e.event)).toEqual(["meta", "text", "text", "product", "done"]);
+  expect(firstEvents.map((e) => e.event)).toEqual(["meta", "text", "text", "product", "text", "done"]);
   clearMocks();
 
   const res = await post({ shop: shopA, message: "tee?", conversationToken: tok, requestId });
@@ -426,14 +426,14 @@ test("a repeated requestId after done replays the saved answer as SSE (meta, tex
   const events = await readAll(res);
   expect(events).toEqual([
     { event: "meta", data: { conversationToken: tok } },
-    { event: "text", data: { delta: "Here you go: " } },
+    { event: "text", data: { delta: "Here you go:" } },
     { event: "product", data: firstEvents[3].data },
-    { event: "done", data: { conversationToken: tok, messageId: firstEvents[4].data.messageId } },
+    { event: "done", data: { conversationToken: tok, messageId: firstEvents[5].data.messageId } },
   ]);
   // The replay names the original answer row, so thumbs given to the first stream apply to the replayed one too.
-  expect(firstEvents[4].data.messageId).toBe(await lastAssistantId(token.verifyToken(storeA, tok)));
+  expect(firstEvents[5].data.messageId).toBe(await lastAssistantId(token.verifyToken(storeA, tok)));
   noCalls();
-  const rows = await admin`select role from messages where request_id = ${requestId} or (role = 'assistant' and content = 'Here you go: ')`;
+  const rows = await admin`select role from messages where request_id = ${requestId} or (role = 'assistant' and content = 'Here you go:')`;
   expect(rows.map((r) => r.role).sort()).toEqual(["assistant", "user"]);
 });
 
@@ -505,7 +505,7 @@ test("a product marker streams a product event between the text and done, as val
   liveCheck.mockResolvedValueOnce({ ok: true, products: new Map([[gid("1"), live("1")]]) });
   create.mockImplementation(fakeStream(["Here: ", "[[prod", "uct:1]]"]));
   const events = await readAll(await post({ shop: shopA, message: "tee?" }));
-  expect(events.map((e) => e.event)).toEqual(["meta", "text", "product", "done"]);
+  expect(events.map((e) => e.event)).toEqual(["meta", "text", "product", "text", "done"]);
   expect(events[2].data).toMatchObject({ id: gid("1"), price: "10.00", currency: "EUR", action: "add" });
 });
 

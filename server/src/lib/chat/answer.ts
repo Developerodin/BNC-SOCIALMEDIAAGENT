@@ -22,6 +22,9 @@ const RETRY_DELAY_MS = 1000;
 const ESCALATE = "[[escalate]]";
 /** Rounds of tool calls per answer (tools.ts). The request after the last round is sent with tool_choice "none", so the model has to answer. */
 export const MAX_TOOL_ROUNDS = 3;
+/** One tool call may take this long; a slower one counts as failed, so a hung Shopify call can't use up the answer's time. */
+export const TOOL_TIMEOUT_MS = 15_000;
+const TOOL_FAILED = "This tool is unavailable right now. Tell the shopper you can't check that right now, and answer from what you already have.";
 
 export type AnswerTools = { defs: FunctionTool[]; run: (name: string, args: string) => Promise<string> };
 
@@ -48,13 +51,15 @@ export async function answer(opts: {
   signal: AbortSignal;
   onText: (text: string) => void;
   onProduct: (gid: string) => void;
+  /** A product's title, for a marker that stands where its name is needed (markers.ts). */
+  titleOf?: (gid: string) => string | undefined;
   timeouts?: { firstTokenMs?: number; totalMs?: number };
 }): Promise<AnswerResult> {
   const firstTokenMs = opts.timeouts?.firstTokenMs ?? FIRST_TOKEN_MS;
   const totalMs = opts.timeouts?.totalMs ?? TOTAL_MS;
   const endAt = Date.now() + totalMs;
 
-  const parser = createMarkerParser(opts.allowed);
+  const parser = createMarkerParser(opts.allowed, opts.titleOf);
   const tokens: Tokens = { input: 0, output: 0 };
   let text = "";
   let delivered = false; // anything (text or a product) has reached the shopper
@@ -207,11 +212,18 @@ export async function answer(opts: {
       input.push(...(out.output as unknown as ResponseInput));
       for (const c of calls) {
         let result: string;
+        let timer: ReturnType<typeof setTimeout> | undefined;
         try {
-          result = await opts.tools.run(c.name, c.arguments);
+          // A tool that fails or hangs is a tool result, never a failed answer.
+          const timeout = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("TimeoutError")), Math.min(TOOL_TIMEOUT_MS, Math.max(0, endAt - Date.now())));
+          });
+          result = await Promise.race([opts.tools.run(c.name, c.arguments), timeout]);
         } catch (err) {
           console.warn("chat tool failed", { storeId: opts.storeId, tool: c.name, error: err instanceof Error ? err.name : typeof err });
-          result = "This tool failed. Answer from what you already have.";
+          result = TOOL_FAILED;
+        } finally {
+          clearTimeout(timer);
         }
         input.push({ type: "function_call_output", call_id: c.call_id, output: result });
       }
@@ -223,6 +235,14 @@ export async function answer(opts: {
       // [[escalate]], so the small model's marker check starts over. Once text was shown, escalating is impossible.
       if (!delivered) reset();
       out = await streamWithRetry(size, onDelta, reset);
+      // The request that carries the tool results failed before anything was shown (a refused tool item, a slow first token):
+      // one more try that may not call tools, so the shopper still gets an answer from what the turn already holds.
+      if ((out.kind === "error" || out.kind === "first_token") && !delivered && !opts.signal.aborted && endAt - Date.now() > 5000) {
+        console.warn("chat answer after tools failed, retrying without tools", { storeId: opts.storeId, model: size, reason: out.kind });
+        toolRounds = MAX_TOOL_ROUNDS;
+        reset();
+        out = await stream(size, onDelta);
+      }
     }
     return out;
   }

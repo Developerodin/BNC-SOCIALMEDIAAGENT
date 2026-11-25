@@ -119,7 +119,7 @@ test("[[escalate]] split across deltas: no small-model text, small aborted, larg
     .mockImplementationOnce(stream(["Here ", "[[product:1]]", " it is"], { input_tokens: 200, output_tokens: 30 }));
   const { opts, texts, products } = setup({ largeSystem: "SYSTEM-LARGE" });
   const r = await answer(opts);
-  expect(texts.join("")).toBe("Here  it is");
+  expect(texts.join("")).toBe("Here it is");
   expect(texts.join("")).not.toMatch(/think|escalate/);
   expect(signals[0].aborted).toBe(true);
   expect(create).toHaveBeenCalledTimes(2);
@@ -129,7 +129,7 @@ test("[[escalate]] split across deltas: no small-model text, small aborted, larg
   expect(create.mock.calls[1][0]).toMatchObject({ reasoning: { effort: "low" } });
   expect(products).toEqual(["gid://shopify/Product/101"]);
   // the aborted small call reports no usage, so only the large call's tokens are counted
-  expect(r).toEqual({ model: "large", text: "Here  it is", status: "ok", tokens: { input: 200, output: 30 } });
+  expect(r).toEqual({ model: "large", text: "Here it is", status: "ok", tokens: { input: 200, output: 30 } });
   expect(console.info).toHaveBeenCalledWith("chat escalated", { storeId: "store-1" });
 });
 
@@ -295,7 +295,7 @@ test("a throwing tool becomes a sentence for the model, not a failed answer", as
   });
   const { opts } = setup({ tools: tools(run) });
   expect((await answer(opts)).text).toBe("Sorry");
-  expect((sent.bodies[1].input as { output?: string }[]).at(-1)!.output).toMatch(/tool failed/);
+  expect((sent.bodies[1].input as { output?: string }[]).at(-1)!.output).toMatch(/unavailable right now/);
 });
 
 test("tool results are kept when the small model escalates after a tool round", async () => {

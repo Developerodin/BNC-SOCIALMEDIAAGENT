@@ -22,10 +22,13 @@ function inBudget(price: number | null, b: Budget): boolean {
   return (b.min === undefined || price >= b.min) && (b.max === undefined || price <= b.max);
 }
 
+/** A price sort covers the hits scoring within this of the best one (embedding scores are cosine similarities). */
+export const HEAD_MARGIN = 0.08;
+
 /** "₹1,000". Unknown currency codes fall back to "1000 XYZ". */
 function money(n: number, currency: string): string {
   try {
-    return new Intl.NumberFormat("en", { style: "currency", currency, minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(n);
+    return new Intl.NumberFormat("en", { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
   } catch {
     return `${n} ${currency}`;
   }
@@ -57,6 +60,8 @@ export function applyBudget(opts: {
   currency: string | null;
   /** The shopper's page currency, when known: with another one, the C05 note names the product without a price. */
   shopperCurrency?: string | null;
+  /** How far below the best hit's score a product still counts as relevant for a price sort (default HEAD_MARGIN). */
+  margin?: number;
 }): { hits: SearchHit[]; live: PromptProducts; note?: string } {
   const { hits, live, budget, sort } = opts;
   if (!budget && !sort) return { hits, live };
@@ -89,6 +94,15 @@ export function applyBudget(opts: {
 
   let ordered = hits;
   if (sort && products.size > 0) {
+    // Only the relevant head is sorted by price: a search for "sofa" also returns cushions and rugs, and sorting all of
+    // them would put a EUR 39 cushion first for "cheapest sofa". The head is the products scoring within `margin` of the
+    // best hit; the rest are left out of the list. When the budget leaves none of the head, everything left is sorted.
+    const best = new Map<string, number>();
+    for (const h of hits) if (Number.isFinite(h.score)) best.set(h.productId, Math.max(best.get(h.productId) ?? -Infinity, h.score));
+    const top = Math.max(...best.values());
+    const head = (h: SearchHit) => !best.size || (best.get(h.productId) ?? -Infinity) >= top - (opts.margin ?? HEAD_MARGIN);
+    const inHead = hits.filter((h) => head(h) && products.has(h.productId));
+    const pool = inHead.length ? inHead : hits.filter((h) => products.has(h.productId));
     const key = (h: SearchHit) => {
       const p = products.get(h.productId);
       const price = p ? productPrice(p) : null;
@@ -96,7 +110,7 @@ export function applyBudget(opts: {
       return sort === "cheapest" ? price : -price;
     };
     // Stable, so equal prices keep search order. Compared, not subtracted: Infinity - Infinity is NaN.
-    ordered = [...hits].sort((a, b) => {
+    ordered = [...pool].sort((a, b) => {
       const x = key(a);
       const y = key(b);
       return x === y ? 0 : x < y ? -1 : 1;

@@ -111,6 +111,28 @@ export function sanitizeData(text: string): string {
   return out;
 }
 
+/**
+ * Merchant text as plain words: HTML tags, Markdown links, images and emphasis are removed (a title like "<b>Margot</b> **sofa**"
+ * would otherwise be copied into the answer as it is). For the model's copy only: what is stored is untouched.
+ */
+export function plainText(t: string): string {
+  return t
+    .replace(/<\/?(?:br|p|div|li|ul|ol|tr|h[1-6])\b[^<>]*>/gi, " ")
+    .replace(/<\/?[a-z][a-z0-9-]*(?:\s[^<>]*)?\/?>/gi, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/!?\[([^\]\n]*)\]\((?:[^()\s]|\([^)\s]*\))*(?:\s+"[^"]*")?\)/g, "$1")
+    .replace(/(\*\*|__|~~)(?=\S)(.+?)(?<=\S)\1/g, "$2")
+    .replace(/(?<![\w*])\*(?=[^\s*])([^*\n]+?)(?<=[^\s*])\*(?![\w*])/g, "$1");
+}
+
+/** "[[product:2]]" and "product:2" in a shopper's own message: they would steer which product a card shows, so the model never sees them. */
+export function stripProductRefs(t: string): string {
+  const out = t.replace(/\[\[\s*product\s*:\s*\d+\s*\]\]|\bproduct:\d+\b/gi, " ").replace(/[ \t]{2,}/g, " ").trim();
+  return out || t;
+}
+
 const oneLine = (t: string) => t.replace(/\s+/g, " ").trim();
 
 /** The <shopper_cart> block. All of it is shopper-browser text (unverified), so it goes through sanitizeData and stays out of <store_data>. */
@@ -129,7 +151,7 @@ export function productBlock(p: { n: string; id: string; texts: string[]; live: 
   const head = `#${p.n} ${title}${p.viewing ? " (the product the shopper is viewing)" : ""}`;
   const liveLine = `LIVE: ${live ? toPromptStock(live, p.threshold, p.shopperCurrency) : LIVE_UNAVAILABLE}`;
   // Titles, chunk text and variant titles are all merchant text: sanitize the whole block.
-  return sanitizeData([head, ...p.texts, liveLine].join("\n"));
+  return sanitizeData(plainText([head, ...p.texts, liveLine].join("\n")));
 }
 
 /** The live-check outcome for this turn: live products, or C11 (b) fallback cards from our own table. */

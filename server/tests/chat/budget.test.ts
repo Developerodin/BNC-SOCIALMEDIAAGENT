@@ -48,15 +48,15 @@ test("a budget keeps products inside it (bounds inclusive) and drops the rest", 
   const r = applyBudget({ hits, live: liveOf(a, b, c), budget: { min: 400, max: 1000 }, sort: null, currency: "INR" });
   expect(r.live.ok && [...r.live.products.keys()]).toEqual(["b", "c"]);
   expect(r.hits).toBe(hits);
-  expect(r.note).toBe('Left out for costing more than the budget: the cheapest of those is "P a" at ₹1,500.'); // C05
+  expect(r.note).toBe('Left out for costing more than the budget: the cheapest of those is "P a" at ₹1,500.00.'); // C05
 });
 
 test("a budget that leaves nothing gives a note with the budget", () => {
   const r = applyBudget({ hits, live: liveOf(a, b, c), budget: { min: 10, max: 100 }, sort: null, currency: "INR" });
   expect(r.live.ok && r.live.products.size).toBe(0);
-  expect(r.note).toBe(`No products are within the shopper's budget of ₹10–₹100. Left out for costing more than the budget: the cheapest of those is "P b" at ₹400.`);
-  expect(applyBudget({ hits, live: liveOf(a), budget: { max: 1000 }, sort: null, currency: "INR" }).note).toContain("of at most ₹1,000.");
-  expect(applyBudget({ hits, live: liveOf(b), budget: { min: 500 }, sort: null, currency: "EUR" }).note).toContain("of at least €500.");
+  expect(r.note).toBe(`No products are within the shopper's budget of ₹10.00–₹100.00. Left out for costing more than the budget: the cheapest of those is "P b" at ₹400.00.`);
+  expect(applyBudget({ hits, live: liveOf(a), budget: { max: 1000 }, sort: null, currency: "INR" }).note).toContain("of at most ₹1,000.00.");
+  expect(applyBudget({ hits, live: liveOf(b), budget: { min: 500 }, sort: null, currency: "EUR" }).note).toContain("of at least €500.00.");
 });
 
 test("cheapest orders the hits by price, keeping every chunk of a product; priciest reverses it", () => {
@@ -78,7 +78,7 @@ test("C05 note: only this search's hits are considered, and the price is left ou
   const viewed = product("v", [v("700.00")]); // live, but not one of the search hits
   const live = liveOf(a, b, c, viewed);
   const r = applyBudget({ hits: [hit("a"), hit("b")], live, budget: { max: 1000 }, sort: null, currency: "INR" });
-  expect(r.note).toContain('"P a" at ₹1,500.');
+  expect(r.note).toContain('"P a" at ₹1,500.00.');
   const other = applyBudget({ hits: [hit("a"), hit("b")], live, budget: { max: 1000 }, sort: null, currency: "INR", shopperCurrency: "EUR" });
   expect(other.note).toBe('Left out for costing more than the budget: the cheapest of those is "P a".');
   const same = applyBudget({ hits: [hit("a"), hit("b")], live, budget: { max: 1000 }, sort: null, currency: "INR", shopperCurrency: "INR" });

@@ -7,7 +7,7 @@ import { adminGraphql } from "@/lib/shopify/admin";
 import { refreshProduct } from "@/lib/sync";
 import { MAX_DESCRIPTION_CHARS, numberProducts, productNumber } from "./number-products";
 import { withTimeout } from "./openai";
-import { productBlock, sanitizeData } from "./prompt";
+import { plainText, productBlock, sanitizeData } from "./prompt";
 import { searchProductBlocks, type ToolContext } from "./tools";
 
 // Tools that read the store live through the Admin API, offered only for installed stores (mode 'app', so an Admin token
@@ -264,7 +264,7 @@ async function refresh(arg: unknown, outdated: boolean, ctx: ToolContext): Promi
   const content = buildContent({ ...p, description: p.description.slice(0, MAX_DESCRIPTION_CHARS) });
   const body = `#${n} (refreshed just now)\n${content}\nPrice and stock are not given here: they come only from the LIVE lines.`;
   // Sanitize first (it only removes text), then cut.
-  return sanitizeData(body).slice(0, MAX_RESULT_CHARS);
+  return sanitizeData(plainText(body)).slice(0, MAX_RESULT_CHARS);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
