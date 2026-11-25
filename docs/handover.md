@@ -71,8 +71,7 @@
 ## Waiting on the user
 - EC2 logs for tester #10 "Assistant unavailable" on return policy:
   `pm2 logs askcart --lines 400 --nostream | grep -iE "polic|error|unavailable|timeout" | tail -40`
-- `PARTNER_STORE_DOMAIN` on EC2 must be **`687541-22.myshopify.com`** (BnC's permanent handle). `boisandchiffons.myshopify.com` gave 503 store_not_connected on 2026-11-25. The secret is already accepted on EC2.
-- `PARTNER_API_SECRET` + `PARTNER_STORE_DOMAIN` on EC2 (for the Social Media Agent; the user sets these manually).
+- `PARTNER_STORE_DOMAIN` on EC2 must be **`687541-22.myshopify.com`** (BnC's permanent handle). `boisandchiffons.myshopify.com` gave 503 store_not_connected on 2026-11-25. **LIVE since 2026-11-25 evening:** the Social Media Agent gets 200 on /shop, /products and /orders (backfill running).
 - Pull + restart EC2 (BnC sync recovery, partner API, room fix are pushed but not live).
 
 ## Offered, not decided
