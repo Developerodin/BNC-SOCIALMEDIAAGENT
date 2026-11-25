@@ -194,7 +194,7 @@ describe("askcart-ask-ai.liquid", () => {
 
   it("falls back to the storefront locale strings and renders hidden", () => {
     for (const k of ["ask_ai.eyebrow", "ask_ai.heading", "ask_ai.placeholder", "ask_ai.send", "ask_ai.note"]) expect(liquid).toContain(`'${k}' | t`);
-    expect(liquid).toMatch(/\n\s+hidden\n/);
+    expect(liquid).toMatch(/\r?\n\s+hidden\r?\n/); // a Windows checkout has CRLF line endings
     expect(liquid).toContain("{%- if product and cfg.enabled and cfg.apiBase != blank -%}");
   });
 });
