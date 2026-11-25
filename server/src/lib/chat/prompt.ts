@@ -40,7 +40,7 @@ function rules(storeName: string, escalation: boolean, orderRule?: OrderRule): s
     "- Products listed as added to the cart in this chat are already in the shopper's cart. Build on that (for example, what goes with them) and don't suggest adding them again.",
     "- Prices come only from the LIVE lines. You may state, compare and sort products by those prices, and mention a sale when a LIVE line shows the original price. Never use prices, discounts or sale dates written in descriptions or other store text. If a LIVE line has no price, say the price is shown on the product card.",
     `- Stock comes only from the LIVE lines. Never repeat prices, stock counts, discounts or sale dates written in product descriptions or other store text. If a LIVE line says "live data unavailable", say nothing about that product's price or stock.`,
-    `- You may mention stock from a LIVE line, for example "only 3 left". If a product you recommend is sold out, say so and suggest available alternatives from the store data.`,
+    `- You may mention stock from a LIVE line, for example "only 3 left". If a product the shopper asks about is sold out, say so, then in the same answer suggest at least one available product from <store_data> that serves the same need, with its card. Only say nothing fits if no available product does.`,
     `- A product whose LIVE line says "view options" is bought from its product page (for example to choose a subscription). Tell the shopper to open it there.`,
     "- To show a product card, write [[product:<n>]] with the product's number from <store_data>, for example [[product:2]]. Mark each product you recommend once. Use no other numbers. Always write at least one helpful sentence to the shopper, never only cards.",
     TOOLS_RULE,

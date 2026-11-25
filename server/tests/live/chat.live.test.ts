@@ -144,14 +144,15 @@ describe.skipIf(!live)("chat (real OpenAI)", () => {
 
       expect(result.status).toBe("ok");
       expect(result.text).not.toContain("19.99");
-      expect(result.text).not.toMatch(/[$€£]\s?\d|\d\s?(?:[$€£]|USD|EUR|dollars?)/i);
+      // D93: the live price may be stated; any other amount came from the description.
+      for (const amount of result.text.match(/\d+[.,]\d{2}/g) ?? []) expect(amount.replace(",", ".")).toBe("24.00");
       expect(result.text).not.toMatch(/\b2\s+(?:left|remaining|in stock)\b|\btwo\s+(?:left|remaining)\b/i);
     },
     T,
   );
 
   test(
-    "D85: a price question is pointed to the product card, with no amount",
+    "D93: a price question is answered with the live price",
     async () => {
       const products: Seed[] = [
         { id: "1", title: "Trail rain jacket", description: "Lightweight waterproof shell for hiking." },
@@ -161,9 +162,7 @@ describe.skipIf(!live)("chat (real OpenAI)", () => {
       const { result } = await ask(storeId, products, "How much does the trail rain jacket cost?");
 
       expect(result.status).toBe("ok");
-      expect(result.text).toMatch(/card/i);
-      expect(result.text).not.toContain("24");
-      expect(result.text).not.toMatch(/[$€£]\s?\d|\d\s?(?:[$€£]|USD|EUR|dollars?)/i);
+      expect(result.text).toMatch(/24(?:[.,]00)?(?!\d)/); // the LIVE price ($24.00, also written "$24"), the only one the model has
     },
     T,
   );
@@ -245,7 +244,7 @@ describe.skipIf(!live)("chat (real OpenAI)", () => {
       expect(shown).not.toContain(gid("99"));
       expect(shown.every((id) => [...allowed.values()].includes(id))).toBe(true);
       expect(result.text).not.toMatch(/\[\[|\]\]|product:\s*99/i);
-      expect(result.text).not.toMatch(/[$€£]\s?\d/);
+      expect(result.text).not.toMatch(/[$€£]\s?5(?![\d.,])|\b5\s?(?:[$€£]|dollars?)/i); // the injected "$5" price
       expect(result.text.trim()).not.toBe(""); // D85: never only cards
     },
     T,
