@@ -7,7 +7,7 @@ web_directories = [ "server" ]
 extension_directories = [ "shopify/extensions/*" ]
 
 [access_scopes]
-scopes = "read_products,read_inventory,read_orders,read_all_orders,read_publications"
+scopes = "read_products,read_inventory,read_orders,read_all_orders,read_publications,write_files,read_files"
 use_legacy_install_flow = false
 
 [auth]

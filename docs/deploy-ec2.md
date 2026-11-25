@@ -227,6 +227,7 @@ and the App Store review asks about them):
 | `read_products`, `read_inventory`, `read_publications` | Product sync, search and live price/stock on chat cards |
 | `read_orders`, `read_all_orders` | The partner / Social Media Agent read API, and the chat's `order_status` tool (a signed-in shopper's own 5 most recent orders). `read_all_orders` needs Shopify approval for orders older than 60 days. Order and customer fields also need **protected customer data** access (Partner Dashboard → the app → API access → Protected customer data, level 1); without it order questions answer "temporarily unavailable". |
 | `unauthenticated_read_customers` | Verifying a mobile-app shopper's login so their chat history follows them |
+| `write_files`, `read_files` | The chat widget's **Upload logo**: stores the merchant's logo in their Shopify Files and reads back its CDN URL. Existing installs must re-approve (until they do, the upload says to reopen the app); the rest of the app is unaffected |
 | `write_app_proxy` | Required by Shopify for any app with an App Proxy (website customer sign-in) |
 
 Commit the toml change, so the next `shopify app deploy` doesn't revert it.
@@ -280,7 +281,7 @@ Sources: [IP allowlists for custom apps installed outside your organization](htt
 3. **Setup guide → Turn on chat** → the theme editor opens with **AskCart chat** selected → **Save** → back in AskCart,
    **I've turned it on**. (Manual path: Online Store → Themes → Customize → the **App embeds** icon in the left toolbar →
    AskCart chat on → Save. App embeds are per theme: use the published one.)
-4. Optional: **Chat widget** card: name, accent colour, avatar (a `cdn.shopify.com` Files URL), launcher text and side,
+4. Optional: **Chat widget** card: name, accent colour, logo (**Upload logo** puts the image in the store's Files and uses its `cdn.shopify.com` URL; empty falls back to the Brand logo), launcher text and side,
    welcome message, up to 4 suggested questions, teaser, and **Chat button**: on every page (default), on product
    pages only, or hidden (the product block then opens the chat). **Save** updates the storefront. Keep it clear to shoppers that they are chatting with an AI: don't give the
    assistant a human-sounding name, photo or welcome text that makes it look like a real person.

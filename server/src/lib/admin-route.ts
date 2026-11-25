@@ -16,10 +16,10 @@ export async function withStore(
 }
 
 /**
- * The JSON body, read as a stream and counted in bytes so a huge body is never buffered (a declared content-length is
- * only a hint). Throws Response 413 `body_too_large` over `maxBytes`; returns undefined for an empty or non-JSON body.
+ * The body bytes, read as a stream and counted so a huge body is never buffered (a declared content-length is only a
+ * hint). Throws Response 413 `body_too_large` over `maxBytes`; returns undefined when there is no body.
  */
-export async function readSmallJson(req: Request, maxBytes: number): Promise<unknown> {
+export async function readSmallBytes(req: Request, maxBytes: number): Promise<Buffer | undefined> {
   const tooLarge = () => Response.json({ error: "body_too_large" }, { status: 413 });
   if (Number(req.headers.get("content-length") ?? 0) > maxBytes) throw tooLarge();
   const reader = req.body?.getReader();
@@ -36,8 +36,15 @@ export async function readSmallJson(req: Request, maxBytes: number): Promise<unk
     }
     chunks.push(value);
   }
+  return Buffer.concat(chunks);
+}
+
+/** The JSON body (see readSmallBytes); undefined for an empty or non-JSON body. */
+export async function readSmallJson(req: Request, maxBytes: number): Promise<unknown> {
+  const bytes = await readSmallBytes(req, maxBytes);
+  if (!bytes) return undefined;
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return JSON.parse(bytes.toString("utf8"));
   } catch {
     return undefined;
   }

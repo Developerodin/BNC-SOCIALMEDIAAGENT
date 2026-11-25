@@ -18,7 +18,7 @@
   (`/apps/askcart/session`), owned conversations, history across web + app, `customers/redact` deletes, data-request
   export script `scripts/export-customer-chats.mjs`.
 - **Admin home** (Polaris layout): setup guide checklist (Turn on chat deep link), **Chat widget settings** card (name,
-  accent, avatar, launcher, welcome, 4 suggested questions, teaser; localized defaults), Connect your website (SSRF-safe
+  accent, logo (uploaded to Shopify Files; needs the `write_files,read_files` scopes, so installed stores re-approve), launcher, welcome, 4 suggested questions, teaser; localized defaults), Connect your website (SSRF-safe
   check + Allow button), Mobile app key, Product sync.
 - **Widget refresh:** theme-matching header (avatar, "AI shopping assistant", online dot), greeting + chips, clearer
   bubbles/cards, **⤢ expand mode** (3 cards per row), "Choose Color" pickers with hints, daily-cap message.

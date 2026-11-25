@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // App Bridge global, loaded by the embedded layout. The s-* tags are Polaris web components (typed in (embedded)/polaris.d.ts).
 declare const shopify: { idToken(): Promise<string> };
@@ -557,7 +557,7 @@ const toForm = (v: WidgetView): WidgetForm => ({
 const FIELD_LABELS: Record<string, string> = {
   name: "Name",
   accent: "Accent color",
-  avatarUrl: "Avatar URL",
+  avatarUrl: "Logo",
   welcome: "Welcome message",
   suggested: "Suggested questions",
   "launcher.style": "Button style",
@@ -581,6 +581,8 @@ function WidgetSettingsCard() {
   const [note, setNote] = useState<{ tone: "success" | "critical"; text: string } | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [blockLink, setBlockLink] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   // The setup guide hides once setup is done, so the product-block link is offered here as well.
   useEffect(() => {
@@ -627,6 +629,32 @@ function WidgetSettingsCard() {
     setBusy(false);
   }
 
+  /** Uploads the picked image to the store's Shopify Files (POST /api/app/logo); the form then holds the new URL until Save. */
+  async function onLogoPicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // picking the same file again must fire change again
+    if (!file) return;
+    const fail = (text: string) => setNote({ tone: "critical", text });
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) return fail("Pick a PNG, JPG or WebP image.");
+    if (file.size > 2 * 1024 * 1024) return fail("That file is too big.");
+    setUploading(true);
+    setNote(null);
+    try {
+      const res = await authed("/api/app/logo", { method: "POST", body: file });
+      if (res.ok) {
+        const { url } = (await res.json()) as { url: string };
+        setForm((f) => f && { ...f, avatarUrl: url });
+        setNote({ tone: "success", text: "Logo uploaded. Press Save to use it." });
+      } else if (res.status === 403) fail("Approve the new permission to upload: reopen the app.");
+      else if (res.status === 413) fail("That file is too big.");
+      else if (res.status === 415) fail("Pick a PNG, JPG or WebP image.");
+      else fail("Upload failed. Try again.");
+    } catch {
+      fail("Upload failed. Try again.");
+    }
+    setUploading(false);
+  }
+
   if (!form) return null;
   const set = <K extends keyof WidgetForm>(k: K, v: WidgetForm[K]) => setForm((f) => f && { ...f, [k]: v });
   const validAccent = /^#[0-9a-fA-F]{6}$/.test(form.accent);
@@ -666,14 +694,26 @@ function WidgetSettingsCard() {
             {form.style !== "pill" ? "Chat" : form.label || "Ask us anything"}
           </span>
         </s-stack>
-        <s-text-field
-          label="Avatar URL"
-          value={form.avatarUrl}
-          placeholder="https://cdn.shopify.com/..."
-          details="Upload the image in Content, then Files, and paste its cdn.shopify.com link."
-          error={err("avatarUrl")}
-          onInput={(e) => set("avatarUrl", valueOf(e))}
-        />
+        <s-stack direction="block" gap="small-200">
+          <s-text>Logo</s-text>
+          <s-stack direction="inline" gap="base" alignItems="center">
+            {form.avatarUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={form.avatarUrl} alt="Your chat logo" width={48} height={48} style={{ borderRadius: "50%", objectFit: "cover" }} />
+            )}
+            <s-button variant="secondary" onClick={() => fileRef.current?.click()} disabled={busy || uploading}>
+              {uploading ? "Uploading…" : "Upload logo"}
+            </s-button>
+            {form.avatarUrl && (
+              <s-button variant="tertiary" tone="critical" onClick={() => set("avatarUrl", "")} disabled={busy || uploading}>
+                Remove
+              </s-button>
+            )}
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={onLogoPicked} />
+          </s-stack>
+          <s-paragraph>PNG, JPG or WebP, up to 2 MB. Leave empty to use your logo from Settings → Brand.</s-paragraph>
+          {errors.includes("avatarUrl") && <s-text tone="critical">Not valid</s-text>}
+        </s-stack>
         <s-stack direction="inline" gap="base">
           <s-select label="Button style" value={form.style} onChange={(e) => set("style", valueOf(e) as WidgetForm["style"])}>
             <s-option value="pill">Pill with label</s-option>
