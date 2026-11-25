@@ -2,6 +2,7 @@
 // @vitest-environment-options {"url":"https://demo.myshopify.com/products/tee"}
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderCards } from "../../widget/src/cards";
+import { resetCartCache } from "../../widget/src/cart";
 import { translator } from "../../widget/src/core/i18n";
 import { tokenStore } from "../../widget/src/core/storage";
 import type { Card, PageContext, WidgetApi, WidgetConfig, WidgetCtx } from "@/lib/widget-contract";
@@ -33,6 +34,9 @@ const page: PageContext = {
   cartAddUrl: "/cart/add", cartUrl: "/cart", privacyUrl: null, designMode: false,
 };
 const fetchMock = vi.fn<typeof fetch>();
+// GET /cart.js (the "In your cart" lookup) is answered here; every other request goes to fetchMock.
+let cartItems: { variant_id: number }[] = [];
+let cartReads = 0;
 let logCartAdd: ReturnType<typeof vi.fn<WidgetApi["logCartAdd"]>>;
 let announce: ReturnType<typeof vi.fn<(text: string) => void>>;
 
@@ -53,7 +57,16 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
   fetchMock.mockReset();
-  vi.stubGlobal("fetch", fetchMock);
+  resetCartCache();
+  cartItems = [];
+  cartReads = 0;
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (String(url).endsWith("/cart.js")) {
+      cartReads++;
+      return Promise.resolve(jsonResponse(200, { items: cartItems }));
+    }
+    return fetchMock(url, init);
+  });
   logCartAdd = vi.fn<WidgetApi["logCartAdd"]>(async () => {});
   announce = vi.fn<(text: string) => void>();
   tokenStore(SHOP).set("tok-1");
@@ -361,5 +374,38 @@ describe("UD13: the panel doesn't reopen over a product the shopper chose", () =
     expect(color.value).toBe("Red");
     expect(size.value).toBe("");
     expect(addButton(el)?.disabled).toBe(true);
+  });
+});
+
+describe("already in the cart", () => {
+  const status = (el: HTMLElement) => el.querySelector(".ac-card__status") as HTMLElement;
+
+  it("a card whose variant is in the cart says In your cart · View cart", async () => {
+    cartItems = [{ variant_id: 123 }];
+    const el = render([card()]);
+    await flush();
+    expect(status(el).textContent).toBe("In your cart · View cart");
+    expect(status(el).querySelector("a")?.getAttribute("href")).toBe("https://demo.myshopify.com/cart");
+  });
+
+  it("any variant of a multi-variant product counts; other products say nothing", async () => {
+    cartItems = [{ variant_id: 22 }];
+    const multi = card({ variants: [variant("21", [["Size", "S"]]), variant("22", [["Size", "M"]])] });
+    const other = card({ id: "gid://shopify/Product/2", variants: [variant("99", [["Title", "Default Title"]])] });
+    const el = render([multi, other]);
+    await flush();
+    const [a, b] = [...el.querySelectorAll(".ac-card__status")];
+    expect(a.textContent).toBe("In your cart · View cart");
+    expect(b.textContent).toBe("");
+  });
+
+  it("reads the cart once for all cards, and not at all on the hosted page", async () => {
+    render([card(), card({ id: "gid://shopify/Product/2" })]);
+    await flush();
+    expect(cartReads).toBe(1);
+    resetCartCache();
+    render([card()], ctx({ hosted: true }));
+    await flush();
+    expect(cartReads).toBe(1);
   });
 });

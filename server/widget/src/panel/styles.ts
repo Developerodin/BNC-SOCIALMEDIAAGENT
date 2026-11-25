@@ -43,6 +43,7 @@ export const CSS =
   ".sugg button{padding:8px 13px;border:1px solid #8a8a8a;border-radius:18px;background:#fff;text-align:left;font-size:14px;line-height:19px;transition:border-color .15s,background .15s}" +
   ".sugg button:hover{border-color:#111;background:#f4f4f4}" +
   ".msg{max-width:88%;white-space:pre-wrap;overflow-wrap:anywhere}" +
+  ".txt ul{margin:6px 0;padding-left:20px;white-space:normal}.txt li{margin:2px 0}.txt strong{font-weight:600}" +
   ".msg.user{align-self:flex-end;padding:9px 13px;border-radius:16px 16px 4px 16px;background:var(--ac);color:var(--ac-fg)}" +
   ".msg.bot{align-self:flex-start;display:flex;flex-direction:column;gap:8px;width:88%}" +
   ".msg.bot .txt{align-self:flex-start;padding:9px 13px;border-radius:16px 16px 16px 4px;background:#fff;border:1px solid #ececec}" +

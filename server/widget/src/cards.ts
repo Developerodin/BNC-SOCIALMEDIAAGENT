@@ -3,7 +3,7 @@
 // images through safeImageUrl (cdn.shopify.com only), otherwise there is no link and a placeholder.
 import type { Card, CardsRenderer, WidgetCtx } from "../../src/lib/widget-contract";
 import { requestAdd } from "./bridge";
-import { addToCart } from "./cart";
+import { addToCart, cartVariantIds } from "./cart";
 import { formatPrice, resolveHttpsUrl, safeHttpsUrl, safeImageUrl, stockLabel } from "./core/format";
 import { tokenStore, uiState } from "./core/storage";
 import { FULL_BELOW } from "./panel/styles";
@@ -162,6 +162,17 @@ function addControls(
   const hint = el("p", "ac-card__hint");
   hint.id = `ac-hint-${Math.random().toString(36).slice(2, 8)}`;
   box.append(button, status, hint);
+  // Already in the cart (any variant): say so, so it survives a reload or a redrawn history. Store pages only: the hosted
+  // page can't read the store's cart. An add's own "Added" line wins if it came first.
+  if (!hosted) {
+    void cartVariantIds(page).then((ids) => {
+      const href = resolveHttpsUrl(page.cartUrl);
+      if (status.childNodes.length || !variants.some((v) => ids.has(v.id))) return;
+      status.className = "ac-card__status ac-card__added";
+      status.append(t("in_cart"));
+      if (href) status.append(" · ", link(href, "ac-card__cart", t("view_cart")));
+    });
+  }
 
   let busy = false;
   let chosen: Variant | null = null;

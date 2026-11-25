@@ -1,6 +1,8 @@
 // The message list (Task 30): user and assistant bubbles, the typing indicator, errors with Retry, and notes.
-// Text only: every string from the model, the merchant or the server goes through textContent (§7.7, D36).
+// Text only: every string from the model, the merchant or the server goes through textContent (§7.7, D36); answers get
+// bold and bullets from rich.ts, which builds nodes the same way.
 import type { Card, CardsRenderer, FeedbackRenderer, HistoryItem, WidgetCtx } from "../../../src/lib/widget-contract";
+import { renderRich } from "./rich";
 
 const el = (tag: string, cls: string, text?: string) => {
   const e = document.createElement(tag);
@@ -48,7 +50,11 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
   /** An assistant bubble: text, then cards, then thumbs. `cutOff` adds the note and skips thumbs. */
   function bot(text: string, cards: Card[], id: string | null, rating: -1 | 1 | null, cutOff: boolean): HTMLElement {
     const wrap = el("div", "msg bot");
-    if (text) wrap.append(el("div", "txt", text));
+    if (text) {
+      const txt = el("div", "txt");
+      renderRich(txt, text);
+      wrap.append(txt);
+    }
     if (cutOff) wrap.append(el("div", "cut", ctx.t("cut_off")));
     if (cards.length) {
       const box = el("div", "cards");
@@ -85,7 +91,7 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
           typing.remove(); // the dots are for the wait before the first token (a retried stream starts without them)
         }
         text += delta;
-        txt.textContent = text;
+        renderRich(txt, text);
         scroll();
       },
       card(c) {

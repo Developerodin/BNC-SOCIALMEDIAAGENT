@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // @vitest-environment-options {"url":"https://demo.myshopify.com/products/tee"}
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { addToCart } from "../../widget/src/cart";
+import { addToCart, cartVariantIds, resetCartCache } from "../../widget/src/cart";
 import type { PageContext } from "@/lib/widget-contract";
 import { jsonResponse } from "./core/helpers";
 
@@ -15,6 +15,7 @@ type W = { Shopify?: unknown };
 beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
+  resetCartCache();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -101,5 +102,64 @@ describe("addToCart", () => {
       expect(await addToCart(page, "123", 1)).toEqual({ ok: true });
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
+  });
+
+  describe("reload on the cart page (themes don't redraw /cart after add.js)", () => {
+    let reload: ReturnType<typeof vi.fn<() => void>>;
+    beforeEach(() => {
+      vi.useFakeTimers();
+      reload = vi.fn<() => void>();
+      vi.spyOn(window.location, "reload").mockImplementation(reload);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      history.replaceState(null, "", "/products/tee");
+    });
+
+    it("reloads after a successful add on the locale-aware cart page", async () => {
+      history.replaceState(null, "", "/fr/cart");
+      fetchMock.mockResolvedValue(jsonResponse(200, { items: [] }));
+      await addToCart(page, "123", 1);
+      expect(reload).not.toHaveBeenCalled(); // the caller's follow-ups run first
+      vi.runAllTimers();
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it("doesn't reload on other pages, or after a failed add", async () => {
+      fetchMock.mockResolvedValue(jsonResponse(200, { items: [] }));
+      await addToCart(page, "123", 1); // on /products/tee
+      history.replaceState(null, "", "/fr/cart/");
+      fetchMock.mockResolvedValue(jsonResponse(422, { description: "Sold out" }));
+      await addToCart(page, "123", 1);
+      vi.runAllTimers();
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    it("doesn't reload when the theme's own updateCart did the add", async () => {
+      history.replaceState(null, "", "/fr/cart");
+      const updateCart = Object.assign(vi.fn(async () => ({ cart: {} })), { isDefault: () => false });
+      (window as W).Shopify = { actions: { updateCart } };
+      await addToCart(page, "123", 1);
+      vi.runAllTimers();
+      expect(reload).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("cartVariantIds", () => {
+  it("reads the locale-aware cart.js once, and our successful adds join the set", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [{ variant_id: 1 }, { variant_id: 2 }] }));
+    expect([...(await cartVariantIds(page))]).toEqual(["1", "2"]);
+    expect(fetchMock.mock.calls[0][0]).toBe("/fr/cart.js");
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [] })); // the add
+    await addToCart(page, "7", 1);
+    expect([...(await cartVariantIds(page))]).toEqual(["1", "2", "7"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("an unreadable cart is an empty set, never an error", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("offline"));
+    expect((await cartVariantIds(page)).size).toBe(0);
   });
 });

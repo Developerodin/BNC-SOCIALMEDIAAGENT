@@ -21,6 +21,35 @@ function themeUpdateCart(): UpdateCart | null {
   }
 }
 
+/** The locale-aware cart path: the add url without "/add" (e.g. /fr/cart/add → /fr/cart). */
+const cartPath = (page: CartTarget) => page.cartAddUrl.replace(/\/add$/, "");
+
+/** True on the store's cart page. */
+function onCartPage(page: CartTarget): boolean {
+  return location.pathname.replace(/\/$/, "") === cartPath(page);
+}
+
+let inCart: Promise<Set<string>> | null = null;
+
+/**
+ * The variant ids in the shopper's cart, read from the theme's cart.js once per page and kept up to date by our own adds.
+ * Empty when the cart can't be read. A change made outside the chat (the theme's own buttons) shows after the next page
+ * load, which every add from the cart page already causes.
+ */
+export function cartVariantIds(page: CartTarget): Promise<Set<string>> {
+  inCart ??= Promise.resolve() // a fetch that throws synchronously is caught too
+    .then(() => fetch(cartPath(page) + ".js", { headers: { Accept: "application/json" }, credentials: "same-origin" }))
+    .then((r) => (r.ok ? r.json() : null))
+    .then((c: { items?: { variant_id?: unknown }[] } | null) => new Set((c?.items ?? []).map((i) => String(i.variant_id))))
+    .catch(() => new Set<string>());
+  return inCart;
+}
+
+/** Tests only: forget the cached cart. */
+export function resetCartCache() {
+  inCart = null;
+}
+
 async function viaAjax(page: CartTarget, variantId: string, quantity: number): Promise<CartResult> {
   let res: Response;
   try {
@@ -65,9 +94,15 @@ export async function addToCart(page: CartTarget, variantId: string, quantity: n
       result = null;
     }
   }
+  const viaPlainAdd = result === null;
   result ??= await viaAjax(page, variantId, quantity);
   if (result.ok) {
     window.dispatchEvent(new CustomEvent("cart:updated", { detail: { variantId, quantity, source: "askcart" } }));
+    if (inCart) void inCart.then((ids) => ids.add(variantId));
+    // Themes don't redraw their cart page after a plain add.js, so the shopper on /cart would see a stale list. Reload it
+    // (the panel reopens on the next page, UD13). A theme's own updateCart refreshes itself, so no reload then.
+    // setTimeout: the caller's follow-ups (the keepalive cart-event log, the embed's reply) run first.
+    if (viaPlainAdd && onCartPage(page)) setTimeout(() => location.reload(), 0);
   }
   return result;
 }
