@@ -56,6 +56,15 @@ describe("createApi", () => {
     expect(JSON.parse(call().init.body as string)).toEqual({ shop: SHOP, message: "hi", requestId: "r", pageUrl: "https://a.example/" });
   });
 
+  it("rate sends the reason only when there is one", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+    const api = createApi(BASE, SHOP);
+    await api.rate(TOKEN, "m1", -1, "unclear");
+    await api.rate(TOKEN, "m1", -1);
+    expect(JSON.parse(call(0).init.body as string)).toEqual({ messageId: "m1", rating: -1, reason: "unclear" });
+    expect(JSON.parse(call(1).init.body as string)).toEqual({ messageId: "m1", rating: -1 });
+  });
+
   it("puts the token in the header for history, delete and rate, never in the URL", async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse(200, { messages: [] }))

@@ -359,6 +359,23 @@ For a Shopify store that has **not** installed AskCart (see `docs/superpowers/pl
 - Logged in on the storefront, open the chat: it continues the latest conversation (including one from the app).
 - `pm2 logs askcart` shows no errors.
 
+## Internal feedback page (AskCart team only)
+
+`/ops/feedback` shows thumbs up/down and the reasons shoppers give, per store and in total, plus the latest 50
+thumbs-down answers with the question before each. Merchants never see it. It is off until you set a secret:
+
+```bash
+# on the EC2 instance, in askcart/server
+echo "OPS_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")" >> .env
+pm2 restart askcart --update-env
+grep OPS_SECRET .env        # copy the value; this is the password
+```
+
+Open `https://app.askcart.example/ops/feedback`, enter any user name and the secret as the password. Pick a date range
+with the form (UTC; default: last 30 days). With `OPS_SECRET` unset or empty the page answers 404. To rotate or turn it
+off, change or delete the line and run `pm2 restart askcart --update-env`. Treat the page as sensitive: it shows
+shoppers' questions. Always use it over HTTPS (Basic auth sends the password with every request).
+
 ## Updating
 
 ```bash

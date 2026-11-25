@@ -107,7 +107,8 @@ export type WidgetApi = {
   history(token: string): Promise<HistoryItem[] | "reset" | null>;
   /** true when the conversation is gone (204, or a dead token); false on 409 (a turn is running) or a failure. */
   deleteConversation(token: string): Promise<boolean>;
-  rate(token: string, messageId: string, rating: -1 | 1 | null): Promise<boolean>;
+  /** `reason` only with rating -1 (the server rejects it otherwise); omitted when the shopper gave none. */
+  rate(token: string, messageId: string, rating: -1 | 1 | null, reason?: FeedbackReason): Promise<boolean>;
   logCartAdd(token: string, event: { messageId: string | null; productId: string; variantId: string; quantity: number; eventId: string }): Promise<void>;
   /** Logged-in storefront shoppers only: the token of their latest conversation (e.g. one started in the mobile app), else null. */
   latest(): Promise<string | null>;
@@ -125,4 +126,5 @@ export type WidgetCtx = {
 
 // Widget-internal seams so Wave 3 tasks don't touch each other's files:
 export type CardsRenderer = (into: HTMLElement, cards: Card[], ctx: WidgetCtx) => void; // Task 31
+export type FeedbackReason = "wrong_products" | "wrong_price_stock" | "misunderstood" | "unclear" | "other";
 export type FeedbackRenderer = (into: HTMLElement, messageId: string, rating: -1 | 1 | null, ctx: WidgetCtx) => void; // Task 32

@@ -1,6 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { forStore } from "@/db/client";
-import { cartEvents, conversations, messages } from "@/db/schema";
+import { cartEvents, conversations, FEEDBACK_REASONS, messages, type FeedbackReason } from "@/db/schema";
 import { UUID, verifyToken } from "./token";
 import { ownerDenied } from "./turn";
 
@@ -45,14 +45,19 @@ export async function readSmallJson(req: Request): Promise<Record<string, unknow
 
 const uuidOf = (v: unknown): string | null => (typeof v === "string" && UUID.test(v.toLowerCase()) ? v.toLowerCase() : null);
 
-export type Feedback = { messageId: string; rating: 1 | -1 | null };
+export type Feedback = { messageId: string; rating: 1 | -1 | null; reason: FeedbackReason | null };
 
-/** `{ messageId, rating: 1 | -1 | null }`; rating must be present (null clears it, C27). */
+/**
+ * `{ messageId, rating: 1 | -1 | null, reason? }`; rating must be present (null clears it, C27). `reason` is optional
+ * (absent or null = none), one of FEEDBACK_REASONS, and only allowed together with rating -1.
+ */
 export function parseFeedback(body: Record<string, unknown>): Feedback | null {
   const messageId = uuidOf(body.messageId);
-  const { rating } = body;
+  const { rating, reason } = body;
   if (!messageId || !(rating === 1 || rating === -1 || rating === null)) return null;
-  return { messageId, rating };
+  if (reason === undefined || reason === null) return { messageId, rating, reason: null };
+  if (rating !== -1 || typeof reason !== "string" || !(FEEDBACK_REASONS as readonly string[]).includes(reason)) return null;
+  return { messageId, rating, reason: reason as FeedbackReason };
 }
 
 export type CartEvent = { eventId: string; messageId: string | null; productId: string; variantId: string; quantity: number };
@@ -87,7 +92,7 @@ export async function rateMessage(
     if (denied) return denied;
     return tx
       .update(messages)
-      .set({ rating: f.rating })
+      .set({ rating: f.rating, feedbackReason: f.reason })
       .where(
         and(
           eq(messages.id, f.messageId),
