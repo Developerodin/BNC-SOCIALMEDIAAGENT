@@ -49,12 +49,15 @@ test("GET starts with nothing done and the theme link built from the API key", a
     chatConfirmed: false,
     dismissed: false,
     themeLink: "https://x.myshopify.com/admin/themes/current/editor?context=apps&template=index&activateAppId=key123/askcart-embed",
+    productBlockLink: "https://x.myshopify.com/admin/themes/current/editor?template=product&addAppBlockId=key123/askcart-ask-ai&target=mainSection",
   });
 });
 
 test("themeLink is null when the API key is unset", async () => {
   vi.stubEnv("SHOPIFY_API_KEY", "");
-  expect((await (await route.GET(req("GET"))).json()).themeLink).toBeNull();
+  const body = await (await route.GET(req("GET"))).json();
+  expect(body.themeLink).toBeNull();
+  expect(body.productBlockLink).toBeNull();
 });
 
 test("confirm and dismiss persist without clobbering other settings keys", async () => {

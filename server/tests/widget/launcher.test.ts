@@ -9,7 +9,7 @@ const SHOP = "demo.myshopify.com";
 function config(over: Partial<WidgetConfig> = {}): WidgetConfig {
   return {
     v: 1, enabled: true, apiBase: "https://app.example.com", name: "Demo", accent: "#0A0A0A", avatarUrl: null,
-    launcher: { style: "pill", label: null, side: "right", offset: 20 },
+    launcher: { style: "pill", label: null, side: "right", offset: 20, scope: "all" },
     welcome: null, suggested: [], teaser: { enabled: false, text: null, delaySec: 8 },
     stockThreshold: 5, retentionDays: 30, ...over,
   };
@@ -74,7 +74,7 @@ afterEach(() => {
 
 describe("launcher (UD1, UD2)", () => {
   it("is drawn on the left with a 60 px offset when configured", () => {
-    mountRoot(config({ launcher: { style: "pill", label: null, side: "left", offset: 60 } }));
+    mountRoot(config({ launcher: { style: "pill", label: null, side: "left", offset: 60, scope: "all" } }));
     const stop = start();
     expect(button().style.left).toBe("20px");
     expect(button().style.right).toBe("");
@@ -84,7 +84,7 @@ describe("launcher (UD1, UD2)", () => {
   });
 
   it("the pill shows the merchant label", () => {
-    mountRoot(config({ launcher: { style: "pill", label: "Need help?", side: "right", offset: 20 } }));
+    mountRoot(config({ launcher: { style: "pill", label: "Need help?", side: "right", offset: 20, scope: "all" } }));
     start();
     expect(button().textContent).toBe("Need help?");
     expect(button().type).toBe("button");
@@ -98,7 +98,7 @@ describe("launcher (UD1, UD2)", () => {
   });
 
   it("the icon style has no visible text and an aria label", () => {
-    mountRoot(config({ launcher: { style: "icon", label: null, side: "right", offset: 20 } }));
+    mountRoot(config({ launcher: { style: "icon", label: null, side: "right", offset: 20, scope: "all" } }));
     start();
     expect(button().getAttribute("aria-label")).toBe("Open the chat assistant");
     expect(button().querySelector("svg")).not.toBeNull();

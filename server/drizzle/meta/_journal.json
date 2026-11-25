@@ -148,6 +148,20 @@
       "when": 1795532247972,
       "tag": "0020_store_created_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795582968333,
+      "tag": "0021_product_questions",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1795582973081,
+      "tag": "0022_product_questions_rls",
+      "breakpoints": true
     }
   ]
 }

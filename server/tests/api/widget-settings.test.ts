@@ -57,10 +57,10 @@ test("both methods need the embedded session", async () => {
 
 test("GET shows the defaults, flagged as defaults, in the store's language", async () => {
   const body = await (await call("GET")).json();
-  expect(body).toMatchObject({ name: "Acme", accent: "#0A0A0A", launcher: { style: "pill", side: "right" }, teaser: { enabled: false } });
+  expect(body).toMatchObject({ name: "Acme", accent: "#0A0A0A", launcher: { style: "pill", side: "right", scope: "all" }, teaser: { enabled: false } });
   expect(body.welcome).toMatch(/^Hi!/);
   expect(body.suggested).toHaveLength(4);
-  expect(body.defaulted).toEqual(expect.arrayContaining(["name", "accent", "welcome", "suggested", "launcher.style"]));
+  expect(body.defaulted).toEqual(expect.arrayContaining(["name", "accent", "welcome", "suggested", "launcher.style", "launcher.scope"]));
   expect(body.defaulted).not.toContain("enabled"); // not a field this card edits
   await admin`update stores set primary_locale = 'de' where id = ${current}`;
   expect((await (await call("GET")).json()).welcome).toMatch(/^Hallo/);
@@ -70,15 +70,15 @@ test("PUT saves, merges into settings.widget, keeps other settings keys, and syn
   await admin`update stores set settings = ${admin.json({ stockThreshold: 7, widget: { enabled: false, accent: "#112233" } })} where id = ${current}`;
   const res = await call("PUT", {
     name: "  Help desk ",
-    launcher: { style: "icon", label: "", side: "left" },
+    launcher: { style: "icon", label: "", side: "left", scope: "product" },
     suggested: [" Sizes? "],
     teaser: { enabled: true, text: "Need help?", delaySec: 30 },
   });
   expect(res.status).toBe(200);
-  expect(await res.json()).toMatchObject({ name: "Help desk", accent: "#112233", launcher: { style: "icon", side: "left" }, suggested: ["Sizes?"], teaser: { enabled: true, delaySec: 30 } });
+  expect(await res.json()).toMatchObject({ name: "Help desk", accent: "#112233", launcher: { style: "icon", side: "left", scope: "product" }, suggested: ["Sizes?"], teaser: { enabled: true, delaySec: 30 } });
   const s = await stored();
   expect(s.stockThreshold).toBe(7);
-  expect(s.widget).toMatchObject({ enabled: false, accent: "#112233", name: "Help desk", launcher: { style: "icon", side: "left" } });
+  expect(s.widget).toMatchObject({ enabled: false, accent: "#112233", name: "Help desk", launcher: { style: "icon", side: "left", scope: "product" } });
   expect(s.widget.launcher).not.toHaveProperty("label");
   expect(sync).toHaveBeenCalledWith(current, "x.myshopify.com");
 });
@@ -87,13 +87,13 @@ test("PUT rejects bad values with per-field errors, saves nothing and does not s
   const res = await call("PUT", {
     accent: "red",
     avatarUrl: "https://evil.com/a.png",
-    launcher: { style: "big" },
+    launcher: { style: "big", scope: "everywhere" },
     suggested: ["a", "b", "c", "d", "e"],
     teaser: { delaySec: 500 },
   });
   expect(res.status).toBe(400);
   const { errors } = await res.json();
-  expect(Object.keys(errors).sort()).toEqual(["accent", "avatarUrl", "launcher.style", "suggested", "teaser.delaySec"]);
+  expect(Object.keys(errors).sort()).toEqual(["accent", "avatarUrl", "launcher.scope", "launcher.style", "suggested", "teaser.delaySec"]);
   expect(await stored()).toEqual({ stockThreshold: 7, embedDomains: ["a.com"] });
   expect(sync).not.toHaveBeenCalled();
   for (const bad of ["[]", "not json", ""]) expect((await call("PUT", bad)).status).toBe(400);

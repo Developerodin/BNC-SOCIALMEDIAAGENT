@@ -216,6 +216,22 @@ export const faqs = pgTable(
   ],
 );
 
+// AI-written suggested questions for the product-page block (GET /api/chat/product-questions), one row per product and
+// locale. No FK to products: deleteProduct/sweepProducts delete these rows explicitly, and a store delete cascades.
+export const productQuestions = pgTable(
+  "product_questions",
+  {
+    storeId: uuid("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
+    shopifyId: text("shopify_id").notNull(),
+    locale: text("locale").notNull(),
+    // products.content_hash when the questions were written; a different hash means the product changed.
+    contentHash: text("content_hash").notNull(),
+    questions: jsonb("questions").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.storeId, t.shopifyId, t.locale] })],
+);
+
 // --- Partner connect (plan 2026-11-24, Task P1) ---
 
 // A registered portal (C36: only ours, seeded by scripts/partner-client.mjs). No store_id, so no RLS; app_user may only SELECT.

@@ -14,7 +14,7 @@ const TOKEN_KEY = `askcart:${SHOP}:token`;
 function config(over: Partial<WidgetConfig> = {}): WidgetConfig {
   return {
     v: 1, enabled: true, apiBase: "https://app.example.com", name: "Demo Store", accent: "#0A0A0A", avatarUrl: null,
-    launcher: { style: "pill", label: null, side: "right", offset: 20 },
+    launcher: { style: "pill", label: null, side: "right", offset: 20, scope: "all" },
     welcome: "Hi! Ask me anything.", suggested: ["Do you ship to France?"], teaser: { enabled: false, text: null, delaySec: 8 },
     stockThreshold: 5, retentionDays: 30, ...over,
   };

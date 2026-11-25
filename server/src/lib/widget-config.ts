@@ -48,7 +48,12 @@ const DEFAULT_COPY: Record<string, { welcome: string; suggested: string[] }> = {
     suggested: ["Wat is er nu populair?", "Help me een cadeau te vinden", "Wat is jullie retourbeleid?", "Verzenden jullie naar mijn land?"],
   },
 };
-const defaultCopy = (locale: string | null | undefined) => DEFAULT_COPY[(locale ?? "").slice(0, 2).toLowerCase()] ?? DEFAULT_COPY.en;
+/** One of the widget's six locales (en, fr, de, es, it, nl) for a storefront locale like "fr-CA"; English for anything else. */
+export const widgetLocale = (locale: string | null | undefined): string => {
+  const l = (locale ?? "").slice(0, 2).toLowerCase();
+  return Object.hasOwn(DEFAULT_COPY, l) ? l : "en";
+};
+const defaultCopy = (locale: string | null | undefined) => DEFAULT_COPY[widgetLocale(locale)];
 
 export type WidgetResolution = {
   config: WidgetConfig;
@@ -123,6 +128,7 @@ export function resolveWidgetConfig(store: StoreInput, apiBase: string): WidgetR
       label: pick("launcher.label", launcher.label, text(40), null),
       side: pick("launcher.side", launcher.side, oneOf("right", "left"), "right"),
       offset: pick("launcher.offset", launcher.offset, int(0, 200), 20),
+      scope: pick("launcher.scope", launcher.scope, oneOf("all", "product", "none"), "all"),
     },
     welcome: pick("welcome", w.welcome, text(300), copy.welcome),
     suggested: suggested.slice(0, 4),

@@ -9,7 +9,13 @@ export type WidgetConfig = {
   name: string; // header title, merchant text (UD7)
   accent: string; // #rrggbb
   avatarUrl: string | null; // https://cdn.shopify.com/... only (UD7b)
-  launcher: { style: "pill" | "icon"; label: string | null; side: "right" | "left"; offset: number }; // UD1, UD2
+  launcher: {
+    style: "pill" | "icon";
+    label: string | null;
+    side: "right" | "left";
+    offset: number;
+    scope: "all" | "product" | "none"; // where the floating button shows: every page, product pages only, or nowhere (the product block still opens the chat)
+  }; // UD1, UD2
   welcome: string | null;
   suggested: string[]; // at most 4
   teaser: { enabled: boolean; text: string | null; delaySec: number }; // UD6
@@ -37,6 +43,9 @@ export type PageContext = {
   /** Hosted page only: the store's own https origins, the only parents the cart bridge talks to. */
   parentOrigins?: string[];
 };
+
+/** GET /api/chat/product-questions: 0 to 3 AI-written questions a shopper might ask about one product. */
+export type ProductQuestionsResponse = { questions: string[] };
 
 /** The SSE `product` payload. */
 export type Card = import("./chat/turn").Card;

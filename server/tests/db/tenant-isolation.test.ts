@@ -158,3 +158,19 @@ test("an FAQ question over 300 or an answer over 2,000 characters fails the chec
   await expect(insert("q".repeat(301), "a")).rejects.toThrow(/faqs_question_len_chk/);
   await expect(insert("q", "a".repeat(2001))).rejects.toThrow(/faqs_answer_len_chk/);
 });
+
+test("product_questions is covered by the RLS check, and a store reads and writes only its own rows", async () => {
+  const rows = await admin`select relname from pg_class where relname = 'product_questions' and relrowsecurity and relforcerowsecurity`;
+  expect(rows).toHaveLength(1);
+  for (const [id, n] of [[A, "a"], [B, "b"]]) {
+    await admin`insert into product_questions (store_id, shopify_id, locale, content_hash, questions)
+                values (${id}, 'gid://shopify/Product/1', 'en', 'h', ${admin.json([`q ${n}?`])})`;
+  }
+  const own = await mod.forStore(A, (tx) => tx.select().from(schema.productQuestions));
+  expect(own.map((r) => r.questions)).toEqual([["q a?"]]);
+  expect(await mod.db.select().from(schema.productQuestions)).toHaveLength(0);
+  await mod.forStore(A, (tx) => tx.insert(schema.productQuestions).values({ storeId: A, shopifyId: "gid://shopify/Product/2", locale: "en", contentHash: "h", questions: ["own?"] }));
+  await expect(
+    mod.forStore(A, (tx) => tx.insert(schema.productQuestions).values({ storeId: B, shopifyId: "gid://shopify/Product/2", locale: "en", contentHash: "h", questions: ["theirs?"] })),
+  ).rejects.toThrow();
+});

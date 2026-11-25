@@ -132,7 +132,7 @@ export default function AppHome() {
   );
 }
 
-type Onboarding = { chatConfirmed: boolean; dismissed: boolean; themeLink: string | null };
+type Onboarding = { chatConfirmed: boolean; dismissed: boolean; themeLink: string | null; productBlockLink: string | null };
 
 /** One checklist row: a status badge, the step, and its actions on their own line. */
 function Step({ done, title, children }: { done: boolean; title: string; children?: React.ReactNode }) {
@@ -220,6 +220,19 @@ function SetupGuideCard({ sync }: { sync: SyncState | null }) {
                 </>
               )}
             </Step>
+            {state.productBlockLink && (
+              <>
+                <s-divider />
+                {/* Link only: Shopify can't tell us whether the block was placed, so there is no done state. */}
+                <s-stack direction="block" gap="small">
+                  <s-text>Add &apos;Ask our AI agent&apos; to product pages</s-text>
+                  <s-stack direction="inline" gap="base">
+                    <s-button onClick={() => window.open(state.productBlockLink!, "_blank")}>Add to product pages</s-button>
+                  </s-stack>
+                  <s-paragraph>Then drag it below the Buy buttons.</s-paragraph>
+                </s-stack>
+              </>
+            )}
             <s-paragraph>Using another website or a mobile app? See Connect your website and Mobile app key below.</s-paragraph>
           </>
         )}
@@ -500,6 +513,7 @@ type WidgetForm = {
   style: "pill" | "icon";
   label: string;
   side: "right" | "left";
+  scope: "all" | "product" | "none";
   welcome: string;
   suggested: string[];
   teaserOn: boolean;
@@ -510,7 +524,7 @@ type WidgetView = {
   name: string;
   accent: string;
   avatarUrl: string | null;
-  launcher: { style: "pill" | "icon"; label: string | null; side: "right" | "left" };
+  launcher: { style: "pill" | "icon"; label: string | null; side: "right" | "left"; scope: "all" | "product" | "none" };
   welcome: string | null;
   suggested: string[];
   teaser: { enabled: boolean; text: string | null; delaySec: number };
@@ -523,6 +537,7 @@ const toForm = (v: WidgetView): WidgetForm => ({
   style: v.launcher.style,
   label: v.launcher.label ?? "",
   side: v.launcher.side,
+  scope: v.launcher.scope,
   welcome: v.welcome ?? "",
   suggested: v.suggested,
   teaserOn: v.teaser.enabled,
@@ -539,6 +554,7 @@ const FIELD_LABELS: Record<string, string> = {
   "launcher.style": "Button style",
   "launcher.label": "Button label",
   "launcher.side": "Button side",
+  "launcher.scope": "Chat button",
   "teaser.text": "Teaser text",
   "teaser.delaySec": "Teaser delay",
 };
@@ -603,7 +619,7 @@ function WidgetSettingsCard() {
       avatarUrl: form.avatarUrl,
       welcome: form.welcome,
       suggested: form.suggested.map((q) => q.trim()).filter(Boolean),
-      launcher: { style: form.style, label: form.label, side: form.side },
+      launcher: { style: form.style, label: form.label, side: form.side, scope: form.scope },
       teaser: { enabled: form.teaserOn, text: form.teaserText, delaySec: teaserDelayValue(form.teaserDelay) },
     });
   }
@@ -645,6 +661,11 @@ function WidgetSettingsCard() {
             <s-option value="left">Left</s-option>
           </s-select>
         </s-stack>
+        <s-select label="Chat button" value={form.scope} onChange={(e) => set("scope", valueOf(e) as WidgetForm["scope"])}>
+          <s-option value="all">On every page</s-option>
+          <s-option value="product">On product pages only</s-option>
+          <s-option value="none">Hidden (product block only)</s-option>
+        </s-select>
         <s-text-field label="Button label" value={form.label} maxLength={40} details="Empty uses the theme's default." error={err("launcher.label")} onInput={(e) => set("label", valueOf(e))} />
         <s-text-area label="Welcome message" details="Leave empty to use the default greeting in your store's language." value={form.welcome} maxLength={300} rows={3} error={err("welcome")} onInput={(e) => set("welcome", valueOf(e))} />
         <s-divider />

@@ -38,7 +38,7 @@ test("buildWidgetConfig fills every default from empty settings", () => {
     name: "Acme",
     accent: "#0A0A0A",
     avatarUrl: null,
-    launcher: { style: "pill", label: null, side: "right", offset: 20 },
+    launcher: { style: "pill", label: null, side: "right", offset: 20, scope: "all" },
     welcome: "Hi! I can help you find products, compare options and answer questions about orders and shipping.",
     suggested: ["What's popular right now?", "Help me find a gift", "What's your return policy?", "Do you ship to my country?"],
     teaser: { enabled: false, text: null, delaySec: 8 },
@@ -76,7 +76,7 @@ test("buildWidgetConfig keeps valid merchant values", () => {
       name: "Help",
       accent: "#ff00AA",
       avatarUrl: "https://cdn.shopify.com/s/files/1/logo.png",
-      launcher: { style: "icon", label: "Ask", side: "left", offset: 120 },
+      launcher: { style: "icon", label: "Ask", side: "left", offset: 120, scope: "product" },
       welcome: "Hi there",
       suggested: ["Sizes?", "Shipping?"],
       teaser: { enabled: true, text: "Need help?", delaySec: 30 },
@@ -89,7 +89,7 @@ test("buildWidgetConfig keeps valid merchant values", () => {
     name: "Help",
     accent: "#ff00AA",
     avatarUrl: "https://cdn.shopify.com/s/files/1/logo.png",
-    launcher: { style: "icon", label: "Ask", side: "left", offset: 120 },
+    launcher: { style: "icon", label: "Ask", side: "left", offset: 120, scope: "product" },
     welcome: "Hi there",
     suggested: ["Sizes?", "Shipping?"],
     teaser: { enabled: true, text: "Need help?", delaySec: 30 },
@@ -106,7 +106,7 @@ test("buildWidgetConfig replaces each bad value with its default, logs it, and n
       name: "x".repeat(41),
       accent: "red",
       avatarUrl: "https://evil.com/a.png",
-      launcher: { style: "big", label: "y".repeat(41), side: "top", offset: 500 },
+      launcher: { style: "big", label: "y".repeat(41), side: "top", offset: 500, scope: "everywhere" },
       welcome: "z".repeat(301),
       suggested: ["ok", 5, "q".repeat(121), "a", "b", "c"],
       teaser: { enabled: 1, text: 42, delaySec: -1 },
@@ -118,13 +118,27 @@ test("buildWidgetConfig replaces each bad value with its default, logs it, and n
     name: "Acme",
     accent: "#0A0A0A",
     avatarUrl: null,
-    launcher: { style: "pill", label: null, side: "right", offset: 20 },
+    launcher: { style: "pill", label: null, side: "right", offset: 20, scope: "all" },
     welcome: "Hi! I can help you find products, compare options and answer questions about orders and shipping.",
     suggested: ["ok", "a", "b", "c"],
     teaser: { enabled: false, text: null, delaySec: 8 },
     retentionDays: 30,
   });
   expect(console.warn).toHaveBeenCalled();
+});
+
+test("launcher.scope: none and product are kept, anything else or missing is all and recorded as defaulted", () => {
+  const of = (launcher: unknown) => wc.resolveWidgetConfig({ settings: { widget: { launcher } }, name: "Acme" }, API);
+  expect(of({ scope: "none" }).config.launcher.scope).toBe("none");
+  expect(of({ scope: "product" }).config.launcher.scope).toBe("product");
+  expect(of({ scope: "product" }).defaulted).not.toContain("launcher.scope");
+  for (const bad of [undefined, null, "", "everywhere", 1]) {
+    const r = of({ scope: bad });
+    expect(r.config.launcher.scope).toBe("all");
+    expect(r.defaulted).toContain("launcher.scope");
+  }
+  expect(of({ scope: "everywhere" }).rejected).toContain("launcher.scope");
+  expect(of({}).rejected).not.toContain("launcher.scope");
 });
 
 test("buildWidgetConfig rejects avatars that only look like the Shopify CDN", () => {

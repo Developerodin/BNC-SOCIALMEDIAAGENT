@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { stores } from "@/db/schema";
 import { readSmallJson, withStore } from "@/lib/admin-route";
-import { themeEditorLink } from "@/lib/website-check";
+import { productBlockLink, themeEditorLink } from "@/lib/website-check";
 
 // The admin home's setup guide. The merchant confirms the theme-editor step themselves (Shopify gives apps no way to
 // see whether an app embed is on), so that and "dismissed" are remembered in stores.settings.onboarding. GET returns
@@ -24,7 +24,7 @@ const state = (o: Onboarding) => ({ chatConfirmed: !!o.chatConfirmedAt, dismisse
 export function GET(req: Request) {
   return withStore(req, async ({ storeId, shop }) => {
     const [s] = await db.select({ settings: stores.settings }).from(stores).where(eq(stores.id, storeId));
-    return Response.json({ ...state(onboardingOf(s?.settings)), themeLink: themeEditorLink(shop) });
+    return Response.json({ ...state(onboardingOf(s?.settings)), themeLink: themeEditorLink(shop), productBlockLink: productBlockLink(shop) });
   });
 }
 
