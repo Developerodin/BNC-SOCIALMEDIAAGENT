@@ -2,6 +2,7 @@
 // C21: on a theme that configured Shopify's `updateCart` action itself (`isDefault()` is false), that action is used
 // instead, so the theme's cart icon refreshes in place. Shopify's default handler is never called: on a theme it doesn't
 // recognise it reloads the whole page mid-chat.
+import { formatPrice } from "./core/format";
 import type { CartSummary, PageContext } from "../../src/lib/widget-contract";
 
 // Only the add url is needed, so the embed's bridge (embed.ts) can reuse this on a storefront without a full PageContext.
@@ -52,11 +53,7 @@ const short = (v: unknown) => (typeof v === "string" ? v.replace(/\s+/g, " ").tr
 /** cart.js prices are in minor units (cents): formatted as the shopper sees money, e.g. "₹1,399.90". */
 function money(cents: unknown, currency: string): string {
   const n = Number(cents) / 100;
-  try {
-    return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(n);
-  } catch {
-    return `${n.toFixed(2)} ${currency}`;
-  }
+  return formatPrice(n, currency) ?? `${n.toFixed(2)} ${currency}`;
 }
 
 /** The compact cart the chat request carries (CartSummary), or null when there is nothing to say. */

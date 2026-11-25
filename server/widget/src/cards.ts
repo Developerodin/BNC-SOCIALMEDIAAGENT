@@ -251,10 +251,10 @@ function cardBody(card: Card, ctx: WidgetCtx, messageId: string | null, st: AddS
       priceBox.append(el("span", "ac-card__price-hint", t("price_on_product")));
       return;
     }
-    const p = card.currency ? formatPrice(price, card.currency, page.locale) : null;
+    const p = card.currency ? formatPrice(price, card.currency) : null;
     if (!p) return;
     priceBox.append(el("span", "ac-card__price", p));
-    const c = compareAt && card.currency && Number(compareAt) > Number(price) ? formatPrice(compareAt, card.currency, page.locale) : null;
+    const c = compareAt && card.currency && Number(compareAt) > Number(price) ? formatPrice(compareAt, card.currency) : null;
     if (c) priceBox.append(el("s", "ac-card__compare", c));
   };
   setPrice(card.price, card.compareAtPrice);
@@ -419,10 +419,10 @@ function tilePrice(card: Card, ctx: WidgetCtx): { price: string; compareAt: stri
   if (card.available === false) return { price: ctx.t("sold_out"), compareAt: null };
   const { page } = ctx;
   if (card.price === null || !card.currency || (!!page.currency && card.currency !== page.currency)) return null;
-  const price = formatPrice(card.price, card.currency, page.locale);
+  const price = formatPrice(card.price, card.currency);
   if (!price) return null;
   const onSale = card.compareAtPrice && Number(card.compareAtPrice) > Number(card.price);
-  return { price, compareAt: onSale ? formatPrice(card.compareAtPrice!, card.currency, page.locale) : null };
+  return { price, compareAt: onSale ? formatPrice(card.compareAtPrice!, card.currency) : null };
 }
 
 /** The inline detail sheet: covers the panel (or `into` when there is no panel), shows the full card and gives focus back

@@ -293,6 +293,59 @@ describe("sending (D81)", () => {
   });
 });
 
+describe("product switch divider and jump to latest", () => {
+  const items: HistoryItem[] = [
+    { id: "u1", role: "user", content: "first?", status: "ok", cards: [], rating: null },
+    { id: "a1", role: "assistant", content: "one", status: "ok", cards: [], rating: null },
+  ];
+  const viewing = { title: "Tee", image: null, price: 1999 };
+  const dividers = () => qa(".divider").map((d) => d.textContent);
+  afterEach(() => panel.close()); // a panel left open keeps its window listeners and would lock scrolling in the next test
+
+  it("marks a move to another product once, not on a reload of the same page", async () => {
+    localStorage.setItem(TOKEN_KEY, "tok");
+    localStorage.setItem(`askcart:${SHOP}:lastProduct`, "9");
+    const api = mockApi({ history: vi.fn(async () => items) });
+    await setup(api, config(), pageCtx({ productId: "1", viewing })).open();
+    expect(dividers()).toEqual(["You're viewing: Tee"]);
+    panel.close();
+    host.remove();
+    await setup(api, config(), pageCtx({ productId: "1", viewing })).open();
+    expect(dividers()).toEqual([]);
+  });
+
+  it("adds none on the first product seen or without a conversation", async () => {
+    localStorage.setItem(TOKEN_KEY, "tok");
+    await setup(mockApi({ history: vi.fn(async () => items) }), config(), pageCtx({ productId: "1", viewing })).open();
+    expect(dividers()).toEqual([]);
+    panel.close();
+    host.remove();
+    localStorage.setItem(`askcart:${SHOP}:lastProduct`, "9");
+    localStorage.removeItem(TOKEN_KEY);
+    await setup(mockApi(), config(), pageCtx({ productId: "1", viewing })).open();
+    expect(dividers()).toEqual([]);
+  });
+
+  it("shows the jump button only while scrolled up and scrolls to the end on click", async () => {
+    await setup(mockApi()).open();
+    const log = q(".log")!;
+    const jump = q<HTMLButtonElement>(".jump")!;
+    expect(jump.hidden).toBe(true);
+    Object.defineProperty(log, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(log, "clientHeight", { value: 400, configurable: true });
+    log.scrollTop = 100;
+    log.dispatchEvent(new Event("scroll"));
+    expect(jump.hidden).toBe(false);
+    log.scrollTo = vi.fn() as never;
+    jump.click();
+    expect(log.scrollTo).toHaveBeenCalledWith({ top: 1000, behavior: expect.any(String) });
+    expect(jump.hidden).toBe(true);
+    log.scrollTop = 590;
+    log.dispatchEvent(new Event("scroll"));
+    expect(jump.hidden).toBe(true);
+  });
+});
+
 describe("history (UD13)", () => {
   const items: HistoryItem[] = [
     { id: "u1", role: "user", content: "first?", status: "ok", cards: [], rating: null },
@@ -1549,10 +1602,10 @@ describe("closing and the 'You're viewing' price", () => {
     expect(seen).toHaveBeenCalledTimes(1);
   });
 
-  it("formats the viewing price from cents and the page's currency, in the shopper's locale", async () => {
+  it("formats the viewing price from cents and the page's currency, with a dot decimal in any locale", async () => {
     const viewing = { title: "Tee", image: null, price: 1999 };
     await setup(mockApi(), config(), pageCtx({ productId: "1", currency: "EUR", locale: "fr", viewing })).open();
-    expect(q(".vw-label")!.textContent).toMatch(/^19,99\s€ · /);
+    expect(q(".vw-label")!.textContent).toBe("€19.99 · Vous consultez");
   });
 
   it("shows no price when the page has no currency", async () => {

@@ -5,12 +5,13 @@ import type { Card } from "../../../src/lib/widget-contract";
 type Stock = NonNullable<Card["stock"]>;
 type T = (key: string, vars?: Record<string, string | number>) => string;
 
-/** The price in the shopper's locale, or null when the amount or currency is unusable. */
-export function formatPrice(amount: string | number, currency: string, locale: string): string | null {
+/** The price with the currency symbol first and a dot decimal ("€1,452.43"), whatever the page's locale, so the same
+ * amount reads the same everywhere in the chat. Null when the amount or currency is unusable. */
+export function formatPrice(amount: string | number, currency: string): string | null {
   const n = Number(amount);
   if (amount === "" || !Number.isFinite(n)) return null;
   try {
-    return new Intl.NumberFormat(locale, { style: "currency", currency }).format(n);
+    return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(n);
   } catch {
     return null;
   }

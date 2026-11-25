@@ -47,6 +47,16 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
     return node;
   };
 
+  /** "You're viewing: <title>": a thin rule either side, marking where the conversation moved to another product page.
+   * Goes before `before` (the suggestion chips) when given. */
+  function divider(text: string, before: HTMLElement | null = null) {
+    const d = el("div", "divider");
+    d.append(el("span", "", text));
+    if (before?.isConnected) before.before(d);
+    else log.append(d);
+    scroll();
+  }
+
   /** `live` bubbles fade in; history is drawn instantly. */
   function user(text: string, live = true): HTMLElement {
     return add(el("div", live ? "msg user in" : "msg user", text));
@@ -179,5 +189,5 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
     log.querySelectorAll(".err").forEach((e) => e.remove());
   }
 
-  return { log, user, bot, history, answer, error, clearErrors, add };
+  return { log, user, bot, history, answer, error, clearErrors, add, divider };
 }
