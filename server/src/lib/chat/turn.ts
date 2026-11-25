@@ -11,7 +11,7 @@ import { answer, ChatUnavailable } from "./answer";
 import { applyBudget } from "./budget";
 import { HISTORY_MESSAGES, MCP_DAILY_MESSAGES } from "./limits";
 import { maskPII } from "./mask";
-import { buildInput, LARGE_SYSTEM_PROMPT, SYSTEM_PROMPT, sanitizeData, type OrderRule, type PromptProducts } from "./prompt";
+import { buildInput, LARGE_SYSTEM_PROMPT, plainText, SYSTEM_PROMPT, sanitizeData, stripProductRefs, type OrderRule, type PromptProducts } from "./prompt";
 import { rewriteQuery, type ChatTurn } from "./rewrite";
 import { runTool, toolDefs, type ToolContext } from "./tools";
 import type { SseEvent } from "./sse";
@@ -418,9 +418,39 @@ function capStock(s: Stock, threshold: number): Stock {
   return s.kind === "count" && s.n >= threshold ? { kind: "in_stock" } : s;
 }
 
-/** The card's headline price and stock come from its first available variant (or the first variant when sold out). */
-function liveCard(p: LiveProduct, threshold: number): Card {
-  const lead = p.variants.find((v) => v.available) ?? p.variants[0];
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The available variant the conversation is about: every option value of exactly one variant appears in `hint` (the shopper's
+ * message and the answer so far), as whole words. null when none or several fit, or the product has one variant.
+ */
+/** Sizes written 160x200, 160 x 200 cm or 160×200 cm are the same words for matching. */
+const normalized = (s: string) => s.toLowerCase().replace(/(\d)\s*[x×*]\s*(?=\d)/g, "$1x").replace(/\s*\bcm\b/g, "");
+
+function discussedVariant(p: LiveProduct, hint: string): LiveVariant | null {
+  if (p.variants.length < 2 || !hint) return null;
+  const text = normalized(hint);
+  const named = (v: LiveVariant) =>
+    v.options.length > 0 &&
+    v.options.every((o) => {
+      const value = normalized(o.value.trim());
+      return value.length > 1 && o.value !== "Default Title" && new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(value)}(?![\\p{L}\\p{N}])`, "u").test(text);
+    });
+  const hit = p.variants.filter((v) => v.available && named(v));
+  return hit.length === 1 ? hit[0] : null;
+}
+
+/**
+ * The card's headline price and stock come from its first available variant (or the first variant when sold out), and the
+ * widget starts its pickers on that variant. When the conversation is about one variant (`hint`), that variant leads instead,
+ * so the price shown is the one discussed.
+ * `// ponytail:` this moves the variant to the front of the card's variants, so the picker lists its option values in a new
+ * order; a "from X" label or a lead-variant field in the card needs the widget to know about it.
+ */
+function liveCard(p: LiveProduct, threshold: number, hint = ""): Card {
+  const pick = discussedVariant(p, hint);
+  const variants = pick ? [pick, ...p.variants.filter((v) => v !== pick)] : p.variants;
+  const lead = variants.find((v) => v.available) ?? variants[0];
   return {
     id: p.id,
     title: p.title,
@@ -432,10 +462,15 @@ function liveCard(p: LiveProduct, threshold: number): Card {
     stock: lead ? capStock(lead.stock, threshold) : { kind: "sold_out" },
     price: lead?.price ?? null,
     compareAtPrice: lead?.compareAtPrice ?? null,
-    variants: p.variants.map((v) => ({ ...v, stock: capStock(v.stock, threshold) })),
+    variants: variants.map((v) => ({ ...v, stock: capStock(v.stock, threshold) })),
     moreVariants: p.moreVariants,
   };
 }
+
+/** More than 3 product cards only when the shopper asked for more: a number from 4 to 12 (not a size, price or head count), or "all"/"more". */
+const MAX_CARDS = 3;
+const WANTS_MORE =
+  /(?<![\d.,x×*])\b(?:[4-9]|1[0-2])\b(?!\s*(?:[x×*,.]\d|[x×*]|€|\$|£|cm|mm|m\b|kg|%|eur|euros?|dollars?|pers|people|persons|personnes|places|seats|ans|years|h\b))|\b(?:all|every|everything|more|tous|toutes|tout|plus|alle|mehr|todos|todas|tutti)\b/i;
 
 function fallbackCard(c: FallbackCard): Card {
   return {
@@ -547,9 +582,12 @@ export async function runTurn(t: {
       return;
     }
     status("understanding");
+    // A shopper can type "[[product:2]]" or "product:2" themselves, which would steer which product a card shows.
+    const message = stripProductRefs(t.message);
+    const history = t.history.map((h) => (h.role === "user" ? { ...h, content: stripProductRefs(h.content) } : h));
     const rw = await rewriteQuery({
-      message: t.message,
-      history: t.history,
+      message,
+      history,
       storeLocale: store.primaryLocale,
       storeCurrency: store.currencyCode,
       signal,
@@ -557,20 +595,25 @@ export async function runTurn(t: {
     // D89: the store's search provider (ours by default, or Shopify's Catalog MCP).
     const wide = !!rw.budget || !!rw.sort;
     status("searching");
-    const found = await searchProducts(store, rw.query, wide ? PRICE_SEARCH_K : SEARCH_K, {
-      productId: currentProductId,
-      includeGiftCards: rw.includeGiftCards,
-      signal,
-      catalog,
-    });
+    // An empty query means the message needs no product search (thanks, a store question): nothing is searched.
+    const found = rw.query.trim()
+      ? await searchProducts(store, rw.query, wide ? PRICE_SEARCH_K : SEARCH_K, {
+          productId: currentProductId,
+          includeGiftCards: rw.includeGiftCards,
+          signal,
+          catalog,
+        })
+      : [];
     const ids = [...new Set([...found.map((h) => h.productId), ...(currentProductId ? [currentProductId] : [])])];
     status("checking");
     const checked = await checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal, catalog });
     // D87: drop products outside the budget and order by price, by the live price (never the index's).
-    const priced = applyBudget({ hits: found, live: checked, budget: rw.budget, sort: rw.sort, currency: store.currencyCode, shopperCurrency: t.currency });
+    // A Catalog MCP search scores by rank (1 - i/30), so "within 0.06 of the top" would be two products there.
+    const priced = applyBudget({ hits: found, live: checked, budget: rw.budget, sort: rw.sort, currency: store.currencyCode, shopperCurrency: t.currency, ...(catalog ? { margin: 0.2 } : {}) });
     const { live } = priced;
     // Shopify gave no answer at all: say so, so the model never turns an outage into "we don't carry that".
-    const note = catalog?.degraded ? [CATALOG_DEGRADED, priced.note].filter(Boolean).join(" ") : priced.note;
+    const noSearch = rw.query.trim() ? undefined : "No product search was run for this message: it does not need one.";
+    const note = [catalog?.degraded ? CATALOG_DEGRADED : undefined, noSearch, priced.note].filter(Boolean).join(" ") || undefined;
     const hits = wide ? topProducts(priced.hits, live, PROMPT_PRODUCTS) : priced.hits;
     const cartAdded = catalog
       ? []
@@ -579,9 +622,10 @@ export async function runTurn(t: {
           console.warn("cart added titles failed", { storeId, reason: (e as { code?: string } | null)?.code ?? (e instanceof Error ? e.name : "error") });
           return [];
         });
-    const { input, allowed } = buildInput({ hits, live, currentProductId, history: t.history, message: t.message, threshold, shopperCurrency: t.currency, note, cartAdded, cart: t.cart });
+    const { input, allowed } = buildInput({ hits, live, currentProductId, history, message, threshold, shopperCurrency: t.currency, note, cartAdded, cart: t.cart });
 
     const cards: Card[] = [];
+    let shown = ""; // the answer text so far: which variant is being discussed
     // The MCP tools (tools.ts) add the products they find to `live` and `allowed`, so onProduct below finds them too.
     const toolCtx: ToolContext = {
       store,
@@ -607,16 +651,23 @@ export async function runTurn(t: {
       system: SYSTEM_PROMPT(name, orderRule),
       largeSystem: LARGE_SYSTEM_PROMPT(name, orderRule),
       input,
-      // A budget or price-order question has already been filtered and sorted by applyBudget (D87); a second search would
-      // bypass that (a $200 boot under "boots under $50"), so it only gets store_policies.
-      tools: { defs: wide ? defs.filter((d) => d.name !== "search_products") : defs, run: (toolName, args) => (status(TOOL_STEP[toolName] ?? "searching"), runTool(toolName, args, toolCtx)) },
+      // A budget or price-order question keeps search_products: its results get the same budget and price order (the tool
+      // context carries them, tools.ts), and a question about several product types needs more than one search.
+      tools: { defs, run: (toolName, args) => (status(TOOL_STEP[toolName] ?? "searching"), runTool(toolName, args, toolCtx)) },
       allowed,
       storeId,
       signal,
-      onText: (delta) => (status("writing"), t.send("text", { delta })),
+      titleOf: (id) => (live.ok ? live.products.get(id)?.title : live.cards.get(id)?.title),
+      onText: (delta) => {
+        shown += delta;
+        status("writing");
+        t.send("text", { delta });
+      },
       onProduct: (id) => {
+        // At most 3 cards unless the shopper asked for more; the text still names the others.
+        if (cards.length >= MAX_CARDS && !WANTS_MORE.test(message)) return;
         // `allowed` holds only products in `live`, so the lookup always succeeds.
-        const card = live.ok ? liveCard(live.products.get(id)!, threshold) : fallbackCard(live.cards.get(id)!);
+        const card = live.ok ? liveCard(live.products.get(id)!, threshold, `${message}\n${shown}`) : fallbackCard(live.cards.get(id)!);
         cards.push(card);
         t.send("product", card);
       },

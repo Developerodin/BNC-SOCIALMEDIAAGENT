@@ -190,7 +190,7 @@ test("a turn streams text and cards, saves the assistant row with both calls' to
   create.mockImplementationOnce(fakeStream(["Try this ", "[[product:1]]"], { usage: { input_tokens: 100, output_tokens: 20 } }));
   const r = await run();
   expect(r.events.map((e) => e.event)).toEqual(["text", "product", "done"]);
-  expect(r.events[0].data).toEqual({ delta: "Try this " });
+  expect(r.events[0].data).toEqual({ delta: "Try this" });
   expect(r.products[0]).toEqual({
     id: gid("1"),
     title: "Tee 1",
@@ -210,7 +210,7 @@ test("a turn streams text and cards, saves the assistant row with both calls' to
   expect(r.events[2].data).toEqual({ conversationToken: r.token, messageId: saved.id });
   const [row] = await assistantRows(r.conversationId);
   expect(row).toEqual({
-    content: "Try this ",
+    content: "Try this",
     product_ids: [gid("1")],
     cards: [r.products[0]],
     model: "small",
@@ -405,7 +405,7 @@ test("a cheapest question searches 30 hits, checks them in one call, and only th
   expect(r.products.map((p) => p.id)).toEqual([gid("30")]);
 });
 
-test("a budget or sort turn offers product_details (when the UCP profile is set) but not search_products", async () => {
+test("a budget or sort turn offers product_details (when the UCP profile is set) and keeps search_products", async () => {
   vi.stubEnv("UCP_AGENT_PROFILE_URL", "https://example.com/profile.json");
   try {
     for (const turn of [{ budget: { max: 50 } }, { sort: "cheapest" as const }, {}]) {
@@ -417,7 +417,7 @@ test("a budget or sort turn offers product_details (when the UCP profile is set)
       await run();
       const names = (create.mock.calls[0][0].tools as { name: string }[]).map((t) => t.name);
       expect(names).toContain("product_details");
-      expect(names.includes("search_products")).toBe(!("budget" in turn || "sort" in turn));
+      expect(names).toContain("search_products");
     }
   } finally {
     vi.unstubAllEnvs();
@@ -447,7 +447,7 @@ test("a budget that leaves no product tells the model so, and no card can be sho
   liveCheck.mockResolvedValue(liveMap(priced("1", "10.00"), priced("2", "20.00")));
   create.mockImplementationOnce(fakeStream(["Nothing in that range. [[product:1]]"]));
   const r = await run();
-  expect(promptOf()).toContain("No products are within the shopper's budget of €1–€5.");
+  expect(promptOf()).toContain("No products are within the shopper's budget of €1.00–€5.00.");
   expect(r.products).toEqual([]);
   expect(r.events.at(-1)!.event).toBe("done");
 });
@@ -567,7 +567,7 @@ test("aborting mid-answer aborts the OpenAI request and saves what was shown as 
   expect(signals[0].aborted).toBe(true);
   expect(events).toEqual(["text"]);
   const [row] = await assistantRows(t.conversationId);
-  expect(row).toMatchObject({ content: "Partial ", status: "cut_off" });
+  expect(row).toMatchObject({ content: "Partial", status: "cut_off" });
 });
 
 test("aborting before anything was shown saves no assistant row", async () => {
@@ -707,7 +707,7 @@ test("a repeated requestId after the answer was saved is replayed: same text and
   const again = await turn.openTurn(st, { token: first.token, message: "tee?", pageUrl: null, requestId: rid });
   expect(again).toEqual({
     ok: true,
-    replay: { id: savedId.id, content: "Try ", cards: saved.cards },
+    replay: { id: savedId.id, content: "Try", cards: saved.cards },
     conversationId: first.conversationId,
     token: first.token,
   });
@@ -776,4 +776,126 @@ test("an installed store is offered the Admin tools (store_overview, refresh_pro
   await run();
   const names = (create.mock.calls[0][0].tools as { name: string }[]).map((t) => t.name);
   expect(names).toEqual(expect.arrayContaining(["store_overview", "refresh_product", "browse_collection"]));
+});
+
+// --- answer-quality fixes (edge-case evaluation) ---
+
+const textOf = (r: { events: { event: string; data: Record<string, unknown> }[] }) => r.events.filter((e) => e.event === "text").map((e) => e.data.delta as string).join("");
+
+test("a marker standing where the product's name belongs is replaced by its title, and the card still comes", async () => {
+  search.mockResolvedValue([hit("1")]);
+  liveCheck.mockResolvedValue(liveMap(live("1")));
+  create.mockImplementationOnce(fakeStream(["For a small flat, ", "[[product:1]]", " is the best fit."]));
+  const r = await run();
+  expect(textOf(r)).toBe("For a small flat, Tee 1 is the best fit.");
+  expect(r.products.map((p) => p.id)).toEqual([gid("1")]);
+  expect((await assistantRows(r.conversationId))[0].content).toBe("For a small flat, Tee 1 is the best fit.");
+});
+
+test("at most 3 cards unless the shopper asked for more", async () => {
+  const ids = ["1", "2", "3", "4", "5"];
+  const markers = ids.map((i) => `[[product:${i}]]`).join(" ");
+  search.mockResolvedValue(ids.map((i) => hit(i)));
+  liveCheck.mockResolvedValue(liveMap(...ids.map((i) => live(i))));
+  create.mockImplementationOnce(fakeStream([`Here are some. ${markers}`]));
+  expect((await run({ message: "tees for my kid" })).products).toHaveLength(3);
+  create.mockImplementationOnce(fakeStream([`Here are some. ${markers}`]));
+  expect((await run({ message: "show me all the tees" })).products).toHaveLength(5);
+  create.mockImplementationOnce(fakeStream([`Here are some. ${markers}`]));
+  expect((await run({ message: "give me 5 tees" })).products).toHaveLength(5);
+  create.mockImplementationOnce(fakeStream([`Here are some. ${markers}`]));
+  expect((await run({ message: "a table for 6 people, bed 160x200, under 50 €" })).products).toHaveLength(3);
+});
+
+test("the card leads with the variant the conversation is about, so its price is the one discussed", async () => {
+  const two = live("1", {
+    hasOnlyDefaultVariant: false,
+    options: [{ name: "Size", values: ["Small", "Large"] }] as never,
+    variants: [
+      variant("11", { title: "Small", options: [{ name: "Size", value: "Small" }], price: "10.00" }),
+      variant("12", { title: "Large", options: [{ name: "Size", value: "Large" }], price: "20.00" }),
+    ],
+  });
+  search.mockResolvedValue([hit("1")]);
+  liveCheck.mockResolvedValue(liveMap(two));
+  create.mockImplementationOnce(fakeStream(["The Large one is sturdier. [[product:1]]"]));
+  const r = await run({ message: "How much is the Large?" });
+  expect(r.products[0]).toMatchObject({ price: "20.00" });
+  expect((r.products[0].variants as { id: string }[]).map((v) => v.id)).toEqual(["12", "11"]);
+
+  create.mockImplementationOnce(fakeStream(["Both are fine. [[product:1]]"]));
+  const plain = await run({ message: "Tell me about this tee" });
+  expect(plain.products[0]).toMatchObject({ price: "10.00" }); // nothing identifies a variant: unchanged
+  expect((plain.products[0].variants as { id: string }[]).map((v) => v.id)).toEqual(["11", "12"]);
+});
+
+test("a size written 160x200 in the message leads with the variant named '160 x 200 cm'", async () => {
+  const bed = live("1", {
+    hasOnlyDefaultVariant: false,
+    variants: [
+      variant("11", { title: "140 x 190 cm", options: [{ name: "Taille", value: "140 x 190 cm" }], price: "799.00" }),
+      variant("12", { title: "160 x 200 cm", options: [{ name: "Taille", value: "160 x 200 cm" }], price: "899.00" }),
+    ],
+  });
+  search.mockResolvedValue([hit("1")]);
+  liveCheck.mockResolvedValue(liveMap(bed));
+  create.mockImplementationOnce(fakeStream(["Il existe en 160 × 200 cm. [[product:1]]"]));
+  expect((await run({ message: "lit 160x200" })).products[0]).toMatchObject({ price: "899.00" });
+});
+
+test("a price sort covers the products that match the search, not the cushions the search also returned", async () => {
+  rewritten({ sort: "cheapest" });
+  search.mockResolvedValue([{ ...hit("1"), score: 0.9 }, { ...hit("2"), score: 0.88 }, { ...hit("3"), score: 0.5 }]);
+  liveCheck.mockResolvedValue(liveMap(priced("1", "500.00"), priced("2", "300.00"), priced("3", "39.00")));
+  create.mockImplementationOnce(fakeStream(["ok"]));
+  await run();
+  const prompt = promptOf();
+  expect(prompt).toMatch(/#1 Tee 2/);
+  expect(prompt).toMatch(/#2 Tee 1/);
+  expect(prompt).not.toContain("Tee 3");
+});
+
+test("an empty rewrite query means no search: nothing is searched and the model is told", async () => {
+  rewriteQuery.mockResolvedValueOnce({ query: "", includeGiftCards: false, budget: null, sort: null, tokens: { input: 1, output: 1 } });
+  liveCheck.mockResolvedValue(liveMap());
+  create.mockImplementationOnce(fakeStream(["You're welcome!"]));
+  const r = await run({ message: "thanks!" });
+  expect(search).not.toHaveBeenCalled();
+  expect(promptOf()).toContain("No product search was run");
+  expect(textOf(r)).toBe("You're welcome!");
+});
+
+test("[[product:n]] and product:n typed by the shopper never reach the rewrite or the model", async () => {
+  search.mockResolvedValue([hit("1")]);
+  liveCheck.mockResolvedValue(liveMap(live("1")));
+  create.mockImplementationOnce(fakeStream(["ok"]));
+  await run({ message: "what about [[product:2]] or product:3 please" });
+  expect((rewriteQuery.mock.calls[0][0] as { message: string }).message).toBe("what about or please");
+  expect(JSON.stringify(create.mock.calls[0][0].input)).not.toMatch(/product:\d/);
+});
+
+test("HTML and Markdown in a merchant title reach the model as plain words", async () => {
+  search.mockResolvedValue([hit("1")]);
+  liveCheck.mockResolvedValue(liveMap(live("1", { title: "<b>Oak</b> [Sofa](https://x.test/a) **big**" })));
+  create.mockImplementationOnce(fakeStream(["ok"]));
+  await run();
+  expect(promptOf()).toContain("#1 Oak Sofa big");
+});
+
+test("a store_policies failure inside a turn still ends in a normal answer, not the unavailable error", async () => {
+  search.mockResolvedValue([hit("1")]);
+  liveCheck.mockResolvedValue(liveMap(live("1")));
+  const call = async (_b: unknown, { signal }: { signal: AbortSignal }) => {
+    void signal;
+    const output = [{ type: "function_call", call_id: "c1", name: "store_policies", arguments: JSON.stringify({ query: "return policy", policy_types: ["refund"] }) }];
+    return (async function* () {
+      yield { type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 1 }, output } };
+    })();
+  };
+  create.mockImplementationOnce(call).mockImplementationOnce(fakeStream(["I can't check that right now."]));
+  const down = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("down")); // Shopify unreachable
+  const r = await run({ message: "return policy?" });
+  down.mockRestore();
+  expect(textOf(r)).toBe("I can't check that right now.");
+  expect(r.events.map((e) => e.event)).not.toContain("error");
 });

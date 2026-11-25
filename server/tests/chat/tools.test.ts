@@ -52,6 +52,11 @@ test("store_policies passes the query and valid policy types, and wraps the sani
   expect(out).toMatch(/price or stock.*not authoritative/);
 });
 
+test("store_policies that throws is still the unavailable text, never a throw", async () => {
+  askPolicies.mockRejectedValue(new Error("boom"));
+  expect(await runTool("store_policies", JSON.stringify({ query: "return policy", policy_types: ["refund"] }), ctx())).toMatch(/unavailable right now/);
+});
+
 test("store_policies failing tells the model to point the shopper to the store", async () => {
   askPolicies.mockResolvedValue(null);
   expect(await runTool("store_policies", JSON.stringify({ query: "q", policy_types: [] }), ctx())).toMatch(/unavailable right now/);

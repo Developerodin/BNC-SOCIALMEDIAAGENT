@@ -92,8 +92,17 @@ test("invalid JSON returns the message unchanged without gift cards (tokens stil
   expect(r).toEqual({ query: "wax", includeGiftCards: false, budget: null, sort: null, tokens: { input: 30, output: 4 } });
 });
 
-test("JSON of the wrong shape (empty query) falls back too", async () => {
-  create.mockResolvedValueOnce(ok({ query: "  ", includeGiftCards: true }));
+test("an empty query means no search is needed: it is kept empty, not treated as a failure", async () => {
+  create.mockResolvedValueOnce(ok({ query: "  ", includeGiftCards: false, budget: null, sort: null }));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const r = await rewriteQuery({ message: "thanks!", history: [], storeLocale: "en", signal: new AbortController().signal });
+  expect(r.query).toBe("");
+  expect(warn).not.toHaveBeenCalled();
+  warn.mockRestore();
+});
+
+test("JSON of the wrong shape (no query) falls back to the message", async () => {
+  create.mockResolvedValueOnce(ok({ includeGiftCards: true }));
   const r = await rewriteQuery({ message: "wax", history: [], storeLocale: "en", signal: new AbortController().signal });
   expect(r.query).toBe("wax");
   expect(r.includeGiftCards).toBe(false);

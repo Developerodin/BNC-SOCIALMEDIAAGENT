@@ -3,6 +3,7 @@ import { chatModel, chatReasoning, deadline, errorStatus, openai } from "./opena
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 export type Rewrite = {
+  /** Empty when the message needs no product search (thanks, a greeting, a question about the store): nothing is searched then. */
   query: string;
   includeGiftCards: boolean;
   /** D87: the shopper's budget in the store currency's major units, or null when they gave none. */
@@ -45,10 +46,11 @@ function instructions(storeLocale: string | null, storeCurrency: string | null):
     "Use the earlier messages only to resolve what the latest message refers to (for example \"the red one\" or \"does it come in XL?\").",
     "Keep it short: the product type, plus any attributes, use or audience the shopper mentioned. Do not answer the shopper.",
     "If the shopper asks for a room, space or broad category rather than a product (for example 'bedroom', 'living room', 'for my office', 'outdoor'), write a query that lists the main product types sold for it (for example for a bedroom: bed, bedside table, wardrobe, chest of drawers, bench), in the store's language. Put the most typical product first.",
+    "If the message needs no product search at all (thanks, a greeting, a question about the store's shipping, returns or contact), set query to an empty string.",
     "Set includeGiftCards to true only when the shopper is asking for a gift card or voucher, in any language. Otherwise set it to false.",
     "Leave prices and budgets out of the query.",
     "Set budget only when the shopper states a price limit or range, in any language (for example \"under 50\", \"between 20 and 40\", \"at least 100\"): max for an upper limit, min for a lower one, null for a side they didn't give. Use plain numbers in the currency's major units (1000, not \"1,000\" or cents). If the shopper gives no budget, set budget to null. Never guess one.",
-    "Set sort to \"cheapest\" when the shopper asks for the cheapest or least expensive option, \"priciest\" for the most expensive one, otherwise null.",
+    "Set sort to \"cheapest\" when the shopper asks for the cheapest or least expensive option, \"priciest\" for the most expensive one, otherwise null. When the shopper says a product is too expensive or asks for cheaper options, set sort to \"cheapest\" and make the query the product type from the earlier messages (for example \"sofa\"), not that product's name.",
   ];
   // D87. `// ponytail:` no currency conversion: a budget in another currency keeps its number as if it were in the store's
   // currency. Converting would need exchange rates; Shopify Markets prices per country are not used here either.
@@ -87,7 +89,7 @@ function parseBudget(v: unknown): Budget | null {
 function parse(text: string): Omit<Rewrite, "tokens"> | null {
   try {
     const v = JSON.parse(text) as { query?: unknown; includeGiftCards?: unknown; budget?: unknown; sort?: unknown };
-    if (typeof v.query !== "string" || !v.query.trim() || typeof v.includeGiftCards !== "boolean") return null;
+    if (typeof v.query !== "string" || typeof v.includeGiftCards !== "boolean") return null;
     const sort = v.sort === "cheapest" || v.sort === "priciest" ? v.sort : null;
     return { query: v.query.trim(), includeGiftCards: v.includeGiftCards, budget: parseBudget(v.budget), sort };
   } catch {

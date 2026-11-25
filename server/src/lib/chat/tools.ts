@@ -8,7 +8,7 @@ import { applyBudget, type Budget, type PriceSort } from "./budget";
 import { ORDER_STATUS_DEF, orderStatus } from "./orders";
 import { ADMIN_TOOL_DEFS, ADMIN_TOOL_NAMES, runAdminTool } from "./admin-tools";
 import { MAX_DESCRIPTION_CHARS, numberProducts, productNumber } from "./number-products";
-import { productBlock, sanitizeData, type PromptProducts } from "./prompt";
+import { plainText, productBlock, sanitizeData, type PromptProducts } from "./prompt";
 
 // The chat agent's tools (Responses API function tools), run by answer()'s tool loop:
 // - store_policies: Shopify Storefront MCP search_shop_policies_and_faqs (returns, shipping, contact, FAQs).
@@ -132,7 +132,12 @@ export async function runTool(name: string, rawArgs: string, ctx: ToolContext): 
     const types = (Array.isArray(args.policy_types) ? args.policy_types : []).filter((t): t is PolicyType =>
       (POLICY_TYPES as readonly unknown[]).includes(t),
     );
-    const text = await askPolicies(ctx.store.shopDomain, query, types, { storeId: ctx.store.id, signal: ctx.signal });
+    let text: string | null;
+    try {
+      text = await askPolicies(ctx.store.shopDomain, query, types, { storeId: ctx.store.id, signal: ctx.signal });
+    } catch {
+      text = null; // askPolicies never throws; if it ever does, that is still the unavailable text below, not a failed turn
+    }
     if (text === null) return data("Store policies are unavailable right now. Suggest the shopper checks the store's policy pages or contacts the store.");
     // Policy answers can mention prices or stock; D37: never quote prices, stock only from LIVE lines.
     return data(text ? `${sanitizeData(text)}\n(Any price or stock in this answer is not authoritative.)` : "The store has no policy or FAQ answer for this.");
@@ -185,7 +190,7 @@ async function productDetails(arg: unknown, ctx: ToolContext): Promise<string> {
   if (tags.length) lines.push(`Tags: ${tags.join(", ")}`);
   lines.push("Price and stock are not given here: they come only from the LIVE lines.");
   // Sanitize first (it only removes text), then cut.
-  return sanitizeData(lines.join("\n")).slice(0, MAX_DETAILS_CHARS);
+  return sanitizeData(plainText(lines.join("\n"))).slice(0, MAX_DETAILS_CHARS);
 }
 
 /**
@@ -222,7 +227,10 @@ export async function searchProductBlocks(query: string, ctx: ToolContext): Prom
   let note = "";
   if (priced) {
     // The turn's own budget filter and price order (D87), by the live price.
-    const r = applyBudget({ hits: ids.map((productId) => ({ productId }) as SearchHit), live: ctx.live, budget: ctx.budget!.budget, sort: ctx.budget!.sort, currency: ctx.budget!.currency, shopperCurrency: ctx.shopperCurrency });
+    // The score keeps a price sort to the products that match the search (budget.ts); the catalog's rank scores are coarser.
+    const score = new Map<string, number>();
+    for (const h of hits as SearchHit[]) score.set(h.productId, Math.max(score.get(h.productId) ?? -Infinity, h.score));
+    const r = applyBudget({ hits: ids.map((productId) => ({ productId, score: score.get(productId) }) as SearchHit), live: ctx.live, ...(ctx.catalog ? { margin: 0.2 } : {}), budget: ctx.budget!.budget, sort: ctx.budget!.sort, currency: ctx.budget!.currency, shopperCurrency: ctx.shopperCurrency });
     const kept = r.live.ok ? r.live.products : null;
     ids = r.hits.map((h) => h.productId).filter((id) => !kept || kept.has(id)).slice(0, TOOL_PRODUCTS);
     // The note can carry a merchant product title (C05), so it is sanitized like the rest of the tool result.
