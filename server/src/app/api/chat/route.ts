@@ -3,7 +3,8 @@ import { customerOf } from "@/lib/chat/customer";
 import { MAX_INPUT_CHARS } from "@/lib/chat/limits";
 import { PING, PING_MS, SSE_HEADERS, sseEvent } from "@/lib/chat/sse";
 import { UUID } from "@/lib/chat/token";
-import { openTurn, parseCartSummary, runTurn } from "@/lib/chat/turn";
+import { openTurn, parseCartSummary, runTurn, similarProduct } from "@/lib/chat/turn";
+import { productGid } from "@/lib/ids";
 import type { StatusEvent } from "@/lib/widget-contract";
 
 // POST /api/chat: one chat turn, streamed as SSE (§7.6, Task 19). No `runtime` export: cacheComponents
@@ -39,6 +40,18 @@ export async function POST(req: Request) {
   const { requestId } = body;
   if (requestId != null && (typeof requestId !== "string" || !UUID.test(requestId))) return fail("invalid_request_id", 400);
   const pageUrl = typeof body.pageUrl === "string" ? body.pageUrl.slice(0, MAX_PAGE_URL) : null;
+
+  // The widget's "similar products" icon sends the card's product GID: it must be a product of this store, or the request is
+  // refused before anything is saved. An mcp-mode store has no product table (and no embeddings), so it is answered as an ordinary message.
+  let similar: { id: string; title: string } | undefined;
+  if (body.similarTo != null) {
+    const gid = typeof body.similarTo === "string" ? productGid(body.similarTo) : undefined;
+    if (!gid) return fail("invalid_similar_to", 400);
+    if (store.mode !== "mcp") {
+      similar = (await similarProduct(store.id, gid)) ?? undefined;
+      if (!similar) return fail("invalid_similar_to", 400);
+    }
+  }
 
   const opened = await openTurn(store, { token: conversationToken ?? undefined, message, pageUrl, requestId: typeof requestId === "string" ? requestId : undefined, customer: who.customer });
   if (!opened.ok) return fail(errorOf(opened), opened.status);
@@ -85,6 +98,7 @@ export async function POST(req: Request) {
         token: opened.token,
         history: opened.history,
         message: opened.message,
+        similar,
         productId: typeof body.productId === "string" ? body.productId : undefined,
         country: typeof body.country === "string" ? body.country : undefined,
         currency: typeof body.currency === "string" && /^[A-Z]{3}$/.test(body.currency) ? body.currency : undefined,

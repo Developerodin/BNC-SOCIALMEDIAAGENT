@@ -16,7 +16,7 @@ const el = (tag: string, cls: string, text?: string) => {
 /** renderCards also gets the answer's message id, so a cart add from a card is linked to that answer. Cards are only
  * drawn once the id is known: at `done` for a streamed answer (UD12), or from history. */
 export type Renderers = {
-  renderCards: (...a: [...Parameters<CardsRenderer>, messageId?: string | null, onAdded?: (title: string, cartHref: string | null) => void]) => void;
+  renderCards: (...a: [...Parameters<CardsRenderer>, messageId?: string | null, onAdded?: (title: string, cartHref: string | null) => void, onSimilar?: (card: Card) => void]) => void;
   renderFeedback: FeedbackRenderer;
 };
 
@@ -34,7 +34,7 @@ export type Answer = {
   remove(): void;
 };
 
-export function createMessages(ctx: WidgetCtx, r: Renderers) {
+export function createMessages(ctx: WidgetCtx, r: Renderers, onSimilar?: (card: Card) => void) {
   const log = el("div", "log");
   log.setAttribute("role", "log");
   log.setAttribute("aria-live", "off"); // the separate live region announces finished answers only
@@ -83,7 +83,7 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
     if (cards.length) {
       const box = el("div", "cards");
       wrap.append(box);
-      r.renderCards(box, cards, ctx, id, (title, href) => addedNote(wrap, title, href, true));
+      r.renderCards(box, cards, ctx, id, (title, href) => addedNote(wrap, title, href, true), onSimilar);
     }
     if (id && !cutOff) r.renderFeedback(wrap, id, rating, ctx);
     add(wrap);
@@ -145,7 +145,7 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
         if (cards.length) {
           const box = el("div", "cards in"); // live answer: the cards fade up once
           wrap.append(box);
-          r.renderCards(box, cards, ctx, messageId, (title, href) => addedNote(wrap, title, href, true));
+          r.renderCards(box, cards, ctx, messageId, (title, href) => addedNote(wrap, title, href, true), onSimilar);
         }
         if (messageId) r.renderFeedback(wrap, messageId, null, ctx);
         if (!wrap.childElementCount) wrap.remove();

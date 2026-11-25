@@ -26,6 +26,28 @@ function link(href: string, cls: string, text: string): HTMLAnchorElement {
   return a;
 }
 
+/** A round icon button over the image's bottom corner: a 36 px light circle inside a 44 px target. `label` is its
+ * accessible name and tooltip. */
+function fab(cls: string, ic: Parameters<typeof icon>[0], label: string): HTMLButtonElement {
+  const b = el("button", `ac-fab ${cls}`);
+  b.type = "button";
+  b.setAttribute("aria-label", label);
+  b.title = label;
+  const c = el("span", "ac-fab__c");
+  c.append(icon(ic, 20));
+  b.append(c);
+  return b;
+}
+
+/** Paints the cart icon like the card's Add button: the cart-plus icon, a spinner while adding, a check once added. */
+function paintFab(b: HTMLButtonElement, mode: "idle" | "busy" | "done", label: string): void {
+  b.firstElementChild!.replaceChildren(mode === "busy" ? el("span", "ac-spin") : icon(mode === "done" ? "check" : "cartplus", 20));
+  b.setAttribute("aria-label", label);
+  b.title = label;
+  if (mode === "busy") b.setAttribute("aria-busy", "true");
+  else b.removeAttribute("aria-busy");
+}
+
 const optionValue = (v: Variant, name: string) => v.options.find((o) => o.name === name)?.value;
 
 /** How many units of this product (any of its variants) are in the cart. */
@@ -481,7 +503,11 @@ function openSheet(into: HTMLElement, opener: HTMLElement, card: Card, full: HTM
  * View options button that opens the sheet. Arrows appear only when the row overflows.
  * `messageId` is the answer the cards came with; a cart add logs it (null for an answer the server sent without one).
  */
-export function renderCards(into: HTMLElement, cards: Card[], ctx: WidgetCtx, messageId: string | null = null, onAdded?: OnAdded): void {
+export function renderCards(
+  into: HTMLElement, cards: Card[], ctx: WidgetCtx, messageId: string | null = null, onAdded?: OnAdded,
+  /** The "similar products" icon: asks the chat for products like this one. Without it the icon is not drawn. */
+  onSimilar?: (card: Card) => void,
+): void {
   if (cards.length === 0) return;
   const wrap = el("div", "ac-cards");
   const track = el("ul", "ac-cards__track");
@@ -529,6 +555,15 @@ export function renderCards(into: HTMLElement, cards: Card[], ctx: WidgetCtx, me
     tile.addEventListener("click", () => open(tile));
     li.append(tile);
 
+    // The two icons over the image's bottom corners: similar products (left), add to cart or View options (right).
+    // They sit in the slide, not in the tile (a button can't hold buttons), over the image's square.
+    const tools = el("div", "ac-tile__tools");
+    if (onSimilar) {
+      const sim = fab("ac-fab--similar", "similar", ctx.t("similar_label", { title: c.title }));
+      sim.addEventListener("click", () => onSimilar(c));
+      tools.append(sim);
+    }
+
     // The card's own button. Sold out: none (the price row says so). One variant: Add to cart, straight from here.
     // Anything else (options to pick, a link to the store, no price): View options, which opens the sheet.
     const single = c.action === "add" && !c.moreVariants && c.price !== null && c.variants.length === 1 && c.variants[0].available;
@@ -540,14 +575,35 @@ export function renderCards(into: HTMLElement, cards: Card[], ctx: WidgetCtx, me
         const fail = el("p", "ac-tile__err");
         fail.setAttribute("aria-live", "polite");
         const view = addButtonView(btn, ctx, st, { clear: () => fail.replaceChildren(), error: (msg) => { fail.textContent = msg; } });
-        btn.addEventListener("click", (ev) => void runAdd(c, c.variants[0], ctx, messageId, onAdded, st, view, ev));
+        // The icon is a second trigger of the same add: same runAdd, same state, so one add at a time and one log per add.
+        const cartFab = fab("ac-fab--cart", "cartplus", idleLabel(ctx, st));
+        let fabTimer: ReturnType<typeof setTimeout> | undefined;
+        const rest = () => { clearTimeout(fabTimer); paintFab(cartFab, "idle", idleLabel(ctx, st)); };
+        const both: AddView = {
+          busy() { view.busy(); clearTimeout(fabTimer); paintFab(cartFab, "busy", ctx.t("adding")); },
+          done(unconfirmed, href) {
+            view.done(unconfirmed, href);
+            paintFab(cartFab, "done", ctx.t(unconfirmed ? "check_cart" : "added"));
+            fabTimer = setTimeout(rest, 1500);
+          },
+          idle() { view.idle(); rest(); },
+          error(msg) { view.error(msg); rest(); },
+        };
+        const go = (ev: Event) => void runAdd(c, c.variants[0], ctx, messageId, onAdded, st, both, ev);
+        btn.addEventListener("click", go);
+        cartFab.addEventListener("click", go);
+        tools.append(cartFab);
         li.append(btn, fail);
       } else {
         btn.textContent = ctx.t("view_options");
         btn.addEventListener("click", () => open(btn));
+        const optionsFab = fab("ac-fab--cart", "cartplus", ctx.t("view_options"));
+        optionsFab.addEventListener("click", () => open(optionsFab));
+        tools.append(optionsFab);
         li.append(btn);
       }
     }
+    if (tools.childElementCount) li.append(tools);
     track.append(li);
   }
   const step = (dir: 1 | -1) => {
@@ -592,6 +648,16 @@ export const CARDS_CSS = `
 .ac-cards__track{display:flex;gap:12px;overflow-x:auto;list-style:none;margin:-4px;padding:4px 4px 10px;scrollbar-width:none;scroll-snap-type:x mandatory;scroll-padding:0 4px}
 .ac-cards__track::-webkit-scrollbar{display:none}
 .ac-cards__slide{flex:0 0 168px;width:168px;scroll-snap-align:start;display:flex;flex-direction:column;gap:8px}
+.ac-cards__slide{position:relative}
+.ac-tile__tools{position:absolute;top:0;left:0;right:0;aspect-ratio:1;box-sizing:border-box;padding:4px;display:flex;align-items:flex-end;pointer-events:none}
+.ac-fab{pointer-events:auto;position:relative;display:flex;align-items:center;justify-content:center;flex:none;width:44px;height:44px;padding:0;border:0;background:none;color:#111;cursor:pointer;touch-action:manipulation}
+.ac-fab--cart{margin-left:auto}
+.ac-fab__c{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:18px;background:rgba(255,255,255,.88);box-shadow:0 1px 4px rgba(0,0,0,.25);transition:background-color .15s ease,transform .12s cubic-bezier(0.22,1,0.36,1)}
+.ac-fab:focus-visible{outline:none}
+.ac-fab:focus-visible .ac-fab__c{outline:2px solid #2563eb;outline-offset:2px}
+@media (hover:hover){.ac-fab:hover .ac-fab__c{background:#fff}}
+.ac-fab:active .ac-fab__c{transform:scale(.94)}
+.ac-fab[aria-busy=true]{cursor:progress}
 .ac-tile{flex:1;display:flex;flex-direction:column;gap:6px;width:100%;text-align:left;font-size:13px;line-height:18px;color:inherit;border-radius:14px}
 .ac-tile:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
 .ac-tile__media{position:relative;display:block;width:100%;aspect-ratio:1;border-radius:14px;overflow:hidden;background:#f2f2f2}
@@ -673,5 +739,5 @@ a.ac-card__title:hover{text-decoration:underline}
 .ac-card__hint{margin:0;font-size:12px;color:#6b6b6b}
 .ac-card__hint:empty{display:none}
 .ac-card__error{color:#b00020}
-@media (prefers-reduced-motion:reduce){.ac-cards__track{scroll-behavior:auto}.ac-spin{animation:none;border-right-color:currentColor;opacity:.5}.ac-swap{animation-name:ac-fade}.cards.in .ac-cards__slide{animation-name:ac-fade;animation-delay:0s!important}.ac-tile__badge.ac-pop{animation:none}img.ac-tile__img,img.ac-card__img{transition:none}.ac-tile__add{transition:none}}
+@media (prefers-reduced-motion:reduce){.ac-cards__track{scroll-behavior:auto}.ac-spin{animation:none;border-right-color:currentColor;opacity:.5}.ac-swap{animation-name:ac-fade}.cards.in .ac-cards__slide{animation-name:ac-fade;animation-delay:0s!important}.ac-tile__badge.ac-pop{animation:none}img.ac-tile__img,img.ac-card__img{transition:none}.ac-tile__add{transition:none}.ac-fab__c{transition:none}}
 `;

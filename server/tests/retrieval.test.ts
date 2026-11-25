@@ -213,3 +213,55 @@ test("each query binds the query vector once, so Postgres computes every chunk's
     expect(q.params.filter((p) => typeof p === "string" && p.startsWith("["))).toHaveLength(1);
   }
 });
+
+// --- similarTo: a search seeded by a product's own embedding (the cards' "similar products" icon) ---
+
+test("similarTo: seeded by the product's own embedding (no query embedded), never returns the product itself, nearest first", async () => {
+  const a = await seeded(boots("1"), node("2", { title: "Leather hiking boots", description: "Leather boots for wet trails" }), dress("3"));
+
+  const hits = await retrieval.search(a, "", 10, { similarTo: gid("1"), minScore: 0 });
+
+  expect(embed).not.toHaveBeenCalled();
+  const ids = hits.map((h) => h.productId);
+  expect(ids).not.toContain(gid("1"));
+  expect(ids[0]).toBe(gid("2"));
+  expect(new Set(ids)).toEqual(new Set([gid("2"), gid("3")]));
+});
+
+test("similarTo: opts.exclude (the cart) is left out too", async () => {
+  const a = await seeded(boots("1"), node("2", { title: "Leather hiking boots", description: "Leather boots for wet trails" }), dress("3"));
+
+  const hits = await retrieval.search(a, "ignored", 10, { similarTo: gid("1"), exclude: [gid("2")], minScore: 0 });
+
+  expect(hits.map((h) => h.productId)).toEqual([gid("3")]);
+});
+
+test("similarTo: products of the same Type come first even when another type is nearer", async () => {
+  const a = await seeded(
+    boots("1"),
+    { ...node("2", { title: "Leather hiking boots", description: "Leather boots for wet trails" }), productType: "Pants" },
+    dress("3"),
+  );
+
+  const hits = await retrieval.search(a, "", 10, { similarTo: gid("1"), minScore: 0 });
+
+  // boots("1") and the dress are both "Shirt"; the nearer boots(2) is "Pants", so it comes after the dress.
+  expect([...new Set(hits.map((h) => h.productId))]).toEqual([gid("3"), gid("2")]);
+});
+
+test("similarTo: another store's product, an unknown product or a malformed id returns []", async () => {
+  const a = await seeded(boots("1"), dress("2"));
+  const b = await seeded(node("9", { title: "hiking boots", description: "hiking boots" }));
+
+  expect(await retrieval.search(a, "", 10, { similarTo: gid("9"), minScore: 0 })).toEqual([]);
+  expect(await retrieval.search(b, "", 10, { similarTo: gid("1"), minScore: 0 })).toEqual([]);
+  expect(await retrieval.search(a, "", 10, { similarTo: gid("404"), minScore: 0 })).toEqual([]);
+  expect(await retrieval.search(a, "boots", 10, { similarTo: "not-a-product", minScore: 0 })).toEqual([]);
+  expect(embed).not.toHaveBeenCalled();
+});
+
+test("similarTo: gift cards stay out", async () => {
+  const a = await seeded(boots("1"), node("2", { title: "Hiking boots gift card", description: "hiking boots", isGiftCard: true }));
+
+  expect(await retrieval.search(a, "", 10, { similarTo: gid("1"), minScore: 0 })).toEqual([]);
+});

@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql, type SQL } from "
 import { forStore, type Conn } from "@/db/client";
 import { cartEvents, conversations, messages, products } from "@/db/schema";
 import { productGid } from "@/lib/ids";
-import type { SearchHit } from "@/lib/retrieval";
+import { search, type SearchHit } from "@/lib/retrieval";
 import { searchProducts } from "@/lib/search-provider";
 import { CATALOG_DEGRADED, catalogLive, newTurnCatalog, type TurnCatalog } from "@/lib/shopify/catalog-turn";
 import { MCP_BUDGET_MS } from "@/lib/shopify/ucp-guard";
@@ -12,7 +12,7 @@ import { applyBudget } from "./budget";
 import { HISTORY_MESSAGES, MCP_DAILY_MESSAGES } from "./limits";
 import { maskPII } from "./mask";
 import { buildInput, LARGE_SYSTEM_PROMPT, SYSTEM_PROMPT, sanitizeData, type OrderRule, type PromptProducts } from "./prompt";
-import { rewriteQuery, type ChatTurn } from "./rewrite";
+import { rewriteQuery, type ChatTurn, type Rewrite } from "./rewrite";
 import { runTool, toolDefs, type ToolContext } from "./tools";
 import type { SseEvent } from "./sse";
 import type { CartSummary, StatusStep } from "@/lib/widget-contract";
@@ -62,6 +62,8 @@ const SEARCH_K = 8;
 // the price pass, or a per-store live-check cache.
 const PRICE_SEARCH_K = 30;
 const PROMPT_PRODUCTS = 8;
+// The "similar products" icon on a card: at most this many cards, from the SEARCH_K nearest (some may be sold out).
+const SIMILAR_PRODUCTS = 3;
 const DEFAULT_STOCK_THRESHOLD = 5; // UD10
 const UNAVAILABLE = "Assistant unavailable right now"; // §8, C13
 const COUNTRY = /^[A-Z]{2}$/;
@@ -86,6 +88,53 @@ async function mcpOverDailyCap(storeId: string): Promise<boolean> {
 // frees that one early; recompute this whenever one of those timeouts changes.
 const TURN_LOCK_S = 8 + MCP_BUDGET_MS / 1000 + 60 + 17;
 const TURN_LOCK = sql.raw(`now() + interval '${TURN_LOCK_S} seconds'`);
+
+/**
+ * The "similar products" request's product: `raw` must be a product GID (or numeric id) of this store's own table, and
+ * published. null otherwise, so a foreign or invented id is refused by the route. An mcp-mode store has no table: the route
+ * skips this for it and answers the message as an ordinary one.
+ */
+export async function similarProduct(storeId: string, raw: string): Promise<{ id: string; title: string } | null> {
+  const id = productGid(raw);
+  if (!id) return null;
+  const [row] = await forStore(storeId, (tx) =>
+    tx
+      .select({ id: products.shopifyId, title: products.title })
+      .from(products)
+      .where(and(eq(products.storeId, storeId), eq(products.shopifyId, id), eq(products.published, true))),
+  );
+  return row ?? null;
+}
+
+/**
+ * The products already in the shopper's cart, to leave out of a similar-products search. With the browser's live cart
+ * (parseCartSummary) its titles are matched to this store's product titles, since the cart summary carries no ids;
+ * without one, the products added from this conversation's cards. A hint: a failure leaves nothing excluded.
+ * `// ponytail:` two products with the same title are both excluded; a cart title cut at 80 characters is compared cut.
+ */
+async function inCartProductIds(storeId: string, conversationId: string, cart: CartSummary | null | undefined): Promise<string[]> {
+  try {
+    return await forStore(storeId, async (tx) => {
+      if (cart) {
+        const titles = [...new Set(cart.items.map((i) => i.title.trim().toLowerCase()))];
+        if (titles.length === 0) return [];
+        const rows = await tx
+          .select({ id: products.shopifyId })
+          .from(products)
+          .where(and(eq(products.storeId, storeId), inArray(sql`lower(left(${products.title}, 80))`, titles)));
+        return rows.map((r) => r.id);
+      }
+      const rows = await tx
+        .selectDistinct({ id: cartEvents.productId })
+        .from(cartEvents)
+        .where(and(eq(cartEvents.storeId, storeId), eq(cartEvents.conversationId, conversationId)));
+      return rows.map((r) => r.id);
+    });
+  } catch (e) {
+    console.warn("similar: cart lookup failed", { storeId, reason: e instanceof Error ? e.name : "error" });
+    return [];
+  }
+}
 
 /** UD10: the merchant's "Only N left" threshold, settings.stockThreshold, default 5. */
 export function stockThreshold(settings: unknown): number {
@@ -507,6 +556,8 @@ export async function runTurn(t: {
   history: ChatTurn[];
   message: string;
   productId?: string;
+  /** The "similar products" icon: a product of this store (route.ts similarProduct). The search is seeded by its embedding instead of the rewritten message, and the rewrite call is skipped. */
+  similar?: { id: string; title: string };
   country?: string;
   /** The shopper's page currency (ISO 4217) when the widget sent one; a product priced in another currency gets no price in its LIVE line (C26). */
   currency?: string;
@@ -524,7 +575,8 @@ export async function runTurn(t: {
   const { store, signal } = t;
   const storeId = store.id;
   const threshold = stockThreshold(store.settings);
-  const currentProductId = productGid(t.productId);
+  // A similar-products turn is about the card's product, not the page's: the viewing product would show its own card first.
+  const currentProductId = t.similar ? undefined : productGid(t.productId);
   const country = t.country && COUNTRY.test(t.country) ? t.country : undefined;
   const name = store.name ?? store.shopDomain;
   let released = false;
@@ -547,22 +599,31 @@ export async function runTurn(t: {
       return;
     }
     status("understanding");
-    const rw = await rewriteQuery({
-      message: t.message,
-      history: t.history,
-      storeLocale: store.primaryLocale,
-      storeCurrency: store.currencyCode,
-      signal,
-    });
+    const rw: Rewrite = t.similar
+      ? { query: "", includeGiftCards: false, budget: null, sort: null, tokens: { input: 0, output: 0 } }
+      : await rewriteQuery({
+          message: t.message,
+          history: t.history,
+          storeLocale: store.primaryLocale,
+          storeCurrency: store.currencyCode,
+          signal,
+        });
     // D89: the store's search provider (ours by default, or Shopify's Catalog MCP).
     const wide = !!rw.budget || !!rw.sort;
     status("searching");
-    const found = await searchProducts(store, rw.query, wide ? PRICE_SEARCH_K : SEARCH_K, {
-      productId: currentProductId,
-      includeGiftCards: rw.includeGiftCards,
-      signal,
-      catalog,
-    });
+    const found = t.similar
+      ? await search(storeId, "", SEARCH_K, {
+          similarTo: t.similar.id,
+          exclude: await inCartProductIds(storeId, t.conversationId, t.cart),
+          includeGiftCards: false,
+          signal,
+        })
+      : await searchProducts(store, rw.query, wide ? PRICE_SEARCH_K : SEARCH_K, {
+          productId: currentProductId,
+          includeGiftCards: rw.includeGiftCards,
+          signal,
+          catalog,
+        });
     const ids = [...new Set([...found.map((h) => h.productId), ...(currentProductId ? [currentProductId] : [])])];
     status("checking");
     const checked = await checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal, catalog });
@@ -570,8 +631,24 @@ export async function runTurn(t: {
     const priced = applyBudget({ hits: found, live: checked, budget: rw.budget, sort: rw.sort, currency: store.currencyCode, shopperCurrency: t.currency });
     const { live } = priced;
     // Shopify gave no answer at all: say so, so the model never turns an outage into "we don't carry that".
-    const note = catalog?.degraded ? [CATALOG_DEGRADED, priced.note].filter(Boolean).join(" ") : priced.note;
-    const hits = wide ? topProducts(priced.hits, live, PROMPT_PRODUCTS) : priced.hits;
+    const baseNote = catalog?.degraded ? [CATALOG_DEGRADED, priced.note].filter(Boolean).join(" ") : priced.note;
+    // Similar products: sold-out ones are skipped (the live check is what says so), then the nearest three.
+    const hits = t.similar
+      ? topProducts(priced.hits.filter((h) => !live.ok || live.products.get(h.productId)?.available !== false), live, SIMILAR_PRODUCTS)
+      : wide
+        ? topProducts(priced.hits, live, PROMPT_PRODUCTS)
+        : priced.hits;
+    // The title is merchant text: buildInput sanitizes the note.
+    const note = t.similar
+      ? [
+          hits.length
+            ? `The shopper asked for products similar to "${t.similar.title}". The products below are the nearest matches; that product and anything already in their cart are left out. Recommend them with their cards.`
+            : `The shopper asked for products similar to "${t.similar.title}". No other available product is close to it.`,
+          baseNote,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : baseNote;
     const cartAdded = catalog
       ? []
       : await cartAddedTitles(storeId, t.conversationId).catch((e) => {

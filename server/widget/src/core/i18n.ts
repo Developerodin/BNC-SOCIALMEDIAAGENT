@@ -56,6 +56,9 @@ const en = {
   cart_items: "Cart, {count} items",
   cart_item: "Cart, 1 item",
   view_options: "View options",
+  // PENDING user approval: the similar-products icon (tooltip and accessible name, and the message it sends).
+  similar_label: "Show products similar to {title}",
+  similar_message: "Show me products similar to {title}",
   cart_error: "This item couldn't be added to your cart.",
   option: "Option",
   choose: "Choose {option}",
@@ -129,6 +132,9 @@ const fr: Dict = {
   cart_items: "Panier, {count} articles",
   cart_item: "Panier, 1 article",
   view_options: "Voir les options",
+  // PENDING user approval: the similar-products icon (tooltip and accessible name, and the message it sends).
+  similar_label: "Voir des produits similaires à {title}",
+  similar_message: "Montre-moi des produits similaires à {title}",
   cart_error: "Impossible d'ajouter cet article au panier.",
   option: "Option",
   choose: "Choisir : {option}",
@@ -200,6 +206,9 @@ const de: Dict = {
   cart_items: "Warenkorb, {count} Artikel",
   cart_item: "Warenkorb, 1 Artikel",
   view_options: "Optionen ansehen",
+  // PENDING user approval: the similar-products icon (tooltip and accessible name, and the message it sends).
+  similar_label: "Ähnliche Produkte zu {title} anzeigen",
+  similar_message: "Zeig mir Produkte, die {title} ähneln",
   cart_error: "Dieser Artikel konnte nicht in den Warenkorb gelegt werden.",
   option: "Option",
   choose: "{option} wählen",
@@ -271,6 +280,9 @@ const es: Dict = {
   cart_items: "Carrito, {count} artículos",
   cart_item: "Carrito, 1 artículo",
   view_options: "Ver opciones",
+  // PENDING user approval: the similar-products icon (tooltip and accessible name, and the message it sends).
+  similar_label: "Ver productos similares a {title}",
+  similar_message: "Muéstrame productos similares a {title}",
   cart_error: "No se pudo añadir este artículo al carrito.",
   option: "Opción",
   choose: "Elige {option}",
@@ -342,6 +354,9 @@ const it: Dict = {
   cart_items: "Carrello, {count} articoli",
   cart_item: "Carrello, 1 articolo",
   view_options: "Vedi opzioni",
+  // PENDING user approval: the similar-products icon (tooltip and accessible name, and the message it sends).
+  similar_label: "Mostra prodotti simili a {title}",
+  similar_message: "Mostrami prodotti simili a {title}",
   cart_error: "Impossibile aggiungere questo articolo al carrello.",
   option: "Opzione",
   choose: "Scegli {option}",
@@ -413,6 +428,9 @@ const nl: Dict = {
   cart_items: "Winkelwagen, {count} artikelen",
   cart_item: "Winkelwagen, 1 artikel",
   view_options: "Bekijk opties",
+  // PENDING user approval: the similar-products icon (tooltip and accessible name, and the message it sends).
+  similar_label: "Toon producten die lijken op {title}",
+  similar_message: "Laat me producten zien die lijken op {title}",
   cart_error: "Dit artikel kon niet aan je winkelwagen worden toegevoegd.",
   option: "Optie",
   choose: "Kies {option}",
