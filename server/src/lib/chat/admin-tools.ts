@@ -32,8 +32,8 @@ const SAMPLE_SIZE = 50; // products read for the types, tags and examples
 const MAX_TYPES = 8;
 const MAX_TAGS = 10;
 const MAX_EXAMPLES = 5;
-// Collections Shopify creates itself (or the Hydrogen channel adds): their names say nothing about what the store sells.
-const GENERIC_COLLECTION = /^(automated collection|home page|homepage|frontpage|hydrogen)$/i;
+// Collections Shopify creates itself: their names say nothing about what the store sells.
+const GENERIC_COLLECTION = /^(automated collection|home page|homepage|frontpage)$/i;
 
 const UNAVAILABLE = "Store information is temporarily unavailable. Answer from <store_data> only, or tell the shopper you can't check right now.";
 

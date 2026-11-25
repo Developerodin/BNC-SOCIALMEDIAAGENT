@@ -255,3 +255,9 @@ test("the D94 scope and sales rules are in both prompts, in the approved order, 
     expect(at[0]).toBeGreaterThan(lines.findIndex((l) => l.includes("own order")));
   }
 });
+
+test("both prompts tell the model to name only the products it marks with a card (R12)", () => {
+  for (const p of [SYSTEM_PROMPT("S"), LARGE_SYSTEM_PROMPT("S")]) {
+    expect(p).toContain("Never name one product beside another product's card.");
+  }
+});

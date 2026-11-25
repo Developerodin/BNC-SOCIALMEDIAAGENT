@@ -127,7 +127,8 @@ test("store_overview says what the store sells: types, tags and examples, and sk
   expect(text).toContain("summer (2)");
   expect(text).toContain("Example products: Linen Dress; Maxi Dress; Rain Boot; Gift Card.");
   expect(text).toContain("Boots (5)");
-  expect(text).not.toMatch(/Automated Collection|Home page|Hydrogen/);
+  expect(text).not.toMatch(/Automated Collection|Home page/);
+  expect(text).toMatch(/Hydrogen/); // a real store may name a collection that
 });
 
 test("store_overview is cached for 10 minutes per store", async () => {

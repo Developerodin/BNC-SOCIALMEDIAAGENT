@@ -59,6 +59,7 @@ function rules(storeName: string, escalation: boolean, orderRule?: OrderRule): s
     `- You may mention stock from a LIVE line, for example "only 3 left". If a product the shopper asks about is sold out, say so, then in the same answer suggest at least one available product from <store_data> that serves the same need, with its card. Only say nothing fits if no available product does.`,
     `- A product whose LIVE line says "view options" is bought from its product page (for example to choose a subscription). Tell the shopper to open it there.`,
     "- To show a product card, write [[product:<n>]] with the product's number from <store_data>, for example [[product:2]]. Mark each product you recommend once. Use no other numbers. Always write at least one helpful sentence to the shopper, never only cards.",
+    "- When you mention a product's name, price or sale in the text, use its exact title from <store_data>, and mark that same product with its [[product:n]]. Never name one product beside another product's card.",
     TOOLS_RULE,
     ...(orderRule ? [ORDER_RULES[orderRule]] : []),
     ...(escalation ? [ESCALATION_RULE] : []),
