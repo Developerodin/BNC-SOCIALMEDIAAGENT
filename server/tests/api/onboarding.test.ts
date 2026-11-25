@@ -49,7 +49,7 @@ test("GET starts with nothing done and the theme link built from the API key", a
     chatConfirmed: false,
     dismissed: false,
     themeLink: "https://x.myshopify.com/admin/themes/current/editor?context=apps&template=index&activateAppId=key123/askcart-embed",
-    productBlockLink: "https://x.myshopify.com/admin/themes/current/editor?template=product&addAppBlockId=key123/askcart-ask-ai&target=mainSection",
+    productBlockLink: "https://x.myshopify.com/admin/themes/current/editor?template=product&addAppBlockId=key123/askcart-ask-ai&target=newAppsSection",
   });
 });
 

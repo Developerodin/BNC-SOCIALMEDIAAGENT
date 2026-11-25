@@ -500,19 +500,21 @@ describe("automatic block placement on Dawn-like markup", () => {
     expect(block.parentElement!.nextElementSibling!.id).toBe("after");
   });
 
-  it("goes at the end of the product details column (after description and badges) when the column holds the title", () => {
+  it("goes in its own full-width section right after the product section, not inside any theme block", () => {
     document.body.insertAdjacentHTML(
       "beforeend",
-      `<main><section class="product"><div id="media"><img alt=""></div><div id="info"><h1>Board</h1>
+      `<main><div class="shopify-section" id="product"><section><div id="media"><img alt=""></div><div id="info"><h1>Board</h1>
         <product-form><form action="/cart/add"><button type="submit" name="add">Add to cart</button></form></product-form>
-        <div id="desc">Description</div><div id="badges">Free returns</div></div></section></main>` + template,
+        <div id="desc">Description</div></div></section></div><div class="shopify-section" id="related"></div></main>` + template,
     );
     mountRoot();
     start();
     const block = document.querySelector("[data-askcart-ask-ai]")!;
-    expect(block.parentElement!.id).toBe("info"); // never the section (that would put it beside or under the gallery)
-    expect(document.querySelector("#info")!.lastElementChild).toBe(block);
-    expect(document.querySelector("#media")!.contains(block)).toBe(false);
+    const wrap = block.parentElement!;
+    expect(wrap.classList.contains("askcart-ai-section")).toBe(true);
+    expect(document.querySelector("#product")!.nextElementSibling).toBe(wrap);
+    expect(wrap.nextElementSibling!.id).toBe("related");
+    expect(document.querySelector("#product")!.contains(block)).toBe(false);
   });
 
   it("lands after a Buy it now button that sits outside the product-form wrapper", () => {

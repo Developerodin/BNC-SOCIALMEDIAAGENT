@@ -27,3 +27,7 @@
 @media (prefers-reduced-motion: reduce) { .askcart-ai__pill { animation: none; transition: none; } .askcart-ai__send:active { transform: none; } }
 .askcart-ai__pill:focus-visible, .askcart-ai__send:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .askcart-ai__note { margin: var(--askcart-gap) 0 0; font-size: 0.8em; line-height: 1.4; opacity: 0.65; }
+/* The automatic block's own section after the product section (launcher.ts). Themes with their own .page-width keep their
+   width and side padding; elsewhere these give a centred content column. The block itself stays at a readable width. */
+.askcart-ai-section { box-sizing: border-box; width: 100%; max-width: var(--page-width, 1200px); margin: 0 auto; padding: 0 1.5rem; }
+.askcart-ai-section > .askcart-ai { max-width: 640px; margin: 2em 0; }
