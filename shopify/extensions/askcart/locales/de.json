@@ -9,7 +9,7 @@
     "button": "Frage zu diesem Produkt"
   },
   "ask_ai": {
-    "eyebrow": "Ihr {{ store }}-Experte",
+    "eyebrow": "Ihr KI-Experte von {{ store }}",
     "heading": "Eine Frage zu diesem Produkt?",
     "placeholder": "Stell deine Frage",
     "send": "Senden",

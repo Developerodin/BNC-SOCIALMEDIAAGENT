@@ -4,7 +4,8 @@
    --color-button*) arrive as --askcart-*-rgb, set by the script only after checking they are R, G, B triplets.
    Every value has a neutral fallback or inherits. The questions and the input are fully rounded pills whatever the theme's
    own radius is (colours and fonts still come from the theme). */
-.askcart-ai { --askcart-gap: 0.75em; --askcart-h: 48px; --askcart-radius: 28px; --askcart-line: rgba(var(--askcart-fg-rgb, 127, 127, 127), 0.35); box-sizing: border-box; width: 100%; max-width: 100%; margin: 1.5em 0; font-family: inherit; color: inherit; line-height: 1.4; }
+.askcart-ai { --askcart-gap: 0.75em; --askcart-h: 48px; --askcart-radius: 28px; --askcart-line: rgba(var(--askcart-fg-rgb, 18, 18, 18), 0.55); box-sizing: border-box; width: 100%; max-width: 100%; margin: 1.5em 0; font-family: inherit; color: inherit; line-height: 1.4; }
+@supports (color: color-mix(in srgb, red, blue)) { .askcart-ai { --askcart-line: color-mix(in srgb, currentColor 55%, transparent); } }
 .askcart-ai *, .askcart-ai *::before, .askcart-ai *::after { box-sizing: border-box; }
 .askcart-ai[hidden] { display: none; }
 .askcart-ai__eyebrow { margin: 0 0 0.35em; font-size: 0.75em; line-height: 1.4; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.7; }
@@ -12,12 +13,12 @@
 .askcart-ai__pills { display: flex; flex-direction: column; gap: var(--askcart-gap); margin: 0 0 var(--askcart-gap); }
 .askcart-ai__pills[data-askcart-loading] { min-height: calc(var(--askcart-pills, 3) * var(--askcart-h) + (var(--askcart-pills, 3) - 1) * var(--askcart-gap)); border-radius: var(--askcart-radius); background: repeating-linear-gradient(to bottom, rgba(var(--askcart-fg-rgb, 127, 127, 127), 0.07) 0 var(--askcart-h), transparent var(--askcart-h) calc(var(--askcart-h) + var(--askcart-gap))); }
 .askcart-ai__pills:empty:not([data-askcart-loading]) { display: none; }
-.askcart-ai__pill { display: flex; align-items: center; gap: 0.75em; width: 100%; min-height: var(--askcart-h); margin: 0; padding: 0.5em 1.1em; border: 1px solid var(--askcart-line); border-radius: var(--askcart-radius); background: transparent; color: inherit; font: inherit; line-height: 1.35; text-align: left; text-transform: none; letter-spacing: normal; cursor: pointer; animation: askcart-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both; transition: border-color 0.15s ease; }
+.askcart-ai__pill { display: flex; align-items: center; gap: 0.75em; width: 100%; min-height: var(--askcart-h); margin: 0; padding: 0.5em 1.1em; border: 1px solid var(--askcart-line); border-radius: var(--askcart-radius); background: transparent; color: inherit; font: inherit; line-height: 1.35; text-align: start; text-transform: none; letter-spacing: normal; cursor: pointer; animation: askcart-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both; transition: border-color 0.15s ease; }
 .askcart-ai__pill span { min-width: 0; overflow-wrap: anywhere; }
 .askcart-ai__pill:hover { border-color: currentColor; }
 .askcart-ai__pill svg { flex: none; width: 1.2em; height: 1.2em; }
-.askcart-ai__form { display: flex; align-items: center; gap: 0.5em; width: 100%; min-height: var(--askcart-h); margin: 0; padding: 0 4px 0 1.1em; border: 1px solid var(--askcart-line); border-radius: var(--askcart-radius); }
-.askcart-ai__form:focus-within { border-color: currentColor; }
+.askcart-ai__form { display: flex; align-items: center; gap: 0.5em; width: 100%; min-height: var(--askcart-h); margin: 0; padding: 0; padding-inline: 1.1em 4px; border: 1px solid var(--askcart-line); border-radius: var(--askcart-radius); }
+.askcart-ai__form:focus-within { border-color: currentColor; box-shadow: 0 0 0 1px currentColor; }
 .askcart-ai__input { flex: 1; min-width: 0; margin: 0; padding: 0.5em 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: inherit; font: inherit; font-size: max(1em, 16px); line-height: 1.4; outline: 0; }
 .askcart-ai__send { flex: none; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: rgb(var(--askcart-btn-rgb, 10, 10, 10)); color: rgb(var(--askcart-btn-text-rgb, 255, 255, 255)); cursor: pointer; }
 .askcart-ai__send { position: relative; }
@@ -29,5 +30,6 @@
 .askcart-ai__note { margin: var(--askcart-gap) 0 0; font-size: 0.8em; line-height: 1.4; opacity: 0.65; }
 /* The automatic block's own section after the product section (launcher.ts). Themes with their own .page-width keep their
    width and side padding; elsewhere these give a centred content column. The block itself stays at a readable width. */
-.askcart-ai-section { box-sizing: border-box; width: 100%; max-width: var(--page-width, 1200px); margin: 0 auto; padding: 0 1.5rem; }
+/* Zero specificity (:where): a theme's own .page-width rule, which the section also carries, wins. */
+:where(.askcart-ai-section) { box-sizing: border-box; width: 100%; max-width: var(--page-width, 1200px); margin: 0 auto; padding: 0 1.5rem; }
 .askcart-ai-section > .askcart-ai { max-width: 640px; margin: 2em 0; }

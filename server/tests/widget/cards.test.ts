@@ -72,7 +72,17 @@ beforeEach(() => {
       cartReads++;
       return Promise.resolve(jsonResponse(200, { items: cartItems }));
     }
-    return fetchMock(url, init);
+    // The store's add.js: a successful add changes what the next cart.js read says.
+    return Promise.resolve(fetchMock(url, init)).then((r) => {
+      if (String(url).endsWith("/add.js") && r?.ok) {
+        for (const i of JSON.parse(String(init?.body)).items as { id: number; quantity: number }[]) {
+          const line = cartItems.find((c) => c.variant_id === i.id) as { variant_id: number; quantity?: number } | undefined;
+          if (line) line.quantity = (line.quantity ?? 0) + i.quantity;
+          else cartItems.push({ variant_id: i.id, quantity: i.quantity } as never);
+        }
+      }
+      return r;
+    });
   });
   logCartAdd = vi.fn<WidgetApi["logCartAdd"]>(async () => {});
   announce = vi.fn<(text: string) => void>();
@@ -491,7 +501,7 @@ describe("already in the cart", () => {
     addButton(el)!.click();
     await flush();
     expect(tileBadge(el).textContent).toBe("2 in your cart");
-    expect(cartReads).toBe(1); // the add result and the cached cart, no re-read
+    expect(cartReads).toBe(3); // the first read, then one read after each add (never adding to the cached count)
   });
 
   it("no badge after a failed add", async () => {
@@ -707,5 +717,78 @@ describe("reduced motion", () => {
   it("the card entrance applies only to a live answer's .cards.in box", () => {
     expect(CARDS_CSS).toMatch(/\.cards\.in \.ac-cards__slide\{animation:ac-up/);
     expect(CARDS_CSS).not.toMatch(/(^|\n)\.ac-cards__slide\{[^}]*animation/);
+  });
+});
+
+describe("the carousel arrows", () => {
+  const three = () => [card(), card({ id: "gid://shopify/Product/2", title: "Wool hat" }), card({ id: "gid://shopify/Product/3", title: "Sock" })];
+  const sized = (el: HTMLElement, scrollLeft: number) => {
+    const track = el.querySelector<HTMLElement>(".ac-cards__track")!;
+    Object.defineProperties(track, {
+      scrollWidth: { configurable: true, value: 1000 },
+      clientWidth: { configurable: true, value: 300 },
+      scrollLeft: { configurable: true, writable: true, value: scrollLeft },
+    });
+    track.dispatchEvent(new Event("scroll"));
+    return track;
+  };
+
+  it("shows Next at the start and Previous at the end", () => {
+    const el = renderRow(three());
+    sized(el, 0);
+    expect(el.querySelector<HTMLElement>(".ac-cards__nav--prev")!.hidden).toBe(true);
+    expect(el.querySelector<HTMLElement>(".ac-cards__nav--next")!.hidden).toBe(false);
+    sized(el, 700);
+    expect(el.querySelector<HTMLElement>(".ac-cards__nav--prev")!.hidden).toBe(false);
+    expect(el.querySelector<HTMLElement>(".ac-cards__nav--next")!.hidden).toBe(true);
+  });
+
+  it("hands keyboard focus to the last tile when the focused Next arrow disappears at the end (it would fall to the page)", () => {
+    const el = renderRow(three());
+    sized(el, 0);
+    const next = el.querySelector<HTMLElement>(".ac-cards__nav--next")!;
+    next.focus();
+    expect(document.activeElement).toBe(next);
+    sized(el, 700);
+    expect(document.activeElement).toBe(el.querySelectorAll(".ac-tile")[2]);
+  });
+
+  it("does the same for Previous at the start", () => {
+    const el = renderRow(three());
+    sized(el, 700);
+    const prev = el.querySelector<HTMLElement>(".ac-cards__nav--prev")!;
+    prev.focus();
+    sized(el, 0);
+    expect(document.activeElement).toBe(el.querySelectorAll(".ac-tile")[0]);
+  });
+
+  it("has 44px touch targets (36px arrows with an invisible margin)", () => {
+    expect(CARDS_CSS).toMatch(/\.ac-cards__nav::before\{content:"";position:absolute;inset:-4px\}/);
+  });
+});
+
+describe("cart listeners", () => {
+  beforeEach(() => window.dispatchEvent(new Event("askcart:cart"))); // the tiles of earlier tests are gone: they drop out now
+  it("a tile that has left the page stops listening for cart changes (New chat, Delete chat)", () => {
+    const remove = vi.spyOn(window, "removeEventListener");
+    const el = renderRow([card()]);
+    window.dispatchEvent(new Event("askcart:cart"));
+    expect(remove.mock.calls.filter(([t]) => t === "askcart:cart")).toHaveLength(0); // still on the page: keeps listening
+    el.remove();
+    window.dispatchEvent(new Event("askcart:cart"));
+    expect(remove.mock.calls.filter(([t]) => t === "askcart:cart")).toHaveLength(1);
+    window.dispatchEvent(new Event("askcart:cart"));
+    expect(remove.mock.calls.filter(([t]) => t === "askcart:cart")).toHaveLength(1); // and only once
+    remove.mockRestore();
+  });
+
+  it("the sheet's own card follows its tile: still listening while the tile is on the page, with the sheet closed", () => {
+    const remove = vi.spyOn(window, "removeEventListener");
+    const el = render([card()]); // opens the sheet, which builds the full card
+    window.dispatchEvent(new Event("askcart:cart"));
+    el.querySelector<HTMLButtonElement>(".ac-sheet__back")!.click();
+    window.dispatchEvent(new Event("askcart:cart"));
+    expect(remove.mock.calls.filter(([t]) => t === "askcart:cart")).toHaveLength(0);
+    remove.mockRestore();
   });
 });

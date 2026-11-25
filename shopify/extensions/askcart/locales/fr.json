@@ -9,7 +9,7 @@
     "button": "Poser une question sur ce produit"
   },
   "ask_ai": {
-    "eyebrow": "Votre expert {{ store }}",
+    "eyebrow": "Votre expert IA {{ store }}",
     "heading": "Une question sur ce produit ?",
     "placeholder": "Posez votre question",
     "send": "Envoyer",

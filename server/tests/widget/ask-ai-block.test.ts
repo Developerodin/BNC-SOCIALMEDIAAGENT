@@ -384,7 +384,20 @@ describe("the app embed's automatic copy of the block", () => {
     expect(tpl).not.toContain("question_");
     expect(tpl).not.toContain("shopify_attributes");
     expect(blockSrc).toContain("{%- render 'askcart-ask-ai',");
-    expect(tpl).toContain('<link rel="stylesheet"');
+    expect(tpl).not.toContain("<link"); // the stylesheet is linked outside the template, so it is loaded before the block is inserted
+  });
+
+  it("links the block's stylesheet on product pages with the setting on, before and outside the template", () => {
+    const link = embed.indexOf("askcart-ask-ai.css");
+    expect(link).toBeGreaterThan(-1);
+    expect(link).toBeLessThan(embed.indexOf('id="askcart-root"'));
+    expect(embed.slice(embed.lastIndexOf("{%- if", link), link)).toContain("block.settings.auto_ask_ai and request.page_type == 'product' and product");
+  });
+
+  it("keeps the template inside #askcart-root, the one place the launcher reads it from", () => {
+    const root = embed.slice(embed.indexOf('id="askcart-root"'));
+    expect(root.indexOf("<template data-askcart-ask-ai-auto")).toBeGreaterThan(root.indexOf("hidden\n  >"));
+    expect(root.indexOf("</template>")).toBeLessThan(root.indexOf("</div>"));
   });
 
   it("the default eyebrow and heading are translated strings, the eyebrow naming the store", () => {
@@ -396,7 +409,7 @@ describe("the app embed's automatic copy of the block", () => {
 
   it("escapes the script and stylesheet URLs", () => {
     expect(tpl).toContain("data-script=\"{{ 'askcart-ask-ai.js' | asset_url | escape }}\"");
-    expect(tpl).toContain("href=\"{{ 'askcart-ask-ai.css' | asset_url | escape }}\"");
+    expect(embed).toContain("href=\"{{ 'askcart-ask-ai.css' | asset_url | escape }}\"");
   });
 
   it("every output in the snippet is escaped, except the editor attributes the block passes through", () => {
@@ -404,5 +417,26 @@ describe("the app embed's automatic copy of the block", () => {
     const outs = [...body.matchAll(/\{\{-?\s*([\s\S]*?)\s*-?\}\}/g)].map((m) => m[1]);
     expect(outs.length).toBeGreaterThan(8);
     expect(outs.filter((e) => !/\|\s*(escape|escape_once)$/.test(e) && !/^'[\w.]+' \| t$/.test(e))).toEqual(["shopify_attributes"]);
+  });
+});
+
+describe("the block's stylesheet", () => {
+  const css = readFileSync(path.join(ext, "assets/askcart-ask-ai.css"), "utf8");
+
+  it("draws the input and pill borders at 0.55 alpha (3:1 on white) and rings the focused input with 2px", () => {
+    expect(css).toContain("--askcart-line: rgba(var(--askcart-fg-rgb, 18, 18, 18), 0.55)");
+    expect(css).toContain("color-mix(in srgb, currentColor 55%, transparent)");
+    expect(css).toMatch(/\.askcart-ai__form:focus-within \{[^}]*border-color: currentColor; box-shadow: 0 0 0 1px currentColor/);
+  });
+
+  it("gives the automatic section no specificity, so a theme's .page-width rule wins", () => {
+    expect(css).toMatch(/:where\(\.askcart-ai-section\) \{/);
+    expect(css).not.toMatch(/(^|\n)\.askcart-ai-section \{/);
+  });
+
+  it("uses logical sides, so right-to-left stores mirror the pill text and the input padding", () => {
+    expect(css).toContain("text-align: start");
+    expect(css).toContain("padding-inline: 1.1em 4px");
+    expect(css).not.toMatch(/text-align: left/);
   });
 });

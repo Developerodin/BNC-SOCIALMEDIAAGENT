@@ -45,7 +45,7 @@ describe("Liquid outputs are escaped (Task 33)", () => {
   it("the embed's viewing field (product title, image, price) is JSON-escaped and only leaves through the escaped data-page", () => {
     const src = readFileSync(path.join(blocks, "askcart-embed.liquid"), "utf8");
     const viewing = src.match(/\{%-?\s*capture viewing\s*-?%\}([\s\S]*?)\{%-?\s*endcapture/)![1];
-    for (const expr of ["product.title", "product.featured_image | image_url: width: 160", "product.price | money"]) {
+    for (const expr of ["product.title", "product.featured_image | image_url: width: 160", "product.price"]) {
       expect(viewing).toContain(`{{ ${expr} | json }}`);
     }
     expect(src).toContain('"viewing":{{ viewing }}');

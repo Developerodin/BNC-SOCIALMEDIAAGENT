@@ -13,7 +13,7 @@
 import type { PageContext, WidgetApi, WidgetConfig, WidgetCtx } from "../../../src/lib/widget-contract";
 import { MAX_INPUT_CHARS as MAX } from "../../../src/lib/chat/limits"; // the server's message limit
 import { translator } from "../core/i18n";
-import { brandLogo, resolveHttpsUrl, safeHex, safeImageUrl, textOn } from "../core/format";
+import { brandLogo, formatPrice, resolveHttpsUrl, safeHex, safeImageUrl, textOn } from "../core/format";
 import { tokenStore, uiState } from "../core/storage";
 import { runSend } from "../core/turn";
 import { liveRegion, trapTab } from "./a11y";
@@ -52,6 +52,7 @@ export type Panel = {
 };
 
 const COUNT_FROM = 1800;
+const CLOSED = "askcart:closed"; // fired on window when the shopper closes the panel; launcher.ts listens (its own copy of the name)
 const DEFAULT_ACCENT = "#0A0A0A";
 const DELETE_RETRY_MS = [500, 1000, 2000]; // D84: the server may hold the aborted turn's lock for a moment
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -85,7 +86,6 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   if (opts.inline) panel.classList.add("inline");
   panel.hidden = true;
   panel.setAttribute("role", "dialog");
-  panel.setAttribute("aria-modal", "true");
   panel.setAttribute("aria-label", config.name);
   const accent = safeHex(config.accent) ?? DEFAULT_ACCENT;
   panel.style.setProperty("--ac", accent);
@@ -199,7 +199,8 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     ttl.className = "vw-title";
     ttl.textContent = vwTitle;
     // "<price> · You're viewing" under the title.
-    const price = typeof vw.price === "string" ? vw.price.trim().slice(0, 40) : "";
+    // Liquid sends minor units (cents) and the page's currency, so a store's money format (HTML, entities) never reaches us.
+    const price = typeof vw.price === "number" && page.currency ? (formatPrice(vw.price / 100, page.currency, page.locale) ?? "") : "";
     const label = document.createElement("span");
     label.className = "vw-label";
     label.textContent = price ? `${price} · ${t("viewing")}` : t("viewing");
@@ -244,7 +245,13 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   ft.append(notice, row, count); // the AI notice sits right above the input, always visible
 
   panel.append(hd, viewing, offline, messages.log, ft, live.el);
-  shadow.append(style, panel);
+  // The dimmed backdrop behind the desktop drawer: a click on it closes the drawer (the pointer's way of leaving a modal).
+  const scrim = document.createElement("div");
+  scrim.className = "scrim";
+  scrim.hidden = true;
+  scrim.setAttribute("aria-hidden", "true");
+  scrim.addEventListener("click", () => close());
+  shadow.append(style, scrim, panel);
 
   // --- state ---
   let busy = false;
@@ -258,6 +265,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   let sugg: HTMLElement | null = null;
   let locked = false;
   let prevOverflow = "";
+  let prevPad = "";
   let drawer = false;
   let loadP: Promise<void> | null = null; // the first open's load, while it runs
   let queued: string | null = null; // a message waiting for loadP; a second open() replaces it instead of sending twice
@@ -277,8 +285,15 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     const root = document.documentElement.style;
     if (on && !locked) {
       prevOverflow = root.overflow;
+      prevPad = root.paddingRight;
+      // Hiding the scrollbar widens the page by its width; pad the same amount so the page doesn't shift sideways.
+      const bar = window.innerWidth - document.documentElement.clientWidth;
       root.overflow = "hidden";
-    } else if (!on && locked) root.overflow = prevOverflow;
+      if (bar > 0) root.paddingRight = bar + "px";
+    } else if (!on && locked) {
+      root.overflow = prevOverflow;
+      root.paddingRight = prevPad;
+    }
     locked = on;
   }
 
@@ -289,7 +304,13 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     closeBtn.hidden = full;
     sep.hidden = full;
     panel.classList.toggle("wide", !full && !drawer && ui.wide.get());
-    lockScroll(full && !panel.hidden);
+    // Modal only where the page really is blocked: the full-screen sheet and the drawer (scrim). The floating bubble leaves the page usable.
+    if (full || drawer) panel.setAttribute("aria-modal", "true");
+    else panel.removeAttribute("aria-modal");
+    scrim.hidden = !drawer || full || panel.hidden;
+    // The launcher (the edge tab sits at the very edge) would show in the drawer's 16px gutter: out of sight while the card is open.
+    if (opts.launcher) opts.launcher.style.visibility = drawer && !full && !panel.hidden ? "hidden" : "";
+    lockScroll((full || drawer) && !panel.hidden);
   }
 
   // --- intro: welcome, then suggested questions (merchant's + up to 3 FAQ questions for the product, D7, C25) ---
@@ -565,10 +586,13 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     ui.drawer.set(drawer); // a reload on the next page reopens it the same way
     panel.classList.toggle("drawer", drawer);
     viewing.hidden = !vwTitle || productId !== page.productId; // the card is about the page's product
-    cancelExit();
+    reviveExit();
     // Restored on a page load (focus:false): no entrance animation without a shopper action. Class changes only while hidden,
     // so removing it later can't replay the animation.
-    if (panel.hidden) panel.classList.toggle("still", args.focus === false);
+    if (panel.hidden) {
+      panel.classList.toggle("still", args.focus === false);
+      scrim.classList.toggle("still", args.focus === false);
+    }
     panel.hidden = false;
     layout();
     ui.open.set(true);
@@ -602,10 +626,26 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   }
 
   let exit: Animation | null = null; // the closing animation, while it runs
+  let scrimExit: Animation | null = null; // the backdrop's fade-out, while it runs
   function cancelExit() {
     exit?.cancel();
-    exit = null;
+    scrimExit?.cancel();
+    exit = scrimExit = null;
     panel.inert = false;
+  }
+  /** Reopened while it was still leaving: play the exit backwards from where it is, so the panel comes back smoothly
+   * instead of jumping to fully open. Once it is back at the start the held end frame is dropped. */
+  function reviveExit() {
+    panel.inert = false;
+    for (const a of [exit, scrimExit]) {
+      if (!a) continue;
+      a.onfinish = () => {
+        a.cancel();
+        if (exit === a) exit = null;
+        if (scrimExit === a) scrimExit = null;
+      };
+      a.reverse();
+    }
   }
 
   /** Hides the panel after a short exit animation (WAAPI: CSS can't animate to display:none, and a media query can't
@@ -613,21 +653,26 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   function hidePanel() {
     const done = () => {
       panel.hidden = true;
+      scrim.hidden = true;
+      if (opts.launcher) opts.launcher.style.visibility = "";
       panel.classList.remove("still");
-      panel.inert = false;
-      exit?.cancel(); // drop the held end frame, or it would keep the panel invisible when it reopens
-      exit = null;
+      scrim.classList.remove("still");
+      lockScroll(false); // a resize while it was leaving may have locked the page again
+      cancelExit(); // drop the held end frames, or they would keep the panel invisible when it reopens
     };
     if (reducedMotion() || typeof panel.animate !== "function") return done();
     const dr = panel.classList.contains("drawer");
     const full = panel.classList.contains("full") && !dr;
+    const floating = dr && !panel.classList.contains("full"); // the desktop drawer is a card inset 16px from the edge: it must clear the shadow too
+    const rtl = getComputedStyle(panel).direction === "rtl"; // the drawer sits on the left in right-to-left pages
     panel.inert = true; // nothing to click while it leaves
     const a = (exit = panel.animate(
       dr
-        ? [{ transform: "none" }, { transform: "translateX(100%)" }]
+        ? [{ transform: "none" }, { transform: `translateX(calc(${rtl ? "-1 * " : ""}(100%${floating ? " + 16px" : ""})))` }]
         : [{ opacity: 1, transform: "none" }, { opacity: 0, transform: full ? "translateY(16px)" : "translateY(8px) scale(.97)" }],
-      { duration: dr ? 220 : full ? 180 : 160, easing: "cubic-bezier(0.23,1,0.32,1)", fill: "forwards" },
+      { duration: floating ? 240 : dr ? 220 : full ? 180 : 160, easing: "cubic-bezier(0.23,1,0.32,1)", fill: "forwards" },
     ));
+    if (!scrim.hidden) scrimExit = scrim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: "cubic-bezier(0.23,1,0.32,1)", fill: "forwards" });
     a.onfinish = () => {
       if (exit === a) done();
     };
@@ -637,9 +682,11 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     if (panel.hidden || exit || opts.inline) return;
     menu.hide();
     hidePanel();
-    lockScroll(false);
+    if (!exit) lockScroll(false); // while it slides out the page stays locked: unlocking would bring the scrollbar back and shift the page under it (done() unlocks)
     ui.open.set(false);
     setExpanded(false);
+    if (opts.launcher) opts.launcher.style.visibility = ""; // visible again (and focusable) before focus goes back to it
+    window.dispatchEvent(new Event(CLOSED)); // the launcher docks as the edge tab (launcher.ts)
     // Back to where the shopper was; the launcher when that is gone (it has no button on pages the scope hides it from).
     const restore = opener?.isConnected ? opener : opts.launcher?.isConnected ? opts.launcher : null;
     opener = null;
@@ -650,6 +697,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     turn?.abort();
     cancelExit();
     lockScroll(false);
+    if (opts.launcher) opts.launcher.style.visibility = "";
     window.removeEventListener("online", onNet);
     window.removeEventListener("offline", onOffline);
     window.removeEventListener("resize", layout);
