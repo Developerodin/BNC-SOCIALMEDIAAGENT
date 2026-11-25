@@ -117,8 +117,17 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   cartCount.hidden = true;
   cartCount.setAttribute("aria-hidden", "true"); // the link's accessible name carries the count
   cartLink.append(cartCount);
+  let shownCount = -1; // the first read only sets it; a later rise bumps the badge (never under reduced motion)
   const showCartCount = () => {
     void cartState(page).then(({ itemCount: n }) => {
+      const wasHidden = cartCount.hidden;
+      if (n > shownCount && shownCount >= 0 && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+        cartCount.animate?.(
+          wasHidden ? [{ opacity: 0, transform: "scale(.6)" }, { opacity: 1, transform: "scale(1)" }] : [{ transform: "scale(1)" }, { transform: "scale(1.25)" }, { transform: "scale(1)" }],
+          { duration: wasHidden ? 200 : 300, easing: "cubic-bezier(0.22,1,0.36,1)" },
+        );
+      }
+      shownCount = n;
       cartCount.hidden = n <= 0;
       cartCount.textContent = n > 9 ? "9+" : String(n);
       cartLink.setAttribute("aria-label", n > 0 ? t(n === 1 ? "cart_item" : "cart_items", { count: n }) : t("cart"));

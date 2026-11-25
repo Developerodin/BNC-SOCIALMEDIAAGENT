@@ -142,7 +142,7 @@ export function createMessages(ctx: WidgetCtx, r: Renderers) {
         typing.remove();
         wrap.classList.remove("pending");
         if (cards.length) {
-          const box = el("div", "cards");
+          const box = el("div", "cards in"); // live answer: its cards animate in
           wrap.append(box);
           r.renderCards(box, cards, ctx, messageId, (title, href) => addedNote(wrap, title, href, true));
         }

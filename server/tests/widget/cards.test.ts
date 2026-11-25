@@ -58,8 +58,9 @@ function renderRow(cards: Card[], c = ctx(), messageId?: string | null) {
   return into;
 }
 const addButton = (el: HTMLElement) =>
-  [...el.querySelectorAll("button")].find((b) => b.textContent === "Add to cart") as HTMLButtonElement | undefined;
+  el.querySelector<HTMLButtonElement>("button.ac-card__add") ?? undefined; // the sheet's; the card's own is .ac-tile__add
 const flush = () => new Promise((r) => setTimeout(r, 0));
+const slideOut = () => new Promise((r) => setTimeout(r, 450)); // the sheet leaves after its 200 ms slide (400 ms at most)
 
 beforeEach(() => {
   fetchMock.mockReset();
@@ -122,7 +123,7 @@ describe("layout (UD9, UD12)", () => {
     expect(tile.querySelector("img")!.getAttribute("src")).toBe(IMG);
   });
 
-  it("a thumbnail opens the detail sheet; Back closes it, keeps the card state and returns focus to the thumbnail", () => {
+  it("a thumbnail opens the detail sheet; Back closes it, keeps the card state and returns focus to the thumbnail", async () => {
     const el = renderRow([card({ variants: [variant("1", [["Size", "S"]]), variant("2", [["Size", "M"]])] })]);
     const tile = el.querySelector<HTMLButtonElement>(".ac-tile")!;
     tile.click();
@@ -133,18 +134,21 @@ describe("layout (UD9, UD12)", () => {
     select.value = "M";
     select.dispatchEvent(new Event("change"));
     sheet.querySelector<HTMLButtonElement>(".ac-sheet__back")!.click();
+    expect(el.querySelector(".ac-sheet.out")).not.toBeNull(); // sliding out, not cut
+    await slideOut();
     expect(el.querySelector(".ac-sheet")).toBeNull();
     expect(tile.getAttribute("aria-haspopup")).toBe("dialog");
     tile.click();
     expect(el.querySelector<HTMLSelectElement>(".ac-sheet select")!.value).toBe("M");
   });
 
-  it("Escape closes the sheet only", () => {
+  it("Escape closes the sheet only", async () => {
     const el = renderRow([card()]);
     el.querySelector<HTMLElement>(".ac-tile")!.click();
     const outer = vi.fn();
     el.addEventListener("keydown", outer);
     el.querySelector(".ac-sheet")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await slideOut();
     expect(el.querySelector(".ac-sheet")).toBeNull();
     expect(outer).not.toHaveBeenCalled();
   });
@@ -216,7 +220,8 @@ describe("actions", () => {
     const select = el.querySelector("select") as HTMLSelectElement;
     const opts = [...select.options].filter((o) => o.value);
     expect(opts.map((o) => [o.value, o.disabled])).toEqual([["S", false], ["M", true], ["L", false]]);
-    expect(addButton(el)?.disabled).toBe(true); // nothing chosen yet
+    expect(select.value).toBe("S"); // the first available variant is preselected, so Add is ready
+    expect(addButton(el)?.disabled).toBe(false);
   });
 
   it("multi-option picker: a combination with no available variant is disabled", () => {
@@ -290,9 +295,11 @@ describe("Review Focus 6: add to cart", () => {
     window.removeEventListener("cart:updated", updated);
 
     expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toEqual({ items: [{ id: 123, quantity: 1 }] });
-    const status = el.querySelector(".ac-card__added")!;
-    expect(status.textContent).toBe("Added · View cart");
-    expect(status.querySelector("a")?.getAttribute("href")).toBe("https://demo.myshopify.com/cart");
+    expect(addButton(el)!.textContent).toBe("Added"); // ✓ Added on the button itself
+    const row = el.querySelector(".ac-card__cartrow")!;
+    expect(row.textContent).toBe("In your cart · View cart");
+    expect(row.querySelector("a")?.getAttribute("href")).toBe("https://demo.myshopify.com/cart");
+    expect(el.querySelector(".ac-card__status")!.textContent).toBe(""); // the status line carries errors only
     expect(updated).toHaveBeenCalledTimes(1);
     expect(logCartAdd).toHaveBeenCalledTimes(1);
     const [token, event] = logCartAdd.mock.calls[0];
@@ -328,7 +335,8 @@ describe("Review Focus 6: add to cart", () => {
     const btn = addButton(el)!;
     btn.click();
     btn.click();
-    expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute("aria-busy")).toBe("true"); // a spinner, not a disabled look
+    expect(btn.querySelector(".ac-spin")).not.toBeNull();
     resolve(jsonResponse(200, {}));
     await flush();
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -359,7 +367,7 @@ describe("Review Focus 6: add to cart", () => {
     const el = render([card()]);
     addButton(el)!.click();
     await flush();
-    expect(el.querySelector(".ac-card__added")).not.toBeNull();
+    expect(addButton(el)!.textContent).toBe("Added");
     expect(logCartAdd).not.toHaveBeenCalled();
   });
 });
@@ -414,6 +422,8 @@ describe("UD13: the panel doesn't reopen over a product the shopper chose", () =
     const el = render([card({ variants: [variant("1", [["Color", "Red"]]), variant("2", [["Color", "Blue"]])] })]);
     const select = el.querySelector("select") as HTMLSelectElement;
     expect(select.options[0].textContent).toBe("Choose Color");
+    select.value = "";
+    select.dispatchEvent(new Event("change"));
     expect(el.querySelector(".ac-card__hint")?.textContent).toBe("Choose Color first");
     expect(addButton(el)?.getAttribute("aria-describedby")).toBe(el.querySelector(".ac-card__hint")!.id);
     select.value = "Red";
@@ -421,7 +431,7 @@ describe("UD13: the panel doesn't reopen over a product the shopper chose", () =
     expect(el.querySelector(".ac-card__hint")?.textContent).toBe("");
   });
 
-  it("preselects an option that has a single available value", () => {
+  it("starts on the first available variant: every option is filled and Add is ready", () => {
     const el = render([card({ variants: [
       variant("1", [["Size", "S"], ["Color", "Red"]]),
       variant("2", [["Size", "M"], ["Color", "Red"]]),
@@ -429,14 +439,14 @@ describe("UD13: the panel doesn't reopen over a product the shopper chose", () =
     ] })]);
     const [size, color] = [...el.querySelectorAll("select")] as HTMLSelectElement[];
     expect(color.value).toBe("Red");
-    expect(size.value).toBe("");
-    expect(addButton(el)?.disabled).toBe(true);
+    expect(size.value).toBe("S");
+    expect(addButton(el)?.disabled).toBe(false);
   });
 });
 
 describe("already in the cart", () => {
   const tileBadge = (el: HTMLElement, i = 0) => el.querySelectorAll<HTMLElement>(".ac-tile")[i].querySelector<HTMLElement>(".ac-tile__badge")!;
-  const sheetLine = (el: HTMLElement, i = 0) => el.querySelectorAll<HTMLElement>(".ac-card__incart")[i];
+  const sheetLine = (el: HTMLElement, i = 0) => el.querySelectorAll<HTMLElement>(".ac-card__cartrow")[i];
 
   it("a product with a variant in the cart (quantity 1) shows a check badge 'In your cart' on the image, and the sheet says it above Add", async () => {
     cartItems = [{ variant_id: 123, quantity: 1 } as never];
@@ -446,7 +456,7 @@ describe("already in the cart", () => {
     expect(tileBadge(el).textContent).toBe("In your cart");
     expect(tileBadge(el).querySelector("svg")).not.toBeNull();
     expect(tileBadge(el).parentElement!.classList.contains("ac-tile__media")).toBe(true);
-    expect(sheetLine(el).textContent).toBe("In your cart");
+    expect(sheetLine(el).textContent).toBe("In your cart · View cart");
     expect(sheetLine(el).nextElementSibling).toBe(addButton(el));
   });
 
@@ -455,7 +465,7 @@ describe("already in the cart", () => {
     const el = render([card()]);
     await flush();
     expect(tileBadge(el).textContent).toBe("2 in your cart");
-    expect(sheetLine(el).textContent).toBe("2 in your cart");
+    expect(sheetLine(el).textContent).toBe("2 in your cart · View cart");
   });
 
   it("any variant of a multi-variant product counts, quantities add up; other products have no badge", async () => {
@@ -477,7 +487,7 @@ describe("already in the cart", () => {
     addButton(el)!.click();
     await flush();
     expect(tileBadge(el).textContent).toBe("In your cart");
-    expect(sheetLine(el).textContent).toBe("In your cart");
+    expect(sheetLine(el).textContent).toBe("In your cart · View cart");
     addButton(el)!.click();
     await flush();
     expect(tileBadge(el).textContent).toBe("2 in your cart");
@@ -531,5 +541,171 @@ describe("onAdded (the note in the chat log)", () => {
     await flush();
     expect(onAdded).toHaveBeenCalledTimes(1);
     expect(onAdded).toHaveBeenCalledWith("Linen tee", "https://demo.myshopify.com/cart");
+  });
+});
+
+describe("the card's own button", () => {
+  const tileAdd = (el: HTMLElement, i = 0) => el.querySelectorAll<HTMLButtonElement>(".ac-tile__add")[i];
+  const multi = () => card({ variants: [variant("11", [["Color", "Beige"]]), variant("12", [["Color", "Black"]])] });
+
+  it("a single-variant product adds straight from the card, a sibling of the tile button, and shows Added on it", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, {}));
+    const el = renderRow([card()]);
+    const add = tileAdd(el);
+    expect(add.textContent).toBe("Add to cart");
+    expect(add.parentElement!.querySelector(".ac-tile")!.contains(add)).toBe(false);
+    add.click();
+    expect(add.getAttribute("aria-busy")).toBe("true");
+    expect(add.querySelector(".ac-spin")).not.toBeNull();
+    await flush();
+    expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toEqual({ items: [{ id: 123, quantity: 1 }] });
+    expect(add.textContent).toBe("Added");
+    expect(add.hasAttribute("aria-busy")).toBe(false);
+    expect(logCartAdd).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenCalledWith("Added");
+    expect(el.querySelector(".ac-sheet")).toBeNull(); // nothing opened
+  });
+
+  it("Added goes back to the label after about 1.5 s", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    try {
+      fetchMock.mockResolvedValue(jsonResponse(200, {}));
+      const add = tileAdd(renderRow([card()]));
+      add.click();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(add.textContent).toBe("Added");
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(add.textContent).toBe("Add to cart");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an add from the card is one request on a double click, and an error shows under the button", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(422, { description: "All 1 Linen tee are in your cart." }));
+    const el = renderRow([card()]);
+    const add = tileAdd(el);
+    add.click();
+    add.click();
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(el.querySelector(".ac-tile__err")!.textContent).toBe("All 1 Linen tee are in your cart.");
+    expect(add.textContent).toBe("Add to cart");
+    expect(announce).toHaveBeenCalledWith("All 1 Linen tee are in your cart.");
+  });
+
+  it("a product with options says View options and opens the sheet; Back returns focus to that button", () => {
+    vi.spyOn(window, "matchMedia").mockImplementation((q: string) => ({ matches: q.includes("prefers-reduced-motion"), media: q }) as MediaQueryList);
+    const el = renderRow([multi()]);
+    const btn = tileAdd(el);
+    expect(btn.textContent).toBe("View options");
+    btn.click();
+    expect(el.querySelector(".ac-sheet .ac-card__add")).not.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    el.querySelector<HTMLButtonElement>(".ac-sheet__back")!.click();
+    expect(document.activeElement).toBe(btn);
+    vi.restoreAllMocks();
+  });
+
+  it("sold out has no card button; a fallback card (no price) and a view_options card say View options", () => {
+    const el = renderRow([
+      card({ available: false, action: "none", variants: [variant("1", [], false)] }),
+      card({ id: "p2", price: null, currency: null, available: null, stock: null, action: "none", variants: [] }),
+      card({ id: "p3", action: "view_options" }),
+    ]);
+    expect(el.querySelectorAll(".ac-cards__slide")[0].querySelector(".ac-tile__add")).toBeNull();
+    expect(tileAdd(el, 0).textContent).toBe("View options");
+    expect(tileAdd(el, 1).textContent).toBe("View options");
+  });
+
+  it("on the hosted page without the bridge the card button says Buy on the store", () => {
+    expect(tileAdd(renderRow([card()], ctx({ hosted: true }))).textContent).toBe("Buy on the store");
+  });
+});
+
+describe("the sheet's variant and the cart row", () => {
+  const multi = () => card({ variants: [variant("11", [["Color", "Beige"]]), variant("12", [["Color", "Black"]]), variant("13", [["Color", "Grey"]], false)] });
+  const colour = (el: HTMLElement) => el.querySelector<HTMLSelectElement>(".ac-sheet select")!.value;
+  const row = (el: HTMLElement) => el.querySelector<HTMLElement>(".ac-card__cartrow")!;
+
+  it("starts on the first available variant, so Add to cart is ready", () => {
+    const el = render([multi()]);
+    expect(colour(el)).toBe("Beige");
+    expect(addButton(el)!.disabled).toBe(false);
+  });
+
+  it("preselects the variant that is in the cart, even after a reload", async () => {
+    cartItems = [{ variant_id: 12, quantity: 1 }] as never;
+    const el = render([multi()]);
+    await flush();
+    expect(colour(el)).toBe("Black");
+    expect(addButton(el)!.disabled).toBe(false);
+    expect(row(el).textContent).toBe("In your cart · View cart");
+    expect(row(el).querySelector("a")!.getAttribute("href")).toBe("https://demo.myshopify.com/cart");
+  });
+
+  it("takes the variant with the most units and skips a sold-out one", async () => {
+    cartItems = [{ variant_id: 11, quantity: 1 }, { variant_id: 12, quantity: 3 }, { variant_id: 13, quantity: 9 }] as never;
+    const el = render([multi()]);
+    await flush();
+    expect(colour(el)).toBe("Black");
+  });
+
+  it("never overrides a choice the shopper made in the sheet when the cart arrives late", async () => {
+    cartItems = [{ variant_id: 12, quantity: 1 }] as never;
+    const el = render([multi()]);
+    const select = el.querySelector<HTMLSelectElement>(".ac-sheet select")!;
+    select.value = "Beige";
+    select.dispatchEvent(new Event("change"));
+    await flush();
+    expect(colour(el)).toBe("Beige");
+    refreshCart(page);
+    await flush();
+    expect(colour(el)).toBe("Beige");
+  });
+
+  it("the row survives a re-render (as after View product and a page load): it is drawn from the cart, not from the click", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, {}));
+    const first = render([card()]);
+    addButton(first)!.click();
+    await flush();
+    document.body.replaceChildren();
+    resetCartCache();
+    cartItems = [{ variant_id: 123, quantity: 1 }] as never; // what the store's cart.js says on the next page
+    const again = render([card()]);
+    await flush();
+    expect(row(again).hidden).toBe(false);
+    expect(row(again).textContent).toBe("In your cart · View cart");
+    expect(addButton(again)!.disabled).toBe(false);
+  });
+
+  it("has no row while the product is not in the cart", async () => {
+    const el = render([card()]);
+    await flush();
+    expect(row(el).hidden).toBe(true);
+  });
+});
+
+describe("reduced motion", () => {
+  it("closing the sheet is instant, with no slide-out class", () => {
+    vi.spyOn(window, "matchMedia").mockImplementation((q: string) => ({ matches: q.includes("prefers-reduced-motion"), media: q }) as MediaQueryList);
+    const el = renderRow([card()]);
+    el.querySelector<HTMLElement>(".ac-tile")!.click();
+    el.querySelector<HTMLButtonElement>(".ac-sheet__back")!.click();
+    expect(el.querySelector(".ac-sheet")).toBeNull();
+    vi.restoreAllMocks();
+  });
+
+  it("the sheet slide, the spinner, the swap and the card entrance all have a reduced-motion rule", () => {
+    const reduced = CARDS_CSS.slice(CARDS_CSS.lastIndexOf("@media (prefers-reduced-motion:reduce)"));
+    expect(reduced).toMatch(/\.ac-spin\{animation:none/);
+    expect(reduced).toMatch(/\.ac-swap\{animation-name:ac-fade/);
+    expect(reduced).toMatch(/\.cards\.in \.ac-cards__slide\{animation-name:ac-fade/);
+    expect(CARDS_CSS).toMatch(/@media \(prefers-reduced-motion:reduce\)\{\.ac-sheet\{transform:none;opacity:0/);
+  });
+
+  it("the card entrance applies only to a live answer's .cards.in box", () => {
+    expect(CARDS_CSS).toMatch(/\.cards\.in \.ac-cards__slide\{animation:ac-up/);
+    expect(CARDS_CSS).not.toMatch(/(^|\n)\.ac-cards__slide\{[^}]*animation/);
   });
 });
