@@ -521,7 +521,7 @@ describe("automatic block placement on Dawn-like markup", () => {
     expect(block.parentElement!.nextElementSibling!.id).toBe("after");
   });
 
-  it("goes in its own full-width section right after the product section, not inside any theme block", () => {
+  it("goes at the end of the product information column (after description), not into its own section", () => {
     document.body.insertAdjacentHTML(
       "beforeend",
       `<main><div class="shopify-section" id="product"><section><div id="media"><img alt=""></div><div id="info"><h1>Board</h1>
@@ -531,11 +531,9 @@ describe("automatic block placement on Dawn-like markup", () => {
     mountRoot();
     start();
     const block = document.querySelector("[data-askcart-ask-ai]")!;
-    const wrap = block.parentElement!;
-    expect(wrap.classList.contains("askcart-ai-section")).toBe(true);
-    expect(document.querySelector("#product")!.nextElementSibling).toBe(wrap);
-    expect(wrap.nextElementSibling!.id).toBe("related");
-    expect(document.querySelector("#product")!.contains(block)).toBe(false);
+    expect(block.parentElement!.id).toBe("info");
+    expect(document.querySelector("#info")!.lastElementChild).toBe(block);
+    expect(document.querySelector("#media")!.contains(block)).toBe(false);
   });
 
   it("lands after a Buy it now button that sits outside the product-form wrapper", () => {

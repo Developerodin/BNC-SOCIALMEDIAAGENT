@@ -163,7 +163,7 @@ function ProductBlockButton({ link }: { link: string }) {
   return (
     <s-stack direction="block" gap="small">
       {/* The AskCart chat embed inserts the block itself (auto_ask_ai); this button is for placing it by hand. */}
-      <s-paragraph>&apos;Ask our AI agent&apos; shows below the product on every product page automatically. To place it somewhere else, use Add to product pages.</s-paragraph>
+      <s-paragraph>&apos;Ask our AI agent&apos; shows at the end of the product details on every product page automatically. To place it somewhere else, use Add to product pages.</s-paragraph>
       <s-stack direction="inline" gap="base">
         {/* target _top: the theme editor can't open inside the admin iframe. */}
         <s-button onClick={() => window.open(link, "_top")}>Add to product pages</s-button>

@@ -159,5 +159,5 @@ export function themeEditorLink(shop: string): string | null {
 /** Opens the theme editor on a product template with the "Ask our AI agent" block already added, in the main section. */
 export function productBlockLink(shop: string): string | null {
   const key = process.env.SHOPIFY_API_KEY;
-  return key ? `https://${shop}/admin/themes/current/editor?template=product&addAppBlockId=${key}/askcart-ask-ai&target=newAppsSection` : null;
+  return key ? `https://${shop}/admin/themes/current/editor?template=product&addAppBlockId=${key}/askcart-ask-ai&target=mainSection` : null;
 }
