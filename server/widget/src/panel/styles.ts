@@ -83,7 +83,9 @@ export const CSS =
   "@keyframes sh{from{background-position:200% 0}to{background-position:-200% 0}}" +
   ".err{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;border-radius:10px;background:#fdecec;color:#8a1c1c;font-size:14px}" +
   ".err .retry{padding:4px 10px;border:1px solid currentColor;border-radius:12px}" +
-  ".askcart-feedback{display:flex;gap:12px}" + // 32px buttons + the 6px hit area each side = 44px targets that don't overlap
+  ".askcart-feedback{position:relative;display:flex;gap:12px}" +
+  // Reasons menu under the thumbs: reuses .mlist, opens from the start edge and stays within 240px so it fits a phone-width panel.
+  ".askcart-reasons{inset-inline-start:0;inset-inline-end:auto;top:100%;margin-top:6px;width:max-content;max-width:240px;box-sizing:border-box}" + // 32px buttons + the 6px hit area each side = 44px targets that don't overlap
   ".askcart-feedback__btn{position:relative;display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:16px;color:#666;transition:background-color .15s ease,color .15s ease}" +
   ".askcart-feedback__btn::before{content:\"\";position:absolute;inset:-6px}" +
   ".askcart-feedback__btn:hover{background:#f1f1f1}" +

@@ -71,6 +71,12 @@ const en = {
   price_on_product: "See price on the product page",
   cart_rate_limited: "Please try again in a moment.",
   rate_answer: "Rate this answer",
+  reason_menu: "Why wasn't this helpful?",
+  reason_wrong_products: "Wrong products shown",
+  reason_wrong_price_stock: "Wrong price or stock",
+  reason_misunderstood: "Didn't understand me",
+  reason_unclear: "Answer too long or unclear",
+  reason_other: "Other",
 };
 export type Key = keyof typeof en;
 type Dict = Record<Key, string>;
@@ -145,6 +151,12 @@ const fr: Dict = {
   price_on_product: "Voir le prix sur la page du produit",
   cart_rate_limited: "Veuillez réessayer dans un instant.",
   rate_answer: "Évaluer cette réponse",
+  reason_menu: "Pourquoi cette réponse n'a pas aidé ?",
+  reason_wrong_products: "Mauvais produits affichés",
+  reason_wrong_price_stock: "Prix ou stock incorrect",
+  reason_misunderstood: "Ne m'a pas compris",
+  reason_unclear: "Réponse trop longue ou peu claire",
+  reason_other: "Autre",
 };
 
 const de: Dict = {
@@ -217,6 +229,12 @@ const de: Dict = {
   price_on_product: "Preis auf der Produktseite ansehen",
   cart_rate_limited: "Bitte versuch es gleich noch einmal.",
   rate_answer: "Bewerte diese Antwort",
+  reason_menu: "Warum war das nicht hilfreich?",
+  reason_wrong_products: "Falsche Produkte angezeigt",
+  reason_wrong_price_stock: "Falscher Preis oder Bestand",
+  reason_misunderstood: "Hat mich nicht verstanden",
+  reason_unclear: "Antwort zu lang oder unklar",
+  reason_other: "Sonstiges",
 };
 
 const es: Dict = {
@@ -289,6 +307,12 @@ const es: Dict = {
   price_on_product: "Ver el precio en la página del producto",
   cart_rate_limited: "Inténtalo de nuevo en un momento.",
   rate_answer: "Valora esta respuesta",
+  reason_menu: "¿Por qué no te ha ayudado?",
+  reason_wrong_products: "Productos incorrectos",
+  reason_wrong_price_stock: "Precio o stock incorrecto",
+  reason_misunderstood: "No me ha entendido",
+  reason_unclear: "Respuesta demasiado larga o poco clara",
+  reason_other: "Otro",
 };
 
 const it: Dict = {
@@ -361,6 +385,12 @@ const it: Dict = {
   price_on_product: "Vedi il prezzo nella pagina del prodotto",
   cart_rate_limited: "Riprova tra un momento.",
   rate_answer: "Valuta questa risposta",
+  reason_menu: "Perché non è stata utile?",
+  reason_wrong_products: "Prodotti sbagliati",
+  reason_wrong_price_stock: "Prezzo o disponibilità sbagliati",
+  reason_misunderstood: "Non mi ha capito",
+  reason_unclear: "Risposta troppo lunga o poco chiara",
+  reason_other: "Altro",
 };
 
 const nl: Dict = {
@@ -433,6 +463,12 @@ const nl: Dict = {
   price_on_product: "Bekijk de prijs op de productpagina",
   cart_rate_limited: "Probeer het zo meteen opnieuw.",
   rate_answer: "Beoordeel dit antwoord",
+  reason_menu: "Waarom was dit niet nuttig?",
+  reason_wrong_products: "Verkeerde producten getoond",
+  reason_wrong_price_stock: "Verkeerde prijs of voorraad",
+  reason_misunderstood: "Begreep me niet",
+  reason_unclear: "Antwoord te lang of onduidelijk",
+  reason_other: "Anders",
 };
 
 export const DICTS = { en: en as Dict, fr, de, es, it, nl };

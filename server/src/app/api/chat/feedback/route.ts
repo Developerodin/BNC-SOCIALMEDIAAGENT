@@ -3,7 +3,7 @@ import { preflight, storeFor } from "@/lib/chat/cors";
 import { parseFeedback, rateMessage, readSmallJson } from "@/lib/chat/events";
 
 // POST /api/chat/feedback?shop=…: thumbs up or down on an answer (UD14), changeable and clearable (C27). Body
-// `{ messageId, rating: 1 | -1 | null }`, at most 2 kB. The token travels in the X-Conversation-Token header, never the URL.
+// `{ messageId, rating: 1 | -1 | null, reason? }` (reason only with -1), at most 2 kB. The token travels in the X-Conversation-Token header, never the URL.
 // Shop, CORS and token checks are Task 19's. Only an assistant message of the token's conversation in this store can be
 // rated (Review Focus 4); anything else is a 404. No `runtime` export (cacheComponents doesn't support it).
 

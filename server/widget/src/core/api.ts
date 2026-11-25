@@ -119,9 +119,9 @@ export function createApi(apiBase: string, shop: string, opts: { customer?: bool
       }
     },
 
-    async rate(token, messageId, rating) {
+    async rate(token, messageId, rating, reason) {
       try {
-        return (await post("/api/chat/feedback", token, { messageId, rating })).ok;
+        return (await post("/api/chat/feedback", token, reason ? { messageId, rating, reason } : { messageId, rating })).ok;
       } catch {
         return false;
       }

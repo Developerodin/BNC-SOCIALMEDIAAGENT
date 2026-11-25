@@ -178,6 +178,152 @@ describe("renderFeedback (UD14, C27)", () => {
   });
 });
 
+describe("the reasons menu after a thumbs-down", () => {
+  const key = (el: Element, k: string) => el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+  const menuOf = (into: HTMLElement) => into.querySelector<HTMLElement>("[role=menu]");
+  const items = (into: HTMLElement) => Array.from(into.querySelectorAll<HTMLButtonElement>("[role=menuitem]"));
+  async function openMenu(c = ctx()) {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+    const m = mount(null, c);
+    m.down.click();
+    await settle();
+    return m;
+  }
+
+  it("opens after a saved thumbs-down with the five reasons, first one focused, thumb marked expanded", async () => {
+    const { into, down } = await openMenu();
+    expect(menuOf(into)!.getAttribute("aria-label")).toBe("Why wasn't this helpful?");
+    expect(items(into).map((b) => b.textContent)).toEqual([
+      "Wrong products shown",
+      "Wrong price or stock",
+      "Didn't understand me",
+      "Answer too long or unclear",
+      "Other",
+    ]);
+    expect(document.activeElement).toBe(items(into)[0]);
+    expect(down.getAttribute("aria-expanded")).toBe("true");
+    expect(down.getAttribute("aria-haspopup")).toBe("menu");
+  });
+
+  it("does not open for a thumbs-up, a clear, or a failed save", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+    const a = mount();
+    a.up.click();
+    await settle();
+    expect(menuOf(a.into)).toBeNull();
+    const b = mount(-1);
+    b.down.click(); // clears
+    await settle();
+    expect(menuOf(b.into)).toBeNull();
+    fetchMock.mockResolvedValue(new Response("", { status: 500 }));
+    const c = mount();
+    c.down.click();
+    await settle();
+    expect(menuOf(c.into)).toBeNull();
+  });
+
+  it("translates the menu", async () => {
+    const { into } = await openMenu(ctx("de"));
+    expect(items(into).map((b) => b.textContent)).toEqual([
+      "Falsche Produkte angezeigt",
+      "Falscher Preis oder Bestand",
+      "Hat mich nicht verstanden",
+      "Antwort zu lang oder unklar",
+      "Sonstiges",
+    ]);
+  });
+
+  it("picking a reason sends -1 with it, closes the menu, returns focus to the thumb and announces thanks", async () => {
+    const { into, down } = await openMenu();
+    items(into)[2].click();
+    expect(menuOf(into)).toBeNull();
+    expect(document.activeElement).toBe(down);
+    await settle();
+    expect(sent(1).body).toEqual({ messageId: MSG, rating: -1, reason: "misunderstood" });
+    expect(pressed(down)).toBe("true");
+    expect(announce).toHaveBeenLastCalledWith("Thanks for your feedback");
+  });
+
+  it("a failed reason save announces it and keeps the thumbs-down", async () => {
+    const { into, down } = await openMenu();
+    fetchMock.mockResolvedValue(new Response("", { status: 500 }));
+    items(into)[4].click();
+    await settle();
+    expect(announce).toHaveBeenLastCalledWith("Couldn't save");
+    expect(pressed(down)).toBe("true");
+  });
+
+  it("arrows, Home and End move focus and wrap", async () => {
+    const { into } = await openMenu();
+    const list = items(into);
+    key(list[0], "ArrowDown");
+    expect(document.activeElement).toBe(list[1]);
+    key(list[1], "ArrowUp");
+    key(list[0], "ArrowUp");
+    expect(document.activeElement).toBe(list[4]);
+    key(list[4], "ArrowDown");
+    expect(document.activeElement).toBe(list[0]);
+    key(list[0], "End");
+    expect(document.activeElement).toBe(list[4]);
+    key(list[4], "Home");
+    expect(document.activeElement).toBe(list[0]);
+  });
+
+  it("Escape closes it without a reason, focuses the thumb, keeps the thumbs-down, and doesn't reach the panel", async () => {
+    const { into, down } = await openMenu();
+    const outer = vi.fn();
+    document.body.addEventListener("keydown", outer);
+    key(items(into)[1], "Escape");
+    document.body.removeEventListener("keydown", outer);
+    expect(outer).not.toHaveBeenCalled();
+    expect(menuOf(into)).toBeNull();
+    expect(document.activeElement).toBe(down);
+    expect(pressed(down)).toBe("true");
+    expect(down.getAttribute("aria-expanded")).toBe("false");
+    expect(fetchMock).toHaveBeenCalledTimes(1); // no second request
+  });
+
+  it("Tab closes it and returns to the thumb", async () => {
+    const { into, down } = await openMenu();
+    key(items(into)[0], "Tab");
+    expect(menuOf(into)).toBeNull();
+    expect(document.activeElement).toBe(down);
+  });
+
+  it("a pointer press outside closes it; one inside the thumbs doesn't", async () => {
+    const { into, up } = await openMenu();
+    up.dispatchEvent(new Event("pointerdown", { bubbles: true, composed: true }));
+    expect(menuOf(into)).not.toBeNull();
+    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true, composed: true }));
+    expect(menuOf(into)).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("pressing the thumb again closes the menu and clears the rating, with no reason sent", async () => {
+    const { into, down } = await openMenu();
+    down.click();
+    expect(menuOf(into)).toBeNull();
+    await settle();
+    expect(sent(1).body).toEqual({ messageId: MSG, rating: null });
+  });
+
+  it("switching to thumbs-up closes the menu", async () => {
+    const { into, up } = await openMenu();
+    up.click();
+    expect(menuOf(into)).toBeNull();
+    await settle();
+    expect(sent(1).body).toEqual({ messageId: MSG, rating: 1 });
+  });
+
+  it("menu items are text only", async () => {
+    const c = ctx();
+    c.t = (k) => (k.startsWith("reason_") ? `<img src=x onerror=alert(1)>` : k);
+    const { into } = await openMenu(c);
+    expect(into.querySelector("img")).toBeNull();
+    expect(items(into)[0].textContent).toBe("<img src=x onerror=alert(1)>");
+  });
+});
+
 describe("renderFeedback without a message id", () => {
   it("renders nothing for a null id (old widget, replay edge cases)", () => {
     const into = document.createElement("div");

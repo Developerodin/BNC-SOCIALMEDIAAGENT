@@ -1,0 +1,2 @@
+ALTER TABLE "messages" ADD COLUMN "feedback_reason" text;--> statement-breakpoint
+ALTER TABLE "messages" ADD CONSTRAINT "messages_feedback_reason_chk" CHECK ("messages"."feedback_reason" is null or ("messages"."rating" = -1 and "messages"."feedback_reason" in ('wrong_products', 'wrong_price_stock', 'misunderstood', 'unclear', 'other')));

@@ -138,6 +138,10 @@ export const conversations = pgTable(
 );
 
 // store_id is not in §7.13's Message; RLS needs it (D42).
+// Why a shopper gave an answer a thumbs-down (picked from a fixed menu; there is no free text). Null = no reason given.
+export const FEEDBACK_REASONS = ["wrong_products", "wrong_price_stock", "misunderstood", "unclear", "other"] as const;
+export type FeedbackReason = (typeof FEEDBACK_REASONS)[number];
+
 export const messages = pgTable(
   "messages",
   {
@@ -159,6 +163,8 @@ export const messages = pgTable(
     requestId: uuid("request_id"),
     // UD14: the shopper's thumbs on an answer, 1 or -1; null when unrated. C27: it can be changed or cleared.
     rating: smallint("rating").$type<-1 | 1>(),
+    // Only ever set together with rating -1 (check below); changing or clearing the rating clears it.
+    feedbackReason: text("feedback_reason").$type<FeedbackReason>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -171,6 +177,10 @@ export const messages = pgTable(
     check("messages_model_chk", sql`${t.model} in ('small', 'large')`),
     check("messages_status_chk", sql`${t.status} in ('ok', 'cut_off')`),
     check("messages_rating_chk", sql`${t.rating} in (-1, 1)`),
+    check(
+      "messages_feedback_reason_chk",
+      sql`${t.feedbackReason} is null or (${t.rating} = -1 and ${t.feedbackReason} in ('wrong_products', 'wrong_price_stock', 'misunderstood', 'unclear', 'other'))`,
+    ),
   ],
 );
 
