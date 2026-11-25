@@ -90,7 +90,13 @@ export const CSS =
   ".askcart-feedback__btn[aria-pressed=true]{color:var(--ac-fg);background:var(--ac)}" +
   ".offline{padding:8px 16px;background:#fff4d6;color:#5c4400;font-size:14px;flex:none}" +
   ".offline[hidden]{display:none}" +
-  ".ft{flex:none;padding:8px 16px 12px;background:#fff}" +
+  ".ft{position:relative;flex:none;padding:8px 16px 12px;background:#fff}" +
+  ".divider{display:flex;align-items:center;gap:8px;font-size:12px;line-height:16px;color:#666;text-align:center;overflow-wrap:anywhere}" +
+  ".divider::before,.divider::after{content:\"\";flex:1;height:1px;background:#e3e3e3}" +
+  // Jump to latest: 36px round, 44px hit area, centred just above the footer; shown only while scrolled up.
+  ".jump{position:absolute;inset-inline-start:50%;bottom:100%;margin-bottom:8px;margin-inline-start:-18px;display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:18px;background:#fff;color:#111;border:1px solid #cfcfcf;box-shadow:0 2px 8px rgba(0,0,0,.16)}" +
+  ".jump::before{content:\"\";position:absolute;inset:-4px}" +
+  ".jump:hover{background:#f4f4f4}.jump[hidden]{display:none}" +
   ".row{position:relative;display:flex}" +
   // A filled grey pill with the round Send button inside it; the focus ring is the panel-wide one.
   "textarea{flex:1;resize:none;min-height:48px;max-height:120px;padding:14px 18px;padding-inline-end:52px;border:0;border-radius:24px;background:#f2f2f2;color:#111;font-size:16px;line-height:20px}" +

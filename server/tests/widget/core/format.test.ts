@@ -7,11 +7,12 @@ const t = translator("en");
 const spaces = (s: string | null) => s?.replace(/\s/g, " ");
 
 describe("format", () => {
-  it("formats a price in the shopper's locale", () => {
-    expect(spaces(formatPrice("19.9", "EUR", "fr"))).toBe("19,90 €");
-    expect(formatPrice("19.9", "USD", "en")).toBe("$19.90");
-    expect(formatPrice("abc", "USD", "en")).toBeNull();
-    expect(formatPrice("1", "not a currency", "en")).toBeNull();
+  it("formats a price with the symbol first and a dot decimal, whatever the locale", () => {
+    expect(formatPrice("104.65", "EUR")).toBe("€104.65");
+    expect(formatPrice("1452.43", "EUR")).toBe("€1,452.43");
+    expect(formatPrice("19.9", "USD")).toBe("$19.90");
+    expect(formatPrice("abc", "USD")).toBeNull();
+    expect(formatPrice("1", "not a currency")).toBeNull();
   });
 
   it("labels stock against the threshold (UD10)", () => {

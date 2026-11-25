@@ -41,6 +41,13 @@ export function tokenStore(shop: string) {
   };
 }
 
+/** The product page the chat was last used on (a product id), so a switch to another product can be marked in the log.
+ * Browser-only; not sent to the server. */
+export function lastProductStore(shop: string) {
+  const key = `askcart:${shop}:lastProduct`;
+  return { get: () => read("localStorage", key), set: (id: string) => write("localStorage", key, id) };
+}
+
 function uiField(key: string, field: "open" | "teaserSeen" | "wide" | "drawer"): Flag {
   const all = (): Record<string, unknown> => {
     try {

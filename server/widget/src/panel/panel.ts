@@ -14,7 +14,7 @@ import type { PageContext, WidgetApi, WidgetConfig, WidgetCtx } from "../../../s
 import { MAX_INPUT_CHARS as MAX } from "../../../src/lib/chat/limits"; // the server's message limit
 import { translator } from "../core/i18n";
 import { brandLogo, formatPrice, resolveHttpsUrl, safeHex, safeImageUrl, textOn } from "../core/format";
-import { tokenStore, uiState } from "../core/storage";
+import { lastProductStore, tokenStore, uiState } from "../core/storage";
 import { runSend } from "../core/turn";
 import { liveRegion, trapTab } from "./a11y";
 import { icon } from "./icons";
@@ -200,7 +200,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     ttl.textContent = vwTitle;
     // "<price> · You're viewing" under the title.
     // Liquid sends minor units (cents) and the page's currency, so a store's money format (HTML, entities) never reaches us.
-    const price = typeof vw.price === "number" && page.currency ? (formatPrice(vw.price / 100, page.currency, page.locale) ?? "") : "";
+    const price = typeof vw.price === "number" && page.currency ? (formatPrice(vw.price / 100, page.currency) ?? "") : "";
     const label = document.createElement("span");
     label.className = "vw-label";
     label.textContent = price ? `${price} · ${t("viewing")}` : t("viewing");
@@ -242,7 +242,18 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     a.textContent = t("privacy");
     notice.append(" ", a);
   }
-  ft.append(notice, row, count); // the AI notice sits right above the input, always visible
+  const jump = button("jump", t("jump_latest"), "down", 18);
+  jump.hidden = true;
+  messages.log.addEventListener("scroll", () => {
+    const away = messages.log.scrollHeight - messages.log.scrollTop - messages.log.clientHeight;
+    if (away > 120) jump.hidden = false;
+    else if (away < 40) jump.hidden = true;
+  });
+  jump.addEventListener("click", () => {
+    jump.hidden = true;
+    messages.log.scrollTo({ top: messages.log.scrollHeight, behavior: reducedMotion() ? "auto" : "smooth" });
+  });
+  ft.append(notice, row, count, jump); // the AI notice sits right above the input, always visible
 
   panel.append(hd, viewing, offline, messages.log, ft, live.el);
   // The dimmed backdrop behind the desktop drawer: a click on it closes the drawer (the pointer's way of leaving a modal).
@@ -258,6 +269,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
   let isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
   let loaded = false;
   let productId: string | null = page.productId;
+  const lastProduct = lastProductStore(page.shop);
   let faqFor: string | null = null;
   let faqQs: string[] = [];
   let turn: AbortController | null = null;
@@ -372,12 +384,23 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
         }
       }
       if (h && h !== "reset") messages.history(h);
+      markProductSwitch();
       // null: a transient failure. Keep the token; the next message continues the conversation.
     }
     const faq = await loadFaq();
     if (!hasMessages()) showSuggestions([...merchantSuggested(), ...faq]);
     else if (faq.length) showSuggestions(faq);
     update(); // the placeholder follows whether history was loaded
+  }
+
+  /** The chat opened on a product page other than the one it was last used on, with a conversation already in the log:
+   * mark the switch once (the stored id then matches, so a reload or reopen adds nothing). */
+  function markProductSwitch() {
+    const id = page.productId;
+    if (!id || !vwTitle) return;
+    const last = lastProduct.get();
+    lastProduct.set(id);
+    if (last && last !== id && hasMessages()) messages.divider(`${t("viewing")}: ${vwTitle}`, sugg);
   }
 
   function resetChat() {
@@ -601,6 +624,7 @@ export function createPanel(shadow: ShadowRoot, config: WidgetConfig, page: Page
     if (!page.hosted && cartHref) refreshCart(page); // the shopper may have changed the cart on the page; redraws the badges
     if (args.focus !== false) input.focus();
     const first = !loaded;
+    if (!first && !loadP) markProductSwitch();
     if (first) {
       loaded = true;
       loadP = load().finally(() => {
