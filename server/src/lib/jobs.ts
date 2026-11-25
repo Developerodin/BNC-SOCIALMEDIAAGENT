@@ -49,12 +49,14 @@ export async function shopRedact({ shopDomain }: { shopDomain: string }): Promis
  * product-sync worker options. A bulk edit fires one products/update webhook per product, and with pg-boss's defaults
  * (one job per fetch, a fetch every 2 s) the queue drained at 0.5 jobs/s: 5,000 edited products took about 3 hours.
  * Batches of 10, fetched back to back while they come back full, drain at the speed of the Admin reads (~3/s measured
- * with a 300 ms read). The reads stay one at a time, so the store's rate-limit bucket sees no more than one in-flight
- * product query from this process. perJobResults settles each job on its own (settleEach), so one failing product
- * doesn't fail or retry the other nine.
- * ponytail: still serial per process, ~3 jobs/s, so 20k edits take about 2 hours. Upgrade path: localConcurrency, sized
- * against Shopify's per-store cost limit (by estimate each read requests ~75 points: metafields first 50 + collections
- * first 20; the live check spends from the same bucket).
+ * with a fake 300 ms read). perJobResults settles each job on its own (settleEach), so one failing product doesn't fail
+ * or retry the other nine.
+ * ponytail: reads stay one at a time, but during a backlog they now run ~6x as often, so they drain the store's Admin
+ * cost bucket (points restored per second, shared with the chat's live check) faster; not yet measured against a real
+ * store. A throttled read fails only its job, which pg-boss retries with backoff, but the worker moves straight on to
+ * the next one, so a long throttle spends retries. Check: read extensions.cost from one real product read and compare
+ * ~3 x actual cost per second with the store's restore rate; if it is close, lower batchSize or add a pause on throttle.
+ * Still serial per process, so 20k edits take about 2 hours; localConcurrency is the upgrade path, sized the same way.
  */
 export const PRODUCT_SYNC_WORK = { batchSize: 10, burstWhenBatchFull: true, perJobResults: true } as const;
 

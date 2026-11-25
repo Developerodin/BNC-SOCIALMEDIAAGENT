@@ -24,8 +24,10 @@ type Row = typeof chunks.$inferInsert;
  * their hashes match.
  * ponytail: all changed products of a store are embedded in one job run. Measured on a first sync: 20k products
  * (~220 tokens each) took 163 s in 367 OpenAI calls at ~1.5M tokens/min, against pg-boss's default 15 min
- * `expireInSeconds` and the key's 5M tokens/min, so the ceiling is roughly 100k changed products per run. Page them
- * (for example 500 products per run, then re-enqueue) before catalogs get there.
+ * `expireInSeconds` (soft: a retry skips the batches already done) and the key's 5M tokens/min.
+ * The hard ceiling comes first: the stale-content read below binds one parameter per id, and the driver refuses more
+ * than 65,534, so a run with ~65k or more changed products fails on every retry. Page them (for example 500 products
+ * per run, then re-enqueue) before catalogs get there.
  */
 export async function embedStore(
   { storeId }: { storeId: string },

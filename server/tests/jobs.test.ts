@@ -59,7 +59,7 @@ test("shop-redact keeps a store that reinstalled before the job ran", async () =
 
 test("a product-sync batch runs every job and fails only the one that threw, which pg-boss retries alone", async () => {
   // A throwaway queue with the product-sync worker options, so the real pg-boss settles the batch.
-  const queue = `settle-test-${Date.now()}`;
+  const queue = "settle-test";
   await jobs.enqueue("store-sync", { storeId: "00000000-0000-0000-0000-000000000000" }, { startAfter: 3600 }); // starts boss
   await jobs.boss.createQueue(queue, { retryLimit: 1, retryDelay: 3600 });
   const ids = await Promise.all(["a", "bad", "c"].map((p) => jobs.boss.send(queue, { p })));
@@ -77,5 +77,6 @@ test("a product-sync batch runs every job and fails only the one that threw, whi
 
   expect(ran.sort()).toEqual(["a", "bad", "c"]);
   expect(await state()).toEqual({ [ids[0]!]: "completed", [ids[1]!]: "retry", [ids[2]!]: "completed" });
-  await admin`delete from pgboss.job where name = ${queue} or (name = 'store-sync' and data->>'storeId' = '00000000-0000-0000-0000-000000000000')`;
+  await admin`delete from pgboss.job where name = 'store-sync' and data->>'storeId' = '00000000-0000-0000-0000-000000000000'`;
+  await jobs.boss.deleteQueue(queue);
 });
