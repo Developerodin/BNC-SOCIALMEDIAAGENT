@@ -699,7 +699,7 @@ function WidgetSettingsCard() {
           <s-stack direction="inline" gap="base" alignItems="center">
             {form.avatarUrl && (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={form.avatarUrl} alt="Your chat logo" width={48} height={48} style={{ borderRadius: "50%", objectFit: "cover" }} />
+              <img src={form.avatarUrl} alt="Your chat logo" style={{ display: "block", maxWidth: 160, maxHeight: 60, objectFit: "contain" }} /> {/* shown whole, like the chat header */}
             )}
             <s-button variant="secondary" onClick={() => fileRef.current?.click()} disabled={busy || uploading}>
               {uploading ? "Uploading…" : "Upload logo"}
