@@ -101,4 +101,3 @@ export type WidgetCtx = {
 // Widget-internal seams so Wave 3 tasks don't touch each other's files:
 export type CardsRenderer = (into: HTMLElement, cards: Card[], ctx: WidgetCtx) => void; // Task 31
 export type FeedbackRenderer = (into: HTMLElement, messageId: string, rating: -1 | 1 | null, ctx: WidgetCtx) => void; // Task 32
-export type ProductQuestionsResponse = { questions: string[] };
