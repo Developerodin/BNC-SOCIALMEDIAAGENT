@@ -47,7 +47,9 @@ export const CSS =
   ".vw-label{font-size:12px;line-height:16px;color:#666}" +
   ".vw-title{font-size:14px;line-height:19px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
   ".vw-price{font-size:13px;line-height:18px;color:#444}" +
-  ".log{flex:1;overflow-y:auto;padding:8px 16px 16px;display:flex;flex-direction:column;gap:18px;overscroll-behavior:contain;background:#fff}" +
+  // The top fade makes messages scrolling up under the "You're viewing" card read as scrolled, not cut.
+  ".log{flex:1;overflow-y:auto;padding:12px 16px 16px;display:flex;flex-direction:column;gap:18px;overscroll-behavior:contain;background:#fff;" +
+  "-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 16px);mask-image:linear-gradient(to bottom,transparent 0,#000 16px)}" +
   ".welcome{align-self:flex-start;max-width:100%;line-height:24px;color:#222;white-space:pre-wrap;overflow-wrap:anywhere}" +
   ".sugg{display:flex;flex-wrap:wrap;gap:8px}" +
   ".sugg button{padding:8px 14px;border:1px solid #8a8a8a;border-radius:20px;background:#fff;text-align:left;font-size:14px;line-height:19px;transition:border-color .15s,background .15s}" +

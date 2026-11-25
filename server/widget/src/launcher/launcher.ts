@@ -13,7 +13,8 @@ type AskCartApi = { open(a: OpenArgs): void };
 const DEFAULT_ACCENT = "#0A0A0A";
 
 const CSS =
-  ":host{all:initial}" +
+  // all:initial also resets the font to the browser default (a serif); take the store's font back.
+  ":host{all:initial;font-family:inherit}" +
   ".l,.t{position:fixed;z-index:2147483000;font:inherit;font-size:15px;line-height:20px;box-sizing:border-box}" +
   ".l{display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;min-width:48px;padding:0 20px 0 16px;" +
   "border:0;border-radius:24px;background:var(--ac-bg);color:var(--ac-fg);cursor:pointer;" +
