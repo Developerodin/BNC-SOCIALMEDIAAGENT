@@ -3,6 +3,8 @@
 > **Changelog.** 2026-11-25: additive. `GET /orders` items gain `lineItems`, `lineItemsTruncated`, `displayFulfillmentStatus`,
 > `displayFinancialStatus`, `discountCodes`; `GET /products` items gain `collections`, `tags`, `vendor`. Orders now come
 > 25 per response and products 50 (were 100 each). Existing fields are unchanged; still no customer data.
+> Also: line items gain `discountedUnitPriceAfterAllDiscountsSet`; a line without a product returns `title` and
+> `variantTitle` as `null`; products gain `variantsTruncated`; a `rateLimited` response may now carry a longer `Retry-After`.
 
 ## 1. Overview
 
@@ -335,9 +337,12 @@ All list endpoints return:
 - `nextCursor`: pass it back as `?cursor=` **with the same filters** to get the next page. `null` with `complete: true`
   means the read is finished.
 - `complete`: true only when this response reached the end of the list without being cut short.
-- `rateLimited` (only present when true): Shopify throttled us mid-read. You get the items read so far (status 200) and a
-  `Retry-After: 2` header. Wait, then resume from `nextCursor`. If `nextCursor` is `null` here, nothing was read yet:
-  retry the same request.
+- `rateLimited` (only present when true): the read stopped early because Shopify throttled us, a Shopify call timed out
+  (after at least one item was read), or the store's Shopify call budget is shared with the shop's own storefront chat and
+  product sync and is running low (partner reads wait their turn). You get the items read so far (status 200) and a
+  `Retry-After` header: the seconds to wait (at least 2; longer when the budget needs time to refill). Items are only ever
+  returned whole, so `nextCursor` is the cursor after the last returned item: wait, then resume from it. Every response
+  that has items advances; if `items` is empty, nothing was read yet: retry the same request after `Retry-After`.
 - Money is `{ "amount": "499.00", "currencyCode": "INR" }`, always in the shop's currency.
 
 ### GET /orders
@@ -359,12 +364,12 @@ Each item:
   "id": "gid://shopify/Order/1001", "name": "#1001",
   "processedAt": "2026-11-02T10:00:00Z", "createdAt": "2026-11-02T10:00:00Z", "updatedAt": "2026-11-03T10:00:00Z",
   "cancelledAt": null, "test": false, "taxesIncluded": true, "sourceName": "web",
-  "currentSubtotalPriceSet": { "amount": "100.00", "currencyCode": "INR" },
-  "currentTotalDiscountsSet": { "amount": "10.00", "currencyCode": "INR" },
+  "currentSubtotalPriceSet": { "amount": "50.00", "currencyCode": "INR" },
+  "currentTotalDiscountsSet": { "amount": "5.00", "currencyCode": "INR" },
   "currentShippingPriceSet": { "amount": "5.00", "currencyCode": "INR" },
-  "currentTotalPriceSet": { "amount": "95.00", "currencyCode": "INR" },
-  "totalRefundedSet": { "amount": "0.00", "currencyCode": "INR" },
-  "currentTaxLines": [{ "title": "GST", "rate": 0.18, "priceSet": { "amount": "14.49", "currencyCode": "INR" } }],
+  "currentTotalPriceSet": { "amount": "50.00", "currencyCode": "INR" },
+  "totalRefundedSet": { "amount": "45.00", "currencyCode": "INR" },
+  "currentTaxLines": [{ "title": "GST", "rate": 0.18, "priceSet": { "amount": "7.63", "currencyCode": "INR" } }],
   "shippingLines": [{
     "title": "Standard",
     "originalPriceSet": { "amount": "5.00", "currencyCode": "INR" },
@@ -377,7 +382,8 @@ Each item:
     "quantity": 2, "currentQuantity": 1,
     "productId": "gid://shopify/Product/1", "variantId": "gid://shopify/ProductVariant/11",
     "originalUnitPriceSet": { "amount": "50.00", "currencyCode": "INR" },
-    "discountedTotalSet": { "amount": "90.00", "currencyCode": "INR" }
+    "discountedTotalSet": { "amount": "90.00", "currencyCode": "INR" },
+    "discountedUnitPriceAfterAllDiscountsSet": { "amount": "45.00", "currencyCode": "INR" }
   }],
   "lineItemsTruncated": false
 }
@@ -385,12 +391,24 @@ Each item:
 
 - `displayFulfillmentStatus` and `displayFinancialStatus` are Shopify's enums as strings (for example `UNFULFILLED`,
   `PARTIALLY_FULFILLED`, `FULFILLED`; `PENDING`, `PAID`, `PARTIALLY_REFUNDED`, `REFUNDED`). `displayFinancialStatus` can be null.
-- `discountCodes` are the discount codes used on the order (strings; empty array if none).
-- `lineItems`: one entry per product line. `quantity` is what was ordered, `currentQuantity` what remains after removals
-  and refunds. `originalUnitPriceSet` is the unit price before discounts; `discountedTotalSet` is the line total after
-  discounts, before tax, for the line. `productId` and `variantId` are null when
-  the product or variant has since been deleted. Sum `discountedTotalSet` (or quantity) per `productId` to get sales by product.
-- Only the first 100 line items of an order are returned; `lineItemsTruncated` is `true` when the order has more.
+- `discountCodes` are the discount codes used on the order (strings; empty array if none). They are passed through exactly
+  as the merchant created them, and a code can be personal (for example a one-time code made for one customer), so a
+  portal must not show codes publicly.
+- `lineItems`: one entry per line. In the example above, 2 units were ordered and 1 was refunded.
+  - `quantity` and `discountedTotalSet` INCLUDE refunded and removed units: they are what was originally ordered and
+    its total after discounts, before tax.
+  - Net units sold = `currentQuantity` (what remains after removals and refunds).
+  - Net sales of a line, after refunds and including the order-level discount's share, is about
+    `currentQuantity × discountedUnitPriceAfterAllDiscountsSet` (here 1 × 45.00 = 45.00). Sum it per `productId` to get net
+    sales by product. `originalUnitPriceSet` is the unit price before any discount.
+  - `productId` and `variantId` are null when the product or variant has since been deleted.
+  - A line without a product (a custom line the merchant typed on a manual or draft order, or a product that was deleted
+    since) returns `title: null` and `variantTitle: null`: merchant-typed text can hold personal details, so it is not
+    sent. Quantities and amounts are still returned. Trade-off: a deleted product's title is hidden too.
+- Only the first 100 line items of an order are returned; `lineItemsTruncated` is `true` when the order has more. It is
+  also `true` when line items are incomplete because Shopify was busy (throttling or the shared budget): this only happens
+  when not even one whole order of a response could be read, so the order is returned with the line items read so far and
+  the cursor moves past it. Re-read that order later (by `updatedSince`, or a backfill of its day) if you need all its lines.
 - At most 5 shipping lines per order.
 - **No customer data is ever returned**: no names, emails, phone numbers, addresses (billing or shipping), customer ids,
   notes, or anything else personal, on the order or on its line items. Only the fields listed here are read from Shopify.
@@ -417,6 +435,7 @@ archive products you didn't see.
   "description": "Plain text description.", "status": "ACTIVE", "featuredImageUrl": "https://cdn.shopify.com/...jpg",
   "vendor": "Bois & Chiffons", "tags": ["linen", "summer"],
   "collections": [{ "id": "gid://shopify/Collection/5", "title": "Shirts", "handle": "shirts" }],
+  "variantsTruncated": false,
   "variants": [{
     "id": "gid://shopify/ProductVariant/11", "sku": "LS-M", "title": "M",
     "price": { "amount": "499.00", "currencyCode": "INR" }, "compareAtPrice": null,
@@ -425,7 +444,8 @@ archive products you didn't see.
 }
 ```
 
-`onlineStoreUrl` is null when the product isn't on the online store. Every variant of a product is always included.
+`onlineStoreUrl` is null when the product isn't on the online store. Every variant of a product is included, except when Shopify was busy and not even one whole product of a
+response could be read: that product is then returned with the variants read so far and `variantsTruncated: true`, and the cursor moves past it.
 `collections` lists the first 25 collections the product belongs to (manual and automated); `tags` and `vendor` are as set in Shopify admin.
 
 ### GET /shop
