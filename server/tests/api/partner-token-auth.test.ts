@@ -241,6 +241,7 @@ test("a token and the legacy secret get identical order and product data for the
     lineItems: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{
       id: "gid://shopify/LineItem/1", title: "T", variantTitle: null, sku: null, quantity: 1, currentQuantity: 1,
       product: { id: "gid://shopify/Product/1" }, variant: null, originalUnitPriceSet: m, discountedTotalSet: m,
+      discountedUnitPriceAfterAllDiscountsSet: m,
     }] },
   };
   const product = {
@@ -248,13 +249,13 @@ test("a token and the legacy secret get identical order and product data for the
     vendor: "V", tags: ["a"], collections: { nodes: [{ id: "gid://shopify/Collection/1", title: "C", handle: "c" }] },
     featuredMedia: null, variants: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
   };
-  const ordersData = { currentAppInstallation: { accessScopes: [{ handle: "read_all_orders" }] }, orders: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [order] } };
-  const productsData = { shop: { currencyCode: "INR" }, products: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [product] } };
+  const ordersData = { currentAppInstallation: { accessScopes: [{ handle: "read_all_orders" }] }, orders: { pageInfo: { hasNextPage: false, endCursor: null }, edges: [{ cursor: "o1", node: order }] } };
+  const productsData = { shop: { currencyCode: "INR" }, products: { pageInfo: { hasNextPage: false, endCursor: null }, edges: [{ cursor: "p1", node: product }] } };
   adminGraphql.mockResolvedValue(ordersData);
   const viaToken = await (await ordersRoute.GET(get("orders?updatedSince=2026-11-01T00:00:00Z", token))).json();
   const viaLegacy = await (await ordersRoute.GET(get("orders?updatedSince=2026-11-01T00:00:00Z", LEGACY_SECRET))).json();
   expect(viaToken).toEqual(viaLegacy);
-  expect(viaToken.items[0].lineItems[0].productId).toBe("gid://shopify/Product/1");
+  expect(viaToken.items[0].lineItems[0]).toMatchObject({ productId: "gid://shopify/Product/1", title: "T", discountedUnitPriceAfterAllDiscountsSet: { amount: "1.00", currencyCode: "INR" } });
   adminGraphql.mockResolvedValue(productsData);
   const pToken = await (await productsRoute.GET(get("products", token))).json();
   const pLegacy = await (await productsRoute.GET(get("products", LEGACY_SECRET))).json();

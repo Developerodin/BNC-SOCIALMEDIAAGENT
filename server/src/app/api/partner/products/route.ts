@@ -1,7 +1,7 @@
 import { partnerGuard, partnerJson } from "@/lib/partner/auth";
 import { ENDPOINT_SCOPE } from "@/lib/partner/scopes";
 import { parseCursor } from "@/lib/partner/params";
-import { fetchProducts, shopifyErrorResponse } from "@/lib/partner/queries";
+import { fetchProducts, pageResponse, shopifyErrorResponse } from "@/lib/partner/queries";
 
 // GET /api/partner/products (D70): the Social Media Agent's catalogue, live from Shopify. Server to server, so no CORS.
 // Dynamic because it reads req.headers and req.url; no `runtime` export under cacheComponents.
@@ -13,7 +13,7 @@ export async function GET(req: Request) {
   if (cursor !== null && typeof cursor === "object") return partnerJson({ error: cursor.error }, 400);
   try {
     const page = await fetchProducts(store, cursor);
-    return partnerJson(page, 200, page.rateLimited ? { "Retry-After": "2" } : {});
+    return pageResponse(page);
   } catch (e) {
     return shopifyErrorResponse(e);
   }
