@@ -47,5 +47,4 @@ api_version = "2026-10"
   uri = "/api/webhooks/shopify"
 
 [build]
-include_config_on_deploy = true
 automatically_update_urls_on_dev = true
