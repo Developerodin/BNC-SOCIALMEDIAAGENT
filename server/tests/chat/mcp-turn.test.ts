@@ -32,7 +32,7 @@ async function mcpStore() {
   return id;
 }
 
-async function run(storeId: string, message = "tees") {
+async function run(storeId: string, message = "tees", customer?: string) {
   const st = await loadStore(storeId);
   const opened = await turn.openTurn(st, { message, pageUrl: null });
   if (!opened.ok || opened.replay) throw new Error("openTurn failed");
@@ -44,6 +44,7 @@ async function run(storeId: string, message = "tees") {
     history: opened.history,
     message: opened.message,
     country: "DE",
+    customer,
     signal: new AbortController().signal,
     send: (event, data) => events.push({ event, data: data as Record<string, unknown> }),
   });
@@ -178,6 +179,18 @@ test("the cap applies to mcp stores only: an installed store over the same count
   expect(r.events.at(-1)?.event).toBe("done");
   expect(search).toHaveBeenCalled(); // our own search, as before
   expect(fetchMock).not.toHaveBeenCalled(); // no UCP call for an installed store
+});
+
+test("an mcp store never offers order_status, even with a customer, and its prompt has no order sign-in line", async () => {
+  const id = await mcpStore();
+  shopify(() => ucpReply(ucpProduct(7)));
+  create.mockImplementation(fakeStream(["ok"]));
+  for (const customer of [undefined, "gid://shopify/Customer/42"]) {
+    create.mockClear();
+    await run(id, "tees", customer);
+    expect((create.mock.calls[0][0].tools as { name: string }[]).map((t) => t.name)).not.toContain("order_status");
+    expect(create.mock.calls[0][0].instructions).not.toMatch(/sign in to their store account/);
+  }
 });
 
 test("the lock covers the real timeouts: rewrite 8 s + catalog budget + 60 s answer fit in it", async () => {

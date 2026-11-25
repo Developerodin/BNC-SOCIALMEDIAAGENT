@@ -70,7 +70,7 @@ async function start(message = "hello", store?: Awaited<ReturnType<typeof loadSt
   return { st, ...opened };
 }
 
-async function run(extra: { productId?: string; country?: string; signal?: AbortSignal; message?: string } = {}) {
+async function run(extra: { productId?: string; country?: string; signal?: AbortSignal; message?: string; customer?: string } = {}) {
   const t = await start(extra.message);
   const events: { event: string; data: Record<string, unknown> }[] = [];
   await turn.runTurn({
@@ -81,6 +81,7 @@ async function run(extra: { productId?: string; country?: string; signal?: Abort
     message: t.message,
     productId: extra.productId,
     country: extra.country,
+    customer: extra.customer,
     signal: extra.signal ?? new AbortController().signal,
     send: (event, data) => events.push({ event, data: data as Record<string, unknown> }),
   });
@@ -448,6 +449,26 @@ test("when the live check fails (C11), the budget is not applied and the model i
   expect(promptOf()).toContain("#1 Scarf 7");
   expect(promptOf()).toMatch(/Prices could not be checked/);
   expect(r.products).toMatchObject([{ id: gid("7"), price: null }]);
+});
+
+// --- order_status offering ---
+
+const toolNames = () => (create.mock.calls[0][0].tools as { name: string }[]).map((t) => t.name);
+const instructionsOf = () => create.mock.calls[0][0].instructions as string;
+
+test("order_status is offered only with a verified customer; a guest on an installed store gets the sign-in line instead", async () => {
+  search.mockResolvedValue([]);
+  liveCheck.mockResolvedValue(liveMap());
+  create.mockImplementation(fakeStream(["ok"]));
+
+  await run({ customer: "gid://shopify/Customer/42" });
+  expect(toolNames()).toContain("order_status");
+  expect(instructionsOf()).not.toMatch(/sign in to their store account/);
+
+  create.mockClear();
+  await run();
+  expect(toolNames()).not.toContain("order_status");
+  expect(instructionsOf()).toMatch(/sign in to their store account/);
 });
 
 test("answer throwing ChatUnavailable gives an error event with the token; the user message stays and no assistant row is saved", async () => {

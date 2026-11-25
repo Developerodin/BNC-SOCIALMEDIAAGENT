@@ -4,6 +4,7 @@ import { searchProducts } from "@/lib/search-provider";
 import { getProduct } from "@/lib/shopify/catalog-mcp";
 import { CATALOG_DEGRADED, catalogProduct, type TurnCatalog } from "@/lib/shopify/catalog-turn";
 import { askPolicies, POLICY_TYPES, type PolicyType } from "@/lib/shopify/storefront-mcp";
+import { orderStatus } from "./orders";
 import { productBlock, sanitizeData, type PromptProducts } from "./prompt";
 
 // The chat agent's tools (Responses API function tools), run by answer()'s tool loop:
@@ -74,7 +75,7 @@ const PRODUCT_DETAILS_DEF: FunctionTool = {
 export const toolDefs = (): FunctionTool[] => (process.env.UCP_AGENT_PROFILE_URL ? [...TOOL_DEFS, PRODUCT_DETAILS_DEF] : TOOL_DEFS);
 
 export type ToolContext = {
-  store: { id: string; shopDomain: string; settings: unknown };
+  store: { id: string; shopDomain: string; settings: unknown; mode?: "app" | "mcp" };
   /** This turn's live-check outcome; new products are added to it. */
   live: PromptProducts;
   /** n → GID, shared with the marker parser; new products are added to it. */
@@ -86,6 +87,8 @@ export type ToolContext = {
   check: (ids: string[]) => Promise<PromptProducts>;
   /** An mcp-mode store's per-turn catalog (see catalog-turn.ts); undefined for installed stores. */
   catalog?: TurnCatalog;
+  /** The verified customer GID from the signed session (never from the model or the shopper's text); order_status reads only this customer's orders. */
+  customer?: string;
 };
 
 const data = (body: string) => `<store_data>\n${body}\n</store_data>`;
@@ -99,6 +102,7 @@ export async function runTool(name: string, rawArgs: string, ctx: ToolContext): 
     return "Invalid arguments.";
   }
   if (name === "product_details") return data(await productDetails(args.product, ctx));
+  if (name === "order_status") return data(await orderStatus(args, ctx));
   const query = typeof args.query === "string" ? args.query.slice(0, 500) : "";
   if (!query.trim()) return "Invalid arguments: query is empty.";
 

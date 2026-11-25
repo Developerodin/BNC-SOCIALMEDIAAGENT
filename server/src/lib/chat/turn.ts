@@ -13,6 +13,7 @@ import { HISTORY_MESSAGES, MCP_DAILY_MESSAGES } from "./limits";
 import { maskPII } from "./mask";
 import { buildInput, LARGE_SYSTEM_PROMPT, SYSTEM_PROMPT, type PromptProducts } from "./prompt";
 import { rewriteQuery, type ChatTurn } from "./rewrite";
+import { ORDER_STATUS_DEF } from "./orders";
 import { runTool, toolDefs, type ToolContext } from "./tools";
 import type { SseEvent } from "./sse";
 import { mintToken, tokenHash, verifyToken } from "./token";
@@ -402,6 +403,8 @@ export async function runTurn(t: {
   message: string;
   productId?: string;
   country?: string;
+  /** The verified customer GID of the signed session (route.ts customerOf); absent for a guest. */
+  customer?: string;
   signal: AbortSignal;
   send: (event: SseEvent, data: unknown) => void;
 }): Promise<void> {
@@ -460,14 +463,18 @@ export async function runTurn(t: {
       signal,
       check: (ids) => checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal, catalog }),
       catalog,
+      customer: t.customer,
     };
+    // Order lookups need the Admin API (installed stores only): offered to a verified customer, a guest is told to sign in.
+    const installed = store.mode !== "mcp";
+    const baseDefs = wide ? toolDefs().filter((d) => d.name !== "search_products") : toolDefs();
     const result = await answer({
-      system: SYSTEM_PROMPT(name),
-      largeSystem: LARGE_SYSTEM_PROMPT(name),
+      system: SYSTEM_PROMPT(name, installed && !t.customer),
+      largeSystem: LARGE_SYSTEM_PROMPT(name, installed && !t.customer),
       input,
       // A budget or price-order question has already been filtered and sorted by applyBudget (D87); a second search would
       // bypass that (a $200 boot under "boots under $50"), so it only gets store_policies.
-      tools: { defs: wide ? toolDefs().filter((d) => d.name !== "search_products") : toolDefs(), run: (toolName, args) => runTool(toolName, args, toolCtx) },
+      tools: { defs: installed && t.customer ? [...baseDefs, ORDER_STATUS_DEF] : baseDefs, run: (toolName, args) => runTool(toolName, args, toolCtx) },
       allowed,
       storeId,
       signal,
