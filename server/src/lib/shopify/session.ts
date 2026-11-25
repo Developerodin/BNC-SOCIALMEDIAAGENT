@@ -18,6 +18,52 @@ async function hasValidTokens(shop: string, conn: Conn = db): Promise<string | n
   return t && tokensUsable(t) ? s.id : null;
 }
 
+/** Exchanges the id token for a new offline token and stores it. Runs inside the per-shop lock; returns the store id. */
+async function exchangeTokens(lock: Conn, shop: string, sessionToken: string): Promise<string> {
+  const { session } = await shopify.auth.tokenExchange({
+    shop,
+    sessionToken,
+    requestedTokenType: RequestedTokenType.OfflineAccessToken,
+    expiring: true,
+  });
+  const { storeId } = await upsertStore(shop, lock);
+  // Phase 4 upgrade path: a store that ran MCP-only has now installed the app, so sync, widget config and shop info
+  // resume (the first sync is queued below). Chats, settings and the embed list carry over on the same row.
+  await lock.update(stores).set({ mode: "app" }).where(and(eq(stores.id, storeId), eq(stores.mode, "mcp")));
+  await saveTokens(storeId, {
+    accessToken: session.accessToken!,
+    accessExpiresAt: session.expires ?? null,
+    refreshToken: session.refreshToken ?? null,
+    refreshExpiresAt: session.refreshTokenExpires ?? null,
+  }, lock);
+  // Jobs can reach Shopify again. Any other sync_error is left for the next sync to clear.
+  await lock
+    .update(stores)
+    .set({ syncError: null })
+    .where(and(eq(stores.id, storeId), eq(stores.syncError, RECONNECT_NEEDED)));
+  return storeId;
+}
+
+/**
+ * Forces a new token exchange for the shop in the request's id token, even while the stored token is still valid.
+ * Used after a merchant approves an optional scope: the stored offline token was issued before the grant, so it may not
+ * carry the scope until a new exchange. Throws Response(401).
+ */
+export async function forceTokenExchange(req: Request): Promise<void> {
+  const sessionToken = req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
+  if (!sessionToken) throw unauthorized();
+  let shop: string;
+  try {
+    shop = new URL((await shopify.session.decodeSessionToken(sessionToken)).dest).hostname;
+  } catch {
+    throw unauthorized();
+  }
+  await db.transaction(async (lock) => {
+    await lock.execute(dsql`select pg_advisory_xact_lock(hashtext(${shop}))`);
+    await exchangeTokens(lock, shop, sessionToken);
+  });
+}
+
 /** Verifies the App Bridge id token; exchanges it for an expiring offline token when the store has none usable. Throws Response(401). */
 export async function authenticateEmbedded(req: Request): Promise<{ storeId: string; shop: string }> {
   const sessionToken = req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
@@ -50,28 +96,7 @@ export async function authenticateEmbedded(req: Request): Promise<{ storeId: str
     const winner = await hasValidTokens(shop, lock);
     if (winner) return { storeId: winner, exchanged: false };
 
-    const { session } = await shopify.auth.tokenExchange({
-      shop,
-      sessionToken,
-      requestedTokenType: RequestedTokenType.OfflineAccessToken,
-      expiring: true,
-    });
-    const { storeId } = await upsertStore(shop, lock);
-    // Phase 4 upgrade path: a store that ran MCP-only has now installed the app, so sync, widget config and shop info
-    // resume (the first sync is queued below). Chats, settings and the embed list carry over on the same row.
-    await lock.update(stores).set({ mode: "app" }).where(and(eq(stores.id, storeId), eq(stores.mode, "mcp")));
-    await saveTokens(storeId, {
-      accessToken: session.accessToken!,
-      accessExpiresAt: session.expires ?? null,
-      refreshToken: session.refreshToken ?? null,
-      refreshExpiresAt: session.refreshTokenExpires ?? null,
-    }, lock);
-    // Jobs can reach Shopify again. Any other sync_error is left for the next sync to clear.
-    await lock
-      .update(stores)
-      .set({ syncError: null })
-      .where(and(eq(stores.id, storeId), eq(stores.syncError, RECONNECT_NEEDED)));
-    return { storeId, exchanged: true };
+    return { storeId: await exchangeTokens(lock, shop, sessionToken), exchanged: true };
   });
   // After commit, so the job never sees an uncommitted store. Install and reinstall both sync the catalog.
   // ponytail: if this send fails the request errors, and the next load finds valid tokens and won't retry the sync.

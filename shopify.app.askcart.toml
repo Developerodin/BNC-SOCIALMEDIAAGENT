@@ -11,7 +11,9 @@ name = "AskCart"
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 # unauthenticated_read_customers: lets AskCart check a mobile customer's sign-in token (Storefront API). Existing installs must re-approve.
-scopes = "read_products,read_inventory,read_orders,read_all_orders,read_publications,unauthenticated_read_customers,write_app_proxy,write_files,read_files"
+scopes = "read_products,read_inventory,read_orders,read_all_orders,read_publications,unauthenticated_read_customers,write_app_proxy"
+# write_files, read_files: only the chat widget's Upload logo needs them, so they are asked for when a merchant first uploads (App Bridge scopes.request), not at install.
+optional_scopes = [ "write_files", "read_files" ]
 use_legacy_install_flow = false
 
 [auth]

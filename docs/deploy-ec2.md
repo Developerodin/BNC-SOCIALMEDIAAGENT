@@ -179,6 +179,17 @@ server {
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $remote_addr;
   }
+  # The logo upload sends the image as the request body, up to 2 MB (MAX_LOGO_BYTES); the 1 MB default would answer 413.
+  location = /api/app/logo {
+    client_max_body_size 3m;
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    # An upload can take about a minute (staged upload, file processing).
+    proxy_read_timeout 120s;
+  }
   location / {
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
@@ -227,8 +238,15 @@ and the App Store review asks about them):
 | `read_products`, `read_inventory`, `read_publications` | Product sync, search and live price/stock on chat cards |
 | `read_orders`, `read_all_orders` | The partner / Social Media Agent read API, and the chat's `order_status` tool (a signed-in shopper's own 5 most recent orders). `read_all_orders` needs Shopify approval for orders older than 60 days. Order and customer fields also need **protected customer data** access (Partner Dashboard → the app → API access → Protected customer data, level 1); without it order questions answer "temporarily unavailable". |
 | `unauthenticated_read_customers` | Verifying a mobile-app shopper's login so their chat history follows them |
-| `write_files`, `read_files` | The chat widget's **Upload logo**: stores the merchant's logo in their Shopify Files and reads back its CDN URL. Existing installs must re-approve (until they do, the upload says to reopen the app); the rest of the app is unaffected |
 | `write_app_proxy` | Required by Shopify for any app with an App Proxy (website customer sign-in) |
+
+**Optional scopes.** `write_files` and `read_files` are listed under `optional_scopes` in the toml, not `scopes`. They
+serve only the chat widget's **Upload logo** (store the logo in the merchant's Shopify Files, read back its CDN URL, and
+delete the previous logo file this app uploaded). Installing and re-approving the required scopes does not ask for them.
+The first time a merchant presses Upload logo, the admin shows Shopify's permission dialog (App Bridge
+`shopify.scopes.request`); on approval the server takes a fresh token (a new token exchange) and the upload goes through.
+A merchant who declines keeps everything else, and the widget falls back to their Settings → Brand logo.
+Release the toml with `shopify app deploy` before anyone tries the upload, or the request has nothing to grant.
 
 Commit the toml change, so the next `shopify app deploy` doesn't revert it.
 
@@ -347,6 +365,16 @@ cd askcart/server && git pull && npm ci && npm run build && npx drizzle-kit migr
 ```
 
 If the widget changed, also run `npm --prefix server run build:widget` and `shopify app deploy` from your machine.
+
+**Order matters: deploy the server (with its migrations) before `shopify app deploy`.** The theme blocks and the app
+config call routes and settings the new server code adds; released first, product pages call a route that does not exist
+yet and the "Ask our AI agent" block collapses. After a scope change in the toml, also check the dev store: open the app,
+press Upload logo, approve the dialog, and confirm the upload completes.
+
+**Health check.** `GET /api/health` answers `200 {"ok":true}` when the process is up and the database answers a
+`select 1` within 3 seconds, else `503 {"ok":false}`; it needs no login and reveals nothing else. pm2 only restarts a
+crashed process, so point an uptime monitor at it (or a cron: `curl -fsS -m 10 https://app.askcart.example/api/health`)
+to notice a hung one.
 
 **Deploy off-peak.** A restart in the middle of an answer cuts it off and locks that conversation for about 90 seconds
 (the shopper sees "busy" until the lock expires). `--kill-timeout 10000` lets short answers finish first, not long ones.

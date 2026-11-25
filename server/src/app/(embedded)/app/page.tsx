@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 // App Bridge global, loaded by the embedded layout. The s-* tags are Polaris web components (typed in (embedded)/polaris.d.ts).
-declare const shopify: { idToken(): Promise<string> };
+declare const shopify: {
+  idToken(): Promise<string>;
+  scopes: { query(): Promise<{ granted: string[] }>; request(scopes: string[]): Promise<{ result: "granted-all" | "declined-all" }> };
+};
 
 type SyncState = {
   status: "idle" | "running" | "failed";
@@ -19,6 +22,27 @@ type SyncState = {
 
 async function authed(url: string, init?: RequestInit) {
   return fetch(url, { ...init, headers: { Authorization: "Bearer " + (await shopify.idToken()) } });
+}
+
+const FILE_SCOPES = ["write_files", "read_files"];
+
+/** True when the store has approved the optional file scopes (or App Bridge can't say: the server then decides). */
+async function hasFileScopes(): Promise<boolean> {
+  try {
+    const { granted } = await shopify.scopes.query();
+    return FILE_SCOPES.every((s) => granted.includes(s));
+  } catch {
+    return true;
+  }
+}
+
+/** Opens App Bridge's permission dialog for the file scopes; true when the merchant approved. */
+async function requestFileScopes(): Promise<boolean> {
+  try {
+    return (await shopify.scopes.request(FILE_SCOPES)).result === "granted-all";
+  } catch {
+    return false;
+  }
 }
 
 /** The text of a Polaris field (s-text-field, s-text-area, s-select): its `input` and `change` events carry no React-typed value. */
@@ -639,8 +663,20 @@ function WidgetSettingsCard() {
     if (file.size > 2 * 1024 * 1024) return fail("That file is too big.");
     setUploading(true);
     setNote(null);
+    const declined = "Allow access to your store's files to upload a logo, then try again.";
     try {
-      const res = await authed("/api/app/logo", { method: "POST", body: file });
+      // The file scopes are optional: ask the merchant (App Bridge dialog) the first time instead of at install.
+      let asked = false;
+      if (!(await hasFileScopes())) {
+        asked = true;
+        if (!(await requestFileScopes())) {
+          setUploading(false);
+          return fail(declined);
+        }
+      }
+      let res = await authed("/api/app/logo", { method: "POST", body: file });
+      // The check above can't tell (or the grant isn't on our token yet): ask once, then try once more.
+      if (res.status === 403 && !asked && (await requestFileScopes())) res = await authed("/api/app/logo", { method: "POST", body: file });
       if (res.ok) {
         const { url } = (await res.json()) as { url: string };
         setForm((f) => f && { ...f, avatarUrl: url });
