@@ -266,7 +266,13 @@ describe("lazy questions fetch", () => {
 
 describe("askcart-ask-ai.liquid theme matching", () => {
   const liquid = readFileSync(path.resolve(__dirname, "../../../shopify/extensions/askcart/blocks/askcart-ask-ai.liquid"), "utf8");
-  const css = liquid.split("{% stylesheet %}")[1].split("{% endstylesheet %}")[0];
+  // App blocks can't hold {% stylesheet %} (Shopify's AppBlockValidTags check): the CSS is an asset named in the schema.
+  const css = readFileSync(path.resolve(__dirname, "../../../shopify/extensions/askcart/assets/askcart-ask-ai.css"), "utf8");
+
+  it("loads its CSS as an asset, never a {% stylesheet %} tag", () => {
+    expect(liquid).not.toContain("{% stylesheet %}");
+    expect(liquid).toContain('"stylesheet": "askcart-ask-ai.css"');
+  });
 
   it("takes font and colour from the theme", () => {
     expect(css).toMatch(/\.askcart-ai \{[^}]*font-family: inherit;[^}]*color: inherit;/);
