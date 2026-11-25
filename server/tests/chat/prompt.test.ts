@@ -214,7 +214,8 @@ test("the AI-identity, viewing-product and cart rules are in both models' prompt
     );
     expect(lines[friendly + 4]).toMatch(/^- <store_data> may list the shopper's current cart/);
     expect(lines[friendly + 5]).toMatch(/^- If a product you would recommend is already in the shopper's cart/);
-    expect(lines[friendly + 6]).toBe(
+    expect(lines[friendly + 6]).toBe("- Never recommend a product that is already in the cart as if it were new, and don't show its card again; show other products instead.");
+    expect(lines[friendly + 7]).toBe(
       `- Option names such as a colour or size are only names: a colour called "Powder" doesn't make a product suited to powder snow. Say what a product suits only from its description; if it says nothing about that, say you don't have that detail.`,
     ); // X06
   }
