@@ -22,6 +22,19 @@
     data-teaser-close="{{ 'launcher.teaser_close' | t | escape }}"
     hidden
   ></div>
+  {%- comment -%}
+    Ask our AI agent below the Buy buttons, with no theme editing. The launcher copies this template in after the buy form
+    (unless the merchant placed the block by hand) and loads the block's script; the stylesheet link rides inside the
+    template so it loads only when the block is inserted, on product pages only. Questions are AI-written per product.
+  {%- endcomment -%}
+  {%- if block.settings.auto_ask_ai and request.page_type == 'product' and product and cfg.apiBase != blank -%}
+    {%- assign ask_eyebrow = 'ask_ai.eyebrow' | t -%}
+    {%- assign ask_heading = 'ask_ai.heading' | t -%}
+    <template data-askcart-ask-ai-auto data-script="{{ 'askcart-ask-ai.js' | asset_url | escape }}">
+      <link rel="stylesheet" href="{{ 'askcart-ask-ai.css' | asset_url | escape }}">
+      {%- render 'askcart-ask-ai', cfg: cfg, product: product, eyebrow: ask_eyebrow, heading: ask_heading, pill_count: 3 -%}
+    </template>
+  {%- endif -%}
 {%- endif -%}
 
 {% schema %}
@@ -29,6 +42,14 @@
   "name": "AskCart chat",
   "target": "body",
   "javascript": "askcart-launcher.js",
-  "settings": []
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "auto_ask_ai",
+      "label": "Show \"Ask our AI agent\" below Add to cart on product pages",
+      "info": "If you place the block yourself in the theme editor, yours is used instead.",
+      "default": true
+    }
+  ]
 }
 {% endschema %}

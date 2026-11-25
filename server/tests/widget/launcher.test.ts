@@ -340,3 +340,57 @@ describe("launcher scope", () => {
     expect(widgetLoaded()).toHaveBeenCalledWith({ productId: "1" });
   });
 });
+
+describe("automatic Ask our AI agent block", () => {
+  const AI_SRC = "https://cdn.shopify.com/extensions/x/assets/askcart-ask-ai.js";
+  const template = () =>
+    `<template data-askcart-ask-ai-auto data-script="${AI_SRC}"><link rel="stylesheet" href="x.css"><div class="askcart-ai" data-askcart-ask-ai></div></template>`;
+  const form = `<form action="/cart/add" method="post"><button>Add to cart</button></form>`;
+  const aiScripts = () => document.querySelectorAll(`script[src="${AI_SRC}"]`);
+
+  it("is inserted right after the buy form, and its script is loaded", () => {
+    document.body.insertAdjacentHTML("beforeend", `<main><div id="price"></div>${form}<p id="after"></p></main>` + template());
+    mountRoot();
+    start();
+    expect(document.querySelector("#after")!.previousElementSibling?.hasAttribute("data-askcart-ask-ai")).toBe(true);
+    expect(document.querySelector("form")!.nextElementSibling?.matches("link")).toBe(true);
+    expect(aiScripts()).toHaveLength(1);
+  });
+
+  it("goes after Dawn's <product-form> wrapper, not inside it, and prefers the form in main", () => {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<header><form action="/cart/add"></form></header><main><product-form id="pf">${form}</product-form></main>` + template(),
+    );
+    mountRoot();
+    start();
+    expect(document.querySelector("#pf [data-askcart-ask-ai]")).toBeNull();
+    expect(document.querySelector("#pf")!.nextElementSibling?.matches("link")).toBe(true);
+    expect(document.querySelectorAll("main [data-askcart-ask-ai]")).toHaveLength(1);
+    expect(document.querySelector("header [data-askcart-ask-ai]")).toBeNull();
+  });
+
+  it("is not inserted when the merchant placed the block by hand", () => {
+    document.body.insertAdjacentHTML("beforeend", `<main>${form}</main><div data-askcart-ask-ai id="mine"></div>` + template());
+    mountRoot();
+    start();
+    expect(document.querySelectorAll("[data-askcart-ask-ai]")).toHaveLength(1);
+    expect(aiScripts()).toHaveLength(0);
+  });
+
+  it("inserts nothing when the page has no buy form", () => {
+    document.body.insertAdjacentHTML("beforeend", `<main><form action="/search"></form></main>` + template());
+    mountRoot();
+    start();
+    expect(document.querySelectorAll("[data-askcart-ask-ai]")).toHaveLength(0);
+    expect(aiScripts()).toHaveLength(0);
+  });
+
+  it("does nothing without the template (setting off, or not a product page)", () => {
+    document.body.insertAdjacentHTML("beforeend", `<main>${form}</main>`);
+    mountRoot();
+    start();
+    expect(document.querySelectorAll("[data-askcart-ask-ai]")).toHaveLength(0);
+    expect(document.querySelectorAll("script[src*='askcart-ask-ai']")).toHaveLength(0);
+  });
+});

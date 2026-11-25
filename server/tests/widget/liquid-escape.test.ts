@@ -7,7 +7,11 @@ import path from "node:path";
 //   - `'key' | t` (Shopify escapes translations unless the key ends in `_html`; none of ours does),
 //   - inside a `{% capture %}` that is itself output through `| escape`: values ending in `| json`, or another capture.
 const blocks = path.resolve(__dirname, "../../../shopify/extensions/askcart/blocks");
-const files = readdirSync(blocks).filter((f) => f.endsWith(".liquid"));
+const snippets = path.resolve(__dirname, "../../../shopify/extensions/askcart/snippets");
+const files = [
+  ...readdirSync(blocks).filter((f) => f.endsWith(".liquid")).map((f) => path.join(blocks, f)),
+  ...readdirSync(snippets).filter((f) => f.endsWith(".liquid")).map((f) => path.join(snippets, f)),
+];
 
 function outputs(src: string) {
   const out: { expr: string; capture: string | null }[] = [];
@@ -22,15 +26,15 @@ function outputs(src: string) {
 }
 
 describe("Liquid outputs are escaped (Task 33)", () => {
-  it.each(files)("%s", (file) => {
-    const src = readFileSync(path.join(blocks, file), "utf8").replace(/\{%\s*schema\s*%\}[\s\S]*?\{%\s*endschema\s*%\}/, "");
+  it.each(files.map((f) => [path.basename(f), f]))("%s", (_name, file) => {
+    const src = readFileSync(file, "utf8").replace(/\{%\s*schema\s*%\}[\s\S]*?\{%\s*endschema\s*%\}/, "");
     const captures = new Set([...src.matchAll(/\{%-?\s*capture\s+(\w+)/g)].map((m) => m[1]));
     const bad: string[] = [];
     for (const { expr, capture } of outputs(src)) {
       const filters = expr.split("|").map((s) => s.trim());
       const last = filters[filters.length - 1];
       if (last === "escape") continue;
-      if (expr === "block.shopify_attributes") continue;
+      if (expr === "block.shopify_attributes" || expr === "shopify_attributes") continue; // the latter is the block's pass-through to the snippet
       if (last === "t" && !/_html['"]/.test(filters[0])) continue;
       if (capture && (last === "json" || captures.has(expr))) continue;
       bad.push(expr);
@@ -50,7 +54,7 @@ describe("Liquid outputs are escaped (Task 33)", () => {
 
   it("every capture is output only through escape", () => {
     for (const file of files) {
-      const src = readFileSync(path.join(blocks, file), "utf8");
+      const src = readFileSync(file, "utf8");
       const captures = [...src.matchAll(/\{%-?\s*capture\s+(\w+)/g)].map((m) => m[1]);
       for (const c of captures) {
         for (const { expr, capture } of outputs(src)) {
