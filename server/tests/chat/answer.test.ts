@@ -96,6 +96,23 @@ test("a second message item in one response is not appended to the first", async
   expect(texts.join("")).toBe("I am an AI. Need a snowboard?");
 });
 
+test("the first message item is shown once it has non-whitespace text; a whitespace-only item before it is passed over and skipped items are counted in the log, never their text", async () => {
+  create.mockImplementationOnce(async () =>
+    (async function* () {
+      yield { type: "response.output_text.delta", item_id: "m0", delta: "\n" };
+      yield { type: "response.output_text.delta", item_id: "m1", delta: "The real " };
+      yield { type: "response.output_text.delta", item_id: "m1", delta: "answer." };
+      yield { type: "response.output_text.delta", item_id: "m2", delta: "secret second text" };
+      yield { type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 1 } } };
+    })(),
+  );
+  const { opts, texts } = setup();
+  expect((await answer(opts)).text).toBe("The real answer.");
+  expect(texts.join("")).toBe("The real answer.");
+  expect(console.info).toHaveBeenCalledWith("chat answer items skipped", { storeId: "store-1", items: 2, deltas: 2 });
+  expect(JSON.stringify(vi.mocked(console.info).mock.calls)).not.toContain("secret");
+});
+
 test("[[escalate]] split across deltas: no small-model text, small aborted, large answers", async () => {
   create
     .mockImplementationOnce(stream(["[[esc", "alate]] let me", " think", { hang: true }]))

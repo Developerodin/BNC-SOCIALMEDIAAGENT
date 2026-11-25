@@ -74,6 +74,17 @@ test("budget and sort together: filtered, then the survivors ordered", () => {
   expect(r.hits.slice(0, 2).map((h) => h.productId)).toEqual(["b", "c"]);
 });
 
+test("C05 note: only this search's hits are considered, and the price is left out when the shopper's currency differs", () => {
+  const viewed = product("v", [v("700.00")]); // live, but not one of the search hits
+  const live = liveOf(a, b, c, viewed);
+  const r = applyBudget({ hits: [hit("a"), hit("b")], live, budget: { max: 1000 }, sort: null, currency: "INR" });
+  expect(r.note).toContain('"P a" at ₹1,500.');
+  const other = applyBudget({ hits: [hit("a"), hit("b")], live, budget: { max: 1000 }, sort: null, currency: "INR", shopperCurrency: "EUR" });
+  expect(other.note).toBe('Left out for costing more than the budget: the cheapest of those is "P a".');
+  const same = applyBudget({ hits: [hit("a"), hit("b")], live, budget: { max: 1000 }, sort: null, currency: "INR", shopperCurrency: "INR" });
+  expect(same.note).toContain("at ₹1,500.");
+});
+
 test("the C11 fallback (no live prices) filters and sorts nothing, and says prices couldn't be checked", () => {
   const live = { ok: false as const, cards: new Map([["a", { id: "a", title: "A", url: "u", imageUrl: null }]]) };
   const r = applyBudget({ hits, live, budget: { max: 10 }, sort: "cheapest", currency: "INR" });

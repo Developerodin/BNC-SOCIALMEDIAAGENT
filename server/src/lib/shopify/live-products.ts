@@ -244,12 +244,12 @@ function moneyText(amount: string, currency: string): string | null {
   }
 }
 
-/** "€629.95 (was €699.95)": the "was" part only when the original price is higher. null when there is no usable price. */
+/**
+ * "€629.95": the variant's current price. No "was" price: announcing a reduction from the merchant's compare-at price is
+ * the merchant's to do (EU price-indication rules), so the model never sees it. null when there is no usable price.
+ */
 function priceText(v: LiveVariant, currency: string): string | null {
-  const now = moneyText(v.price, currency);
-  if (!now) return null;
-  const was = v.compareAtPrice && Number(v.compareAtPrice) > Number(v.price) ? moneyText(v.compareAtPrice, currency) : null;
-  return was ? `${now} (was ${was})` : now;
+  return moneyText(v.price, currency);
 }
 
 /** "€19.00–€29.00" (one amount when they match): the lowest to the highest variant price; null when none parses. */
@@ -262,7 +262,7 @@ function priceRange(p: LiveProduct): string | null {
 
 /**
  * The product's `LIVE:` line for the model (D93). C14 (a): stock as the card shows it, a count only below the threshold
- * (UD10, default 5), otherwise "in stock". The price comes first ("€629.95 (was €699.95); in stock"). When variants differ
+ * (UD10, default 5), otherwise "in stock". The price comes first ("€629.95; in stock"). When variants differ
  * in price each carries its own ("S: €19.00, in stock; M: €29.00, in stock"); a sold-out product keeps its price (a range
  * when variants differ). C26: when the shopper's currency is known and differs from the product's, the price is left out
  * (the card shows it) and only stock remains; unknown means include.

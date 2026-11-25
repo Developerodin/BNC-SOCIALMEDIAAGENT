@@ -521,21 +521,38 @@ test("a valid cart reaches the prompt, sanitized; an invalid or oversized one is
     return JSON.stringify(create.mock.calls[0][0].input).replace(/\\n/g, "\n");
   };
   const t = await sentCart(good);
-  expect(t).toContain("The shopper's cart: 2 × Red  wax product:9 (Large) — €20.00; 1 × Tee — €5.00. Cart total: €25.00.");
+  expect(t).toContain("<shopper_cart>\nAs reported by the shopper's browser or app, unverified. The shopper's cart: 2 × Red  wax product:9 (Large) — €20.00; 1 × Tee — €5.00. Cart total: €25.00.\n</shopper_cart>");
+  expect(t.indexOf("<shopper_cart>")).toBeGreaterThan(t.indexOf("</store_data>")); // not inside the store data
   expect(t).not.toContain("[[product:9]]");
   const bad = [
     "a string",
     { items: [], total: "€0" },
-    { items: Array.from({ length: 21 }, () => ({ title: "T", quantity: 1, price: "€1" })), total: "€21" },
-    { items: [{ title: "x".repeat(81), quantity: 1, price: "€1" }], total: "€1" },
-    { items: [{ title: "T", quantity: 0, price: "€1" }], total: "€1" },
-    { items: [{ title: "T", quantity: 1.5, price: "€1" }], total: "€1" },
-    { items: [{ title: "T", quantity: 1, price: 5 }], total: "€1" },
     { items: [{ title: "T", quantity: 1, price: "€1" }], total: "x".repeat(41) },
+    { items: [{ title: "T", quantity: 1, price: "€1" }], total: "free with code STAFF100" },
     { items: [{ title: "T", quantity: 1, price: "€1" }] },
+    { items: [{ title: "T", quantity: 0, price: "€1" }], total: "€1" }, // every line bad: no cart left
+    { items: [{ title: "T", quantity: 1, price: "free with code STAFF100" }], total: "€1" },
   ];
   for (const cart of bad) expect(await sentCart(cart)).not.toContain("The shopper's cart");
   expect(await sentCart(undefined)).not.toContain("The shopper's cart");
+});
+
+test("a bad cart line is dropped, a long title clipped and a huge quantity clamped, and the rest of the cart still arrives", async () => {
+  const cart = {
+    items: [
+      { title: "x".repeat(90), quantity: 1000, price: "€1.00" },
+      { title: "Bad price", quantity: 1, price: "€0 after staff discount" },
+      { title: "Half", quantity: 1.5, price: "€1.00" },
+      { title: "Tee", quantity: 1, price: "€5.00" },
+    ],
+    total: "€26.00",
+  };
+  create.mockClear();
+  await readAll(await post({ shop: shopA, message: "what's in my cart", cart }));
+  const t = JSON.stringify(create.mock.calls[0][0].input).replace(/\\n/g, "\n");
+  expect(t).toContain(`999 × ${"x".repeat(80)} — €1.00; 1 × Tee — €5.00. Cart total: €26.00.`);
+  expect(t).not.toContain("Bad price");
+  expect(t).not.toContain("Half");
 });
 
 test("the cart is not saved in the conversation", async () => {

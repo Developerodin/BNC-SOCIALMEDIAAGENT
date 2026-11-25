@@ -40,9 +40,9 @@ test("compare-at only when the list price is higher and in the same currency", (
   expect(v(money(9000, "EUR"))).toBeNull();
 });
 
-test("D93: the MCP path's LIVE line carries the same price, sale price and currency guard as the installed path", () => {
+test("D93: the MCP path's LIVE line carries the same price and currency guard (no was-price) as the installed path", () => {
   const sale = live(ucpProduct(1, { variants: [ucpVariant(11, { price: money(62995, "EUR"), list: money(69995, "EUR") })] }))!;
-  expect(toPromptStock(sale, 5)).toBe("€629.95 (was €699.95); in stock");
+  expect(toPromptStock(sale, 5)).toBe("€629.95; in stock");
   expect(toPromptStock(sale, 5, "USD")).toBe("in stock");
   const jpy = live(ucpProduct(2, { variants: [ucpVariant(21, { price: money(4800, "JPY") })] }))!;
   expect(toPromptStock(jpy, 5)).toBe("¥4,800; in stock");

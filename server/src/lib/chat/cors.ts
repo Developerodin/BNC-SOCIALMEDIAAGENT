@@ -64,17 +64,17 @@ function appKeyCheck(req: Request, key: string, store: { id: string; mobileKeyHa
   return limited(req, "mobile", store.id, MOBILE_IP_LIMIT, MOBILE_STORE_LIMIT);
 }
 
-/** 429 with Retry-After for a caller over a limit. */
-function tooMany(wait: number): Response {
-  return Response.json({ error: "rate_limited" }, { status: 429, headers: { "Retry-After": String(wait) } });
+/** 429 with Retry-After for a caller over a limit. `cors` is the allowed Origin's headers, so a browser can read the 429 instead of logging a CORS error. */
+function tooMany(wait: number, cors: Record<string, string> = {}): Response {
+  return Response.json({ error: "rate_limited" }, { status: 429, headers: { ...cors, "Retry-After": String(wait) } });
 }
 
 /** Per-IP then per-store limit under `kind` keys; the 429 Response, or null while within both. */
-function limited(req: Request, kind: string, storeId: string, ipLimit: number, storeLimit: number): Response | null {
+function limited(req: Request, kind: string, storeId: string, ipLimit: number, storeLimit: number, cors?: Record<string, string>): Response | null {
   // ponytail: in-memory counters (see rate-limit.ts), so N instances allow N times the limits; move with the M10 deployment.
   const wait =
     rateLimit(`${kind}:ip:${storeId}:${clientIp(req)}`, Date.now(), ipLimit) || rateLimit(`${kind}:store:${storeId}`, Date.now(), storeLimit);
-  return wait ? tooMany(wait) : null;
+  return wait ? tooMany(wait, cors) : null;
 }
 
 /** A route's own rate-limit bucket on the web path (default: the shared "web" one of the chat routes). */
@@ -112,7 +112,7 @@ export async function storeFor(req: Request, shop: unknown, limits?: Limits) {
   const cors = corsFor(req, store);
   if (!cors) return new Response(null, { status: 403 });
   // The Origin is only a claim a script can spoof, so an allowed one is limited too (after the check: refused ones cost nothing).
-  const slow = limited(req, limits?.kind ?? "web", store.id, limits?.ip ?? WEB_IP_LIMIT, limits?.store ?? WEB_STORE_LIMIT);
+  const slow = limited(req, limits?.kind ?? "web", store.id, limits?.ip ?? WEB_IP_LIMIT, limits?.store ?? WEB_STORE_LIMIT, cors);
   return slow ?? { store: rest, cors };
 }
 

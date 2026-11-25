@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { forStore } from "@/db/client";
 import { productQuestions, products } from "@/db/schema";
+import { rateLimit } from "@/lib/rate-limit";
 import { widgetLocale } from "@/lib/widget-config";
 import { chatModel, chatReasoning, deadline, errorStatus, openai } from "./openai";
 import { sanitizeData } from "./prompt";
@@ -45,6 +46,17 @@ export function cleanQuestions(v: unknown): string[] {
   return out.slice(0, MAX_QUESTIONS);
 }
 
+// ponytail: per process. OpenAI generations allowed per store per minute (a cache hit costs nothing and isn't counted), and
+// how long a failed generation (OpenAI outage) stops new ones. With several instances each keeps its own. Upgrade path: a shared counter.
+const GENERATIONS_PER_MINUTE = 60;
+const OUTAGE_MS = 60_000;
+let outageUntil = 0;
+
+/** Tests only. */
+export function resetQuestionsState(): void {
+  outageUntil = 0;
+}
+
 async function generate(content: string, language: string): Promise<string[] | null> {
   const d = deadline(QUESTIONS_TIMEOUT_MS);
   try {
@@ -62,7 +74,10 @@ async function generate(content: string, language: string): Promise<string[] | n
     return cleanQuestions((JSON.parse(res.output_text) as { questions?: unknown }).questions);
   } catch (err) {
     // The failure kind only, never the product text.
-    console.warn("product questions failed", { reason: d.expired() ? "timeout" : (errorStatus(err) ?? "error") });
+    const status = errorStatus(err);
+    console.warn("product questions failed", { reason: d.expired() ? "timeout" : (status ?? "error") });
+    // An outage (timeout, network, 429, 5xx) is remembered, so the next requests don't each wait out the 5 s; a bad reply for one product isn't.
+    if (d.expired() || (!(err instanceof SyntaxError) && (status === undefined || status === 429 || status >= 500))) outageUntil = Date.now() + OUTAGE_MS;
     return null;
   } finally {
     d.clear();
@@ -116,6 +131,8 @@ async function compute(storeId: string, shopifyId: string, lang: string): Promis
     tx.select({ content: products.content }).from(products).where(and(eq(products.storeId, storeId), eq(products.shopifyId, shopifyId))),
   );
   if (!row) return { questions: [], failed: true };
+  // Not cached and not generated: during an OpenAI outage, or over this store's generations per minute (the route caches this 60 s).
+  if (Date.now() < outageUntil || rateLimit(`questions:generate:${storeId}`, Date.now(), GENERATIONS_PER_MINUTE)) return { questions: [], failed: true };
   const questions = await generate(row.content, languageName(lang));
   if (!questions) return { questions: [], failed: true };
   await forStore(storeId, (tx) =>

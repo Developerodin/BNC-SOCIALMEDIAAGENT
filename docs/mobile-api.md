@@ -131,10 +131,17 @@ Request body (JSON, `Content-Type: application/json`):
   The storefront widget sends it from the store's `/cart.js`; a mobile app may send its own cart in the same shape:
   `{ "items": [{ "title": "Wax", "variant": "Large", "quantity": 2, "price": "$13.99" }], "total": "$20.29" }`.
   At most 20 items; `title` and `variant` (optional, leave it out for a default variant) at most 80 characters;
-  `quantity` a whole number from 1 to 999; `price` (the line total) and `total` are display strings of at most 40
-  characters, already formatted in the shopper's currency. It is only used for that message and is never saved. If any
-  part is invalid or too long the whole field is ignored: the request still succeeds, with no error. The assistant can
-  read the cart but never change it.
+  `quantity` a whole number from 1 to 999 (more is treated as 999); `price` (the line total) and `total` are display
+  strings of at most 40 characters, already formatted in the shopper's currency and made only of digits, separators and
+  currency symbols or codes (for example `$13.99`, `1.299,00 €`, `CHF 1'299.00`). It is only used for that message and
+  is never saved or logged by us. A line with a bad `price`, `quantity` or an empty `title` is left out, a longer `title`
+  is cut to 80 characters and lines beyond 20 are ignored; if `total` is not an amount, or no line is usable, the whole
+  field is ignored. The request still succeeds, with no error. The assistant can read the cart but never change it, and
+  treats it as unverified text from the app: it states the cart's prices only as what is in the cart, and uses the
+  store's live prices to recommend products.
+  **Privacy:** the cart summary is sent to OpenAI with every message that includes it, so the assistant can answer
+  about it. It is not stored by AskCart or by OpenAI (requests use `store: false`). If your app sends the cart, say so
+  in your privacy policy and data-processing list; to avoid it, send `cart` only when the shopper asks about their cart.
 
 The answer is a **Server-Sent Events** stream (`Content-Type: text/event-stream`). Each event is
 

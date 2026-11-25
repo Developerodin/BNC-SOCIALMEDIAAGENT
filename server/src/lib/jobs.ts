@@ -53,9 +53,9 @@ export async function shopRedact({ shopDomain }: { shopDomain: string }): Promis
  * or retry the other nine.
  * ponytail: reads stay one at a time, but during a backlog they now run ~6x as often, so they drain the store's Admin
  * cost bucket (points restored per second, shared with the chat's live check) faster; not yet measured against a real
- * store. A throttled read fails only its job, which pg-boss retries with backoff, but the worker moves straight on to
- * the next one, so a long throttle spends retries. Check: read extensions.cost from one real product read and compare
- * ~3 x actual cost per second with the store's restore rate; if it is close, lower batchSize or add a pause on throttle.
+ * store. syncProduct (sync.ts) waits while the store's last throttleStatus says the bucket is nearly empty (throttle.ts)
+ * and gives each read 15 s; a throttled read still fails only its job, which pg-boss retries with backoff. Check: read
+ * extensions.cost from one real product read and compare ~3 x actual cost per second with the store's restore rate.
  * Still serial per process, so 20k edits take about 2 hours; localConcurrency is the upgrade path, sized the same way.
  */
 export const PRODUCT_SYNC_WORK = { batchSize: 10, burstWhenBatchFull: true, perJobResults: true } as const;
@@ -68,7 +68,8 @@ export async function settleEach<T>(jobs: Job<T>[], run: (data: T) => Promise<un
       await run(job.data);
       out.push({ id: job.id, status: "completed" });
     } catch (e) {
-      console.error("job failed", { queue: job.name, id: job.id }, e);
+      // The message and code only: a Shopify GraphqlQueryError carries the whole response body, and a throttled bulk edit logs one per attempt.
+      console.error("job failed", { queue: job.name, id: job.id, error: e instanceof Error ? e.message : String(e), code: (e as { code?: string } | null)?.code });
       out.push({ id: job.id, status: "failed", output: { message: e instanceof Error ? e.message : String(e) } });
     }
   }

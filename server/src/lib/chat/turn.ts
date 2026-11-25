@@ -280,25 +280,40 @@ const MAX_CART_LINES = 20;
 const MAX_CART_MONEY = 40;
 const isStr = (v: unknown, max: number): v is string => typeof v === "string" && v.length <= max;
 
+// A price or total as a shopper's cart shows it: an optional currency symbol or code, digits with separators, an optional
+// symbol or code after ("€19.99", "Rs. 1,299.00", "CHF 1’299.00", "1.299,00 €"). Anything else ("free with code X") is not money.
+const MONEY = /^(?=.*\d)[\p{Sc}A-Za-z.]{0,5}[\s ]?[\d.,\s '’]{1,20}[\s ]?[\p{Sc}A-Za-z.]{0,5}$/u;
+const isMoney = (v: unknown): v is string => isStr(v, MAX_CART_MONEY) && MONEY.test(v.trim());
+
 /**
- * The request's optional `cart` (widget-contract CartSummary), checked strictly: at most 20 lines, short strings, whole
- * quantities of 1-999. Anything else (wrong type, too long, too many lines, extra shapes) gives null and the cart is
- * ignored, never an error: it is a hint from the shopper's browser, not data we depend on.
+ * The request's optional `cart` (widget-contract CartSummary): a hint from the shopper's browser, never an error. The
+ * total must be a money amount (else the whole cart is ignored, null). Lines are kept or cut one by one: a line with
+ * a non-money price, an empty title or a bad quantity is dropped; a title over 80 characters is clipped, a quantity over
+ * 999 is clamped to 999, a bad variant is left off, and only the first 20 lines are kept (the total stays the cart's).
  */
 export function parseCartSummary(v: unknown): CartSummary | null {
   if (!v || typeof v !== "object") return null;
   const { items, total } = v as { items?: unknown; total?: unknown };
-  if (!Array.isArray(items) || !items.length || items.length > MAX_CART_LINES || !isStr(total, MAX_CART_MONEY) || !total.trim()) return null;
+  if (!Array.isArray(items) || !isMoney(total)) return null;
   const out: CartSummary["items"] = [];
-  for (const i of items) {
-    if (!i || typeof i !== "object") return null;
-    const { title, variant, quantity, price } = i as Record<string, unknown>;
-    if (!isStr(title, MAX_CART_TITLE) || !title.trim() || !isStr(price, MAX_CART_MONEY) || !price.trim()) return null;
-    if (variant != null && !isStr(variant, MAX_CART_TITLE)) return null;
-    if (typeof quantity !== "number" || !Number.isInteger(quantity) || quantity < 1 || quantity > 999) return null;
-    out.push({ title, ...(variant ? { variant } : {}), quantity, price });
+  let skipped = 0;
+  for (const i of items.slice(0, 100)) {
+    if (out.length >= MAX_CART_LINES) break;
+    const { title, variant, quantity, price } = (i && typeof i === "object" ? i : {}) as Record<string, unknown>;
+    if (typeof title !== "string" || !title.trim() || !isMoney(price) || typeof quantity !== "number" || !Number.isInteger(quantity) || quantity < 1) {
+      skipped++;
+      continue;
+    }
+    out.push({
+      title: title.slice(0, MAX_CART_TITLE),
+      ...(isStr(variant, MAX_CART_TITLE) && variant.trim() ? { variant } : {}),
+      quantity: Math.min(quantity, 999),
+      price,
+    });
   }
-  return { items: out, total };
+  // Counts only, never the cart's text.
+  if (skipped) console.warn("cart summary lines skipped", { skipped, kept: out.length });
+  return out.length ? { items: out, total } : null;
 }
 
 /** The titles of the products added to the cart from this conversation's cards, most recent first, each product once (at most 10). */
@@ -552,12 +567,18 @@ export async function runTurn(t: {
     status("checking");
     const checked = await checkProducts(store, ids, { country, includeGiftCards: rw.includeGiftCards, signal, catalog });
     // D87: drop products outside the budget and order by price, by the live price (never the index's).
-    const priced = applyBudget({ hits: found, live: checked, budget: rw.budget, sort: rw.sort, currency: store.currencyCode });
+    const priced = applyBudget({ hits: found, live: checked, budget: rw.budget, sort: rw.sort, currency: store.currencyCode, shopperCurrency: t.currency });
     const { live } = priced;
     // Shopify gave no answer at all: say so, so the model never turns an outage into "we don't carry that".
     const note = catalog?.degraded ? [CATALOG_DEGRADED, priced.note].filter(Boolean).join(" ") : priced.note;
     const hits = wide ? topProducts(priced.hits, live, PROMPT_PRODUCTS) : priced.hits;
-    const cartAdded = catalog ? [] : await cartAddedTitles(storeId, t.conversationId).catch(() => []); // a hint: never fails the turn
+    const cartAdded = catalog
+      ? []
+      : await cartAddedTitles(storeId, t.conversationId).catch((e) => {
+          // A hint: never fails the turn. The store and the error kind only.
+          console.warn("cart added titles failed", { storeId, reason: (e as { code?: string } | null)?.code ?? (e instanceof Error ? e.name : "error") });
+          return [];
+        });
     const { input, allowed } = buildInput({ hits, live, currentProductId, history: t.history, message: t.message, threshold, shopperCurrency: t.currency, note, cartAdded, cart: t.cart });
 
     const cards: Card[] = [];

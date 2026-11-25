@@ -142,30 +142,36 @@ function overviewOf(ctx: ToolContext): Promise<Overview> {
   if (hit && now - hit.at < OVERVIEW_TTL_MS) return Promise.resolve(hit.value);
   const failedAt = overviewFailed.get(id);
   if (failedAt !== undefined && now - failedAt < OVERVIEW_FAILURE_MS) return Promise.reject(new Error("store overview failed recently"));
-  const running = overviewInflight.get(id);
-  if (running) return running;
-  const p = fetchOverview(ctx)
-    .then((value) => {
-      for (const [k, v] of overviews) if (now - v.at >= OVERVIEW_TTL_MS) overviews.delete(k);
-      overviews.set(id, { at: Date.now(), value });
-      overviewFailed.delete(id);
-      return value;
-    })
-    .catch((e) => {
-      overviewFailed.set(id, Date.now());
-      throw e;
-    })
-    .finally(() => overviewInflight.delete(id));
-  overviewInflight.set(id, p);
-  return p;
+  let running = overviewInflight.get(id);
+  if (!running) {
+    // The shared fetch has its own 3 s timeout and no shopper's signal, so one shopper leaving can't fail it for the others;
+    // each caller races its own signal below. Only a real failure is remembered, never an abort.
+    running = fetchOverview(ctx)
+      .then((value) => {
+        for (const [k, v] of overviews) if (now - v.at >= OVERVIEW_TTL_MS) overviews.delete(k);
+        overviews.set(id, { at: Date.now(), value });
+        overviewFailed.delete(id);
+        return value;
+      })
+      .catch((e) => {
+        if (!(e instanceof Error && e.name === "AbortError")) overviewFailed.set(id, Date.now());
+        throw e;
+      })
+      .finally(() => overviewInflight.delete(id));
+    overviewInflight.set(id, running);
+  }
+  return ctx.signal ? withTimeout(running, TIMEOUT_MS, ctx.signal) : running;
 }
 
 async function fetchOverview(ctx: ToolContext): Promise<Overview> {
-  const d = await gql<{
-    productsCount: { count: number; precision: string };
-    collections: { pageInfo: { hasNextPage: boolean }; nodes: { id: string; title: string; productsCount: { count: number } }[] };
-    products: { nodes: { title: string; productType: string; tags: string[] }[] };
-  }>(ctx, OVERVIEW);
+  const d = await withTimeout(
+    adminGraphql<{
+      productsCount: { count: number; precision: string };
+      collections: { pageInfo: { hasNextPage: boolean }; nodes: { id: string; title: string; productsCount: { count: number } }[] };
+      products: { nodes: { title: string; productType: string; tags: string[] }[] };
+    }>(ctx.store.id, ctx.store.shopDomain, OVERVIEW),
+    TIMEOUT_MS,
+  );
   return {
     total: d.productsCount.count,
     atLeast: d.productsCount.precision === "AT_LEAST",
@@ -272,15 +278,28 @@ const COLLECTION_PRODUCTS = `query CollectionProducts($id: ID!, $first: Int!) {
   collection(id: $id) { products(first: $first, sortKey: COLLECTION_DEFAULT) { nodes { id status } } }
 }`;
 
-/** The collection whose title best matches what the shopper said (case-insensitive), or undefined. Exact, then title contains the words, then the words contain the title, then every word is in the title; the shortest title wins a tie. */
+/** Lowercase words (letters and digits), so "Women's" is "women s" and a title only matches whole words ("men" is not in "women"). */
+const wordsOf = (s: string) => s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+/**
+ * The collection whose title best matches what the shopper said (case-insensitive, whole words), or undefined. Exact, then
+ * the title contains the shopper's words in order, then the shopper's words contain the title, then every word is in the
+ * title. A tie goes to the shorter title, except when the shopper's words contain the title: then the longer, more specific one.
+ */
 function bestCollection<T extends { title: string }>(said: string, collections: T[]): T | undefined {
-  const q = said.toLowerCase().replace(/\s+/g, " ").trim();
-  const words = q.split(" ").filter((w) => w.length > 1);
-  let best: { c: T; score: number } | undefined;
+  const q = wordsOf(said);
+  if (!q.length) return undefined;
+  const phrase = ` ${q.join(" ")} `;
+  const long = q.filter((w) => w.length > 1);
+  let best: { c: T; score: number; len: number } | undefined;
   for (const c of collections) {
-    const t = c.title.toLowerCase().replace(/\s+/g, " ").trim();
-    const score = t === q ? 4 : t.includes(q) ? 3 : q.includes(t) ? 2 : words.length && words.every((w) => t.includes(w)) ? 1 : 0;
-    if (score && (!best || score > best.score || (score === best.score && c.title.length < best.c.title.length))) best = { c, score };
+    const tw = wordsOf(c.title);
+    if (!tw.length) continue;
+    const t = ` ${tw.join(" ")} `;
+    const score = t === phrase ? 4 : t.includes(phrase) ? 3 : phrase.includes(t) ? 2 : long.length && long.every((w) => tw.includes(w)) ? 1 : 0;
+    // Longer title wins a score-2 tie, shorter wins the others.
+    const better = !best || score > best.score || (score === best.score && (score === 2 ? t.length > best.len : t.length < best.len));
+    if (score && better) best = { c, score, len: t.length };
   }
   return best?.c;
 }
@@ -296,13 +315,18 @@ async function browse(collectionArg: unknown, pageArg: unknown, ctx: ToolContext
     return `Only the first ${MAX_PAGE} pages (${MAX_PAGE * PAGE_SIZE} products) can be listed. Tell the shopper to narrow down by describing what they want, or to open the collection on the store.`;
   }
 
-  const o = await overviewOf(ctx);
-  const c = bestCollection(said, o.collections);
+  // An overview failure doesn't stop the search below: it needs no Admin call apart from the live check.
+  const o = await overviewOf(ctx).catch((e) => {
+    if (e instanceof Error && e.name === "AbortError") throw e; // the shopper left: nothing to answer
+    return null;
+  });
+  const c = o ? bestCollection(said, o.collections) : undefined;
   if (!c) {
     // No such collection: the shopper's words are likely a category or product type, so search them (live-checked, numbered
     // and budget-filtered like search_products). The collection names are only given when that finds nothing.
     const s = await searchProductBlocks(said, ctx);
     if (s.found || s.budgetEmpty) return `The store has no collection called "${sanitizeData(said).slice(0, 80)}", so these are search results for those words, not a collection:\n\n${s.text}`;
+    if (!o) return UNAVAILABLE;
     const titles = o.collections.map((x) => x.title.slice(0, 80)).join("; ");
     return sanitizeData(`No collection matches that name. The store's collections: ${titles || "none"}${o.moreCollections ? "; and more not listed" : ""}. Ask the shopper which one they mean.`).slice(0, MAX_RESULT_CHARS);
   }

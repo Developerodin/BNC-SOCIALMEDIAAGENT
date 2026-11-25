@@ -55,6 +55,8 @@ export function applyBudget(opts: {
   budget: Budget | null;
   sort: PriceSort | null;
   currency: string | null;
+  /** The shopper's page currency, when known: with another one, the C05 note names the product without a price. */
+  shopperCurrency?: string | null;
 }): { hits: SearchHit[]; live: PromptProducts; note?: string } {
   const { hits, live, budget, sort } = opts;
   if (!budget && !sort) return { hits, live };
@@ -68,14 +70,20 @@ export function applyBudget(opts: {
       notes.push(`No products are within the shopper's budget of ${formatBudget(budget, opts.currency ?? "")}.`);
     }
     // C05: with a maximum, name the cheapest product left out, so the answer can say how far off the budget is.
+    // Only this search's hits count (the live map also holds the viewed product and earlier tool results), and the price is
+    // left out when the shopper's currency differs from the store's (C26: the card shows it).
     if (budget.max !== undefined) {
-      let cheapest: { title: string; price: number } | null = null;
+      const searched = new Set(hits.map((h) => h.productId));
+      let cheapest: { title: string; price: number; currency: string } | null = null;
       for (const [id, p] of live.products) {
         const price = productPrice(p);
-        if (products.has(id) || price === null || price <= budget.max) continue;
-        if (!cheapest || price < cheapest.price) cheapest = { title: p.title, price };
+        if (!searched.has(id) || products.has(id) || price === null || price <= budget.max) continue;
+        if (!cheapest || price < cheapest.price) cheapest = { title: p.title, price, currency: p.currency };
       }
-      if (cheapest) notes.push(`Left out for costing more than the budget: the cheapest of those is "${cheapest.title}" at ${money(cheapest.price, opts.currency ?? "")}.`);
+      if (cheapest) {
+        const sameCurrency = !opts.shopperCurrency || opts.shopperCurrency === cheapest.currency;
+        notes.push(`Left out for costing more than the budget: the cheapest of those is "${cheapest.title}"${sameCurrency ? ` at ${money(cheapest.price, opts.currency ?? "")}` : ""}.`);
+      }
     }
   }
 

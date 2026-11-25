@@ -8,7 +8,9 @@ import { stores } from "@/db/schema";
 import { enqueue, enqueueEmbed } from "@/lib/jobs";
 import { refreshShopInfo } from "@/lib/shop-info";
 import { deleteProduct, PRODUCT_FIELDS, type ShopifyProduct, sweepProducts, toShopifyProduct, upsertProducts } from "@/lib/products";
+import { withTimeout } from "@/lib/chat/openai";
 import { adminGraphql } from "@/lib/shopify/admin";
+import { throttleWaitMs } from "@/lib/shopify/throttle";
 import { RECONNECT_NEEDED, ReconnectNeededError } from "@/lib/shopify/tokens";
 
 const BATCH = 250;
@@ -214,9 +216,20 @@ export async function refreshProduct(storeId: string, productId: string): Promis
   return fresh;
 }
 
-/** The `product-sync` handler: re-reads one product and upserts it, or deletes it when Shopify no longer has it. */
+const PRODUCT_SYNC_TIMEOUT_MS = 15_000; // one stalled Admin read must not hold the rest of its batch (and every other store's jobs)
+const THROTTLE_FLOOR = 200; // a product read asks for ~75 points; wait until about two reads' worth are available
+const MAX_THROTTLE_WAIT_MS = 10_000; // longer than that and the job fails and pg-boss retries it with its own backoff
+
+/**
+ * The `product-sync` handler: re-reads one product and upserts it, or deletes it when Shopify no longer has it.
+ * Waits (up to 10 s) while Shopify's last throttle status for the store says the Admin cost bucket is nearly empty, so a
+ * bulk edit doesn't spend its retries on THROTTLED errors, and gives the read 15 s. The batch keeps running one job at a
+ * time (jobs.ts); a timed-out read finishes in the background and its late result is dropped, so the job fails and retries.
+ */
 export async function syncProduct({ storeId, productId }: { storeId: string; productId: string }): Promise<void> {
-  await refreshProduct(storeId, productId);
+  const wait = throttleWaitMs(storeId, THROTTLE_FLOOR);
+  if (wait > 0) await new Promise((r) => setTimeout(r, Math.min(wait, MAX_THROTTLE_WAIT_MS)));
+  await withTimeout(refreshProduct(storeId, productId), PRODUCT_SYNC_TIMEOUT_MS);
 }
 
 /**

@@ -11,7 +11,9 @@ import type { ProductQuestionsResponse } from "@/lib/widget-contract";
 // No `runtime` export (cacheComponents doesn't support it).
 
 // Its own rate-limit bucket: a product page asks once per view, and that must not use up the limits of /api/chat.
-const QUESTION_LIMITS: Limits = { kind: "questions", ip: 30, store: 300 };
+// The store-wide number is high because most requests are a primary-key read of a saved answer; what costs money, the
+// OpenAI generations, has its own per-store limit in product-questions.ts.
+const QUESTION_LIMITS: Limits = { kind: "questions", ip: 30, store: 3000 };
 
 const LOCALE = /^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8}){0,3}$/;
 
@@ -21,7 +23,14 @@ export function OPTIONS(req: Request) {
 
 export async function GET(req: Request) {
   const params = new URL(req.url).searchParams;
-  const found = await storeFor(req, params.get("shop"), QUESTION_LIMITS);
+  let found;
+  try {
+    found = await storeFor(req, params.get("shop"), QUESTION_LIMITS);
+  } catch (err) {
+    // The store lookup is a database read: an outage is an empty list (no CORS headers, since the Origin couldn't be checked; the widget treats the failed read as no questions).
+    console.warn("product questions store lookup failed", { reason: (err as { code?: string } | null)?.code ?? "error" });
+    return Response.json({ questions: [] }, { headers: { "Cache-Control": "no-store" } });
+  }
   if (found instanceof Response) return found;
 
   const bad = (error: string) => Response.json({ error }, { status: 400, headers: { ...found.cors, "Cache-Control": "no-store" } });

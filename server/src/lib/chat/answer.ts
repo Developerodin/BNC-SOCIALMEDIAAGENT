@@ -127,14 +127,30 @@ export async function answer(opts: {
         { signal: ac.signal },
       );
       // One response can hold several message items; a second one rewrites the first (the "…a snowboard?I'm an AI…" doubled
-      // answer), so only the first item's text is shown. Deltas without an item id all count as one item.
+      // answer), so only the first item's text is shown: the first item that has produced non-whitespace text (a whitespace-only
+      // item before it is passed over, not locked on). Deltas without an item id all count as one item. Skipped items are
+      // counted and logged after the stream (counts only, never their text), so a real answer lost this way can be measured.
       let firstItem: string | undefined;
+      const skipped = new Set<string>();
+      let skippedDeltas = 0;
       for await (const ev of events) {
         if (ev.type === "response.output_text.delta") {
           const item = (ev as { item_id?: string }).item_id;
           if (item !== undefined) {
-            firstItem ??= item;
-            if (item !== firstItem) continue;
+            if (firstItem === undefined) {
+              if (!ev.delta.trim()) {
+                skipped.add(item);
+                skippedDeltas++;
+                continue;
+              }
+              firstItem = item;
+              skipped.delete(item);
+            }
+            if (item !== firstItem) {
+              skipped.add(item);
+              skippedDeltas++;
+              continue;
+            }
           }
           clearTimeout(firstTimer);
           firstTimer = undefined;
@@ -150,6 +166,7 @@ export async function answer(opts: {
           throw new Error(`response failed: ${ev.response.error?.code ?? "unknown"}`);
         }
       }
+      if (skipped.size) console.info("chat answer items skipped", { storeId: opts.storeId, items: skipped.size, deltas: skippedDeltas });
       // The SDK ends the iteration quietly when its request is aborted, so check why we stopped.
       if (reason) return { kind: reason };
       return { kind: "done", usage, incomplete, output };

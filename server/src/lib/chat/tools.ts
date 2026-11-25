@@ -222,11 +222,13 @@ export async function searchProductBlocks(query: string, ctx: ToolContext): Prom
   let note = "";
   if (priced) {
     // The turn's own budget filter and price order (D87), by the live price.
-    const r = applyBudget({ hits: ids.map((productId) => ({ productId }) as SearchHit), live: ctx.live, budget: ctx.budget!.budget, sort: ctx.budget!.sort, currency: ctx.budget!.currency });
+    const r = applyBudget({ hits: ids.map((productId) => ({ productId }) as SearchHit), live: ctx.live, budget: ctx.budget!.budget, sort: ctx.budget!.sort, currency: ctx.budget!.currency, shopperCurrency: ctx.shopperCurrency });
     const kept = r.live.ok ? r.live.products : null;
     ids = r.hits.map((h) => h.productId).filter((id) => !kept || kept.has(id)).slice(0, TOOL_PRODUCTS);
-    note = r.note ? `${r.note}\n\n` : "";
-    if (ids.length === 0) return { text: `No products from this search are within the shopper's budget.${r.note ? ` ${r.note}` : ""}`, found: false, budgetEmpty: true };
+    // The note can carry a merchant product title (C05), so it is sanitized like the rest of the tool result.
+    const safeNote = r.note ? sanitizeData(r.note) : "";
+    note = safeNote ? `${safeNote}\n\n` : "";
+    if (ids.length === 0) return { text: `No products from this search are within the shopper's budget.${safeNote ? ` ${safeNote}` : ""}`, found: false, budgetEmpty: true };
   }
   const blocks = ids.map((id) => productBlock({ n: numberOf.get(id)!, id, texts: texts.get(id)!, live: ctx.live, threshold: ctx.threshold, shopperCurrency: ctx.shopperCurrency }));
   return blocks.length ? { text: note + blocks.join("\n\n"), found: true } : { text: note || "No products match this search.", found: false, budgetEmpty: priced };
