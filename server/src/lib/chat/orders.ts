@@ -97,6 +97,8 @@ async function fetchOrders(ctx: ToolContext, customer: string): Promise<OrderNod
   try {
     // The numeric id of the verified session GID, never anything the model or the shopper wrote.
     const id = customer.slice(customer.lastIndexOf("/") + 1);
+    if (!/^\d+$/.test(id)) return null; // it goes into a search string: digits only
+
     const data = await withTimeout(
       adminGraphql<{ orders?: { nodes?: OrderNode[] } }>(ctx.store.id, ctx.store.shopDomain, QUERY, { query: `customer_id:${id}` }),
       TIMEOUT_MS,

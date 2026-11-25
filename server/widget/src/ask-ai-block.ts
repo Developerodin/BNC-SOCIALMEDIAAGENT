@@ -72,8 +72,9 @@ function setup(block: HTMLElement) {
   // pair is used together or not at all, so the arrow always contrasts with its background; otherwise the AskCart accent.
   const css = getComputedStyle(block);
   const themeRgb = (name: string) => {
-    const v = css.getPropertyValue(name).trim();
-    return /^\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}$/.test(v) ? v : null;
+    // "18, 18, 18" or Liquid's `.rgb` form "18 18 18"; returned with commas, since the CSS uses rgba(var(...), alpha).
+    const m = /^(\d{1,3})(?:\s*,\s*|\s+)(\d{1,3})(?:\s*,\s*|\s+)(\d{1,3})$/.exec(css.getPropertyValue(name).trim());
+    return m ? `${m[1]}, ${m[2]}, ${m[3]}` : null;
   };
   const btn = themeRgb("--color-button");
   const btnText = themeRgb("--color-button-text");

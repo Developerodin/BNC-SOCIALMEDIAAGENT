@@ -318,3 +318,20 @@ describe("theme colours", () => {
     expect(vars(b)).toEqual(["17, 34, 51", "255, 255, 255", ""]);
   });
 });
+
+describe("theme colours, space-separated", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("accepts Liquid's `.rgb` form (\"18 18 18\") and passes it on with commas", () => {
+    mockFetch(json({ questions: [] }));
+    const b = page();
+    b.style.setProperty("--color-button", "200 100 50");
+    b.style.setProperty("--color-button-text", "255 255 255");
+    b.style.setProperty("--color-foreground", "18 18 18");
+    initAskAiBlocks(document);
+    expect(["--askcart-btn-rgb", "--askcart-btn-text-rgb", "--askcart-fg-rgb"].map((n) => b.style.getPropertyValue(n))).toEqual([
+      "200, 100, 50",
+      "255, 255, 255",
+      "18, 18, 18",
+    ]);
+  });
+});
